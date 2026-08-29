@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Solicitação de Cartão de Militante</title>
+</head>
+<body style="margin: 0; padding: 0; background-color: #f8f9fa; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
+    
+    <!-- Contentor Geral -->
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background-color: #f8f9fa; padding: 40px 10px;">
+        <tr>
+            <td align="center">
+                
+                <!-- Caixa Principal do E-mail -->
+                <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="max-width: 600px; background-color: #ffffff; border-radius: 12px; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05); border: 1px solid #e9ecef; overflow: hidden;">
+                    
+                    <!-- Cabeçalho -->
+                    <tr>
+                        <td style="background: linear-gradient(135deg, #28a745, #1e7e34); padding: 30px 40px; text-align: center;">
+                            <h1 style="color: #ffffff; margin: 0; font-size: 22px; font-weight: 700; letter-spacing: -0.5px;">
+                                Cartão de Militante
+                            </h1>
+                        </td>
+                    </tr>
+
+                    <!-- Corpo do E-mail -->
+                    <tr>
+                        <td style="padding: 40px;">
+                            <p style="color: #495057; font-size: 16px; line-height: 1.6; margin-top: 0; margin-bottom: 24px;">
+                                Olá, Administrador. Uma nova solicitação de emissão de cartão de militante foi registada com sucesso no sistema. Confira os detalhes abaixo:
+                            </p>
+
+                            <!-- Tabela de Detalhes com Estilo Clean -->
+                            <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background-color: #f1f3f5; border-radius: 8px; padding: 20px; margin-bottom: 30px;">
+                                <tr>
+                                    <td style="padding: 8px 0; color: #6c757d; font-size: 14px; font-weight: 600; width: 35%;">Usuário:</td>
+                                    <td style="padding: 8px 0; color: #212529; font-size: 14px; font-weight: bold;">{{ nome_militante }}</td>
+                                </tr>
+                                <tr>
+                                    <td style="padding: 8px 0; color: #6c757d; font-size: 14px; font-weight: 600; width: 35%;">E-mail:</td>
+                                    <td style="padding: 8px 0; color: #212529; font-size: 14px; font-weight: bold;">{{ email_destino }}</td>
+                                </tr>
+                                <tr>
+                                    <td style="padding: 8px 0; color: #6c757d; font-size: 14px; font-weight: 600; border-top: 1px solid #e9ecef;">Nº de Militante:</td>
+                                    <td style="padding: 8px 0; color: #212529; font-size: 14px; font-weight: bold; border-top: 1px solid #e9ecef;">{{ numero_militante }}</td>
+                                </tr>
+                                <tr>
+                                    <td style="padding: 8px 0; color: #6c757d; font-size: 14px; font-weight: 600; border-top: 1px solid #e9ecef;">Data de Solicitação:</td>
+                                    <td style="padding: 8px 0; color: #495057; font-size: 14px; border-top: 1px solid #e9ecef;">{{ data_solicitacao }}</td>
+                                </tr>
+                            </table>
+
+                            <p style="color: #6c757d; font-size: 13px; line-height: 1.5; text-align: center; margin-bottom: 0; padding-top: 20px; border-top: 1px solid #f1f3f5;">
+                                Este é um e-mail automático gerado pelo sistema de gestão de militantes. Por favor, não responda a esta mensagem.
+                            </p>
+                        </td>
+                    </tr>
+
+                    <!-- Rodapé -->
+                    <tr>
+                        <td style="background-color: #f1f3f5; padding: 20px 40px; text-align: center;">
+                            <p style="color: #868e96; font-size: 12px; margin: 0;">
+                                &copy; 2026 Sistema de Militantes. Todos os direitos reservados.
+                            </p>
+                        </td>
+                    </tr>
+
+                </table>
+
+            </td>
+        </tr>
+    </table>
+
+</body>
+</html>

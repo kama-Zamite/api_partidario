@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="pt-PT">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Nova sessão iniciada na Plataforma Digital</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: #f4f6f9;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            color: #1f2937;
+            -webkit-font-smoothing: antialiased;
+        }
+        .wrapper {
+            width: 100%;
+            table-layout: fixed;
+            background-color: #f4f6f9;
+            padding: 40px 0;
+        }
+        .container {
+            max-width: 520px;
+            margin: 0 auto;
+            background-color: #ffffff;
+            border-radius: 12px;
+            border: 1px solid #e5e7eb;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);
+            overflow: hidden;
+        }
+        .header {
+            padding: 32px 24px 20px 24px;
+            text-align: center;
+        }
+        .brand-logo {
+            font-size: 22px;
+            font-weight: 800;
+            letter-spacing: 0.5px;
+            /* Combinação de cores institucionais nos textos */
+            color: #6a010a; 
+        }
+        .brand-logo span {
+            color: #034f15;
+        }
+        .title {
+            font-size: 20px;
+            font-weight: 600;
+            color: #111827;
+            margin-top: 16px;
+            margin-bottom: 8px;
+        }
+        .user-badge {
+            display: inline-block;
+            background: #f3f4f6;
+            padding: 6px 14px;
+            border-radius: 20px;
+            font-size: 13px;
+            color: #4b5563;
+            font-weight: 500;
+        }
+        .content {
+            padding: 0 32px 32px 32px;
+        }
+        .alert-box {
+            background-color: #eff6ff;
+            border-left: 4px solid #3b82f6;
+            padding: 16px;
+            border-radius: 0 8px 8px 0;
+            margin-bottom: 24px;
+            font-size: 14px;
+            line-height: 1.5;
+            color: #1e40af;
+        }
+        .info-card {
+            background-color: #fafafa;
+            border: 1px solid #f0f0f0;
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 28px;
+        }
+        .info-section-title {
+            font-size: 12px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            color: #6b7280;
+            margin-bottom: 14px;
+        }
+        .info-row {
+            display: table;
+            width: 100%;
+            margin-bottom: 12px;
+            font-size: 14px;
+        }
+        .info-row:last-child {
+            margin-bottom: 0;
+        }
+        .info-label {
+            display: table-cell;
+            width: 30%;
+            font-weight: 600;
+            color: #4b5563;
+        }
+        .info-value {
+            display: table-cell;
+            width: 70%;
+            color: #111827;
+            word-break: break-word;
+        }
+        .btn-container {
+            text-align: center;
+            margin-top: 16px;
+            margin-bottom: 24px;
+        }
+        .btn {
+            display: inline-block;
+            background-color: #0047AB;
+            color: #ffffff !important;
+            text-decoration: none;
+            padding: 12px 32px;
+            font-size: 14px;
+            font-weight: 600;
+            border-radius: 24px;
+            box-shadow: 0 2px 4px rgba(0, 71, 171, 0.2);
+            transition: background-color 0.2s;
+        }
+        .footer {
+            text-align: center;
+            padding: 24px;
+            font-size: 12px;
+            color: #9ca3af;
+            line-height: 1.6;
+            background-color: #fafafa;
+            border-top: 1px solid #e5e7eb;
+        }
+        .footer a {
+            color: #0047AB;
+            text-decoration: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="wrapper">
+        <div class="container">
+            
+            <!-- Cabeçalho Principal -->
+            <div class="header">
+                <div class="brand-logo">UNITA <span>PGM</span></div>
+                <div class="title">Nova sessão iniciada</div>
+                <div class="user-badge">{{ email }}</div>
+            </div>
+            
+            <!-- Corpo do E-mail -->
+            <div class="content">
+                <div class="alert-box">
+                    Olá <strong>{{ nome }}</strong>, detetámos um novo início de sessão na sua conta. <strong>{{ data_hora }}</strong>.
+                </div>
+                
+                <!-- Card de Detalhes Técnicos -->
+                <div class="info-card">
+                    <div class="info-section-title">Detalhes do Acesso</div>
+                    
+                    <div class="info-row">
+                        <div class="info-label">Endereço IP</div>
+                        <div class="info-value"><code>{{ ip }}</code></div>
+                    </div>
+                    
+                    <div class="info-row">
+                        <div class="info-label">Dispositivo</div>
+                        <div class="info-value">{{ navegador }}</div>
+                    </div>
+                    <div class="info-row">
+                        <div class="info-label">Sistema</div>
+                        <div class="info-value">{{ sistema_operacional }}</div>
+                    </div>
+                </div>
+                
+                <p style="font-size: 14px; color: #4b5563; line-height: 1.6; margin-bottom: 24px;">
+                    Se foi você a realizar esta ação, nenhuma medida adicional é necessária. Caso não reconheça este acesso, altere a sua palavra-passe imediatamente para proteger a sua conta de militante.
+                </p>
+                
+                <!-- Botão de Ação Centralizado -->
+                <div class="btn-container">
+                    <a href="https://unita.org" class="btn">Gerir Conta e Segurança</a>
+                </div>
+            </div>
+            
+            <!-- Rodapé Institucional -->
+            <div class="footer">
+                Recebeu este e-mail para garantir a segurança dos seus serviços digitais.<br>
+                &copy; 2026 UNITA, Plataforma de Gestão do Militantes. Todos os direitos reservados.<br>
+                Luanda, Angola.
+            </div>
+            
+        </div>
+    </div>
+</body>
+</html>

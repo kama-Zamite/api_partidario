@@ -1,0 +1,85 @@
+[project]
+name = "project-part"
+version = "0.1.0"
+description = ""
+authors = [
+    {name = "kama-Zamite",email = "pedrozamite1@gmail.com"}
+]
+readme = "README.md"
+requires-python = ">=3.13,<4"
+dependencies = [
+    "fastapi[standard] (>=0.136.3,<0.137.0)",
+    "sqlalchemy (>=2.0.50,<3.0.0)",
+    "sqlalchemy[asyncio] (>=2.0.50,<3.0.0)",
+    "alembic (>=1.18.4,<2.0.0)",
+    "pydantic-settings (>=2.14.1,<3.0.0)",
+    "uvicorn (>=0.48.0,<0.49.0)",
+    "pyjwt (>=2.13.0,<3.0.0)",
+    "pwdlib[argon2] (>=0.3.0,<0.4.0)",
+    "greenlet (>=3.5.1,<4.0.0)",
+    "psycopg[binary] (>=3.3.4,<4.0.0)",
+    "pydantic (>=2.13.4,<3.0.0)",
+    "email-validator (>=2.0.0)",
+    "redis (>=8.0.0,<9.0.0)",
+    "slowapi (>=0.1.9,<0.2.0)",
+    "cloudinary (>=1.44.3,<2.0.0)",
+    "qrcode (>=8.2,<9.0)",
+    "pillow (>=12.3.0,<13.0.0)",
+    "aiosmtplib (>=5.1.2,<6.0.0)",
+    "jinja2 (>=3.1.6,<4.0.0)",
+    "filetype (>=1.2.0,<2.0.0)",
+    "pyotp (>=2.10.0,<3.0.0)",
+    "user-agents (>=2.2.0,<3.0.0)",
+    "resend (>=2.42.0,<3.0.0)"
+]
+
+[tool.poetry]
+packages = [{include = "project_part", from = "src"}]
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
+package-mode = false
+[dependency-groups]
+dev = [
+    "ruff (>=0.15.14,<0.16.0)",
+    "pytest (>=9.0.3,<10.0.0)",
+    "pytest-asyncio (>=1.4.0,<2.0.0)",
+    "taskipy (>=1.14.1,<2.0.0)",
+    "pytest-cov (>=7.1.0,<8.0.0)",
+    "testcontainers (>=4.14.2,<5.0.0)",
+    "aiosqlite (>=0.22.1,<0.23.0)"
+]
+
+
+[tool.ruff]
+line-length = 79
+extend-exclude = ['migrations']
+
+[tool.ruff.lint]
+preview = true
+select = ['I', 'F', 'E', 'W', 'PT', 'PL', 'FAST']
+
+[tool.ruff.format]
+preview = true
+quote-style = 'single'
+
+[tool.pytest.ini_options]
+pythonpath = 'src'
+addopts = "-p no:warnings"
+asyncio_default_fixture_loop_scope = 'function'
+
+[tool.taskipy.tasks]
+pre_lint = 'ruff check --fix'
+lint = 'ruff check'
+format = 'ruff format'
+run = 'fastapi dev src/project_part/main.py'
+pre_test = 'ruff check'
+test = 'pytest -x -s --cov src/project_part --cov-report term-missing -vv'
+pos_test = 'coverage html'
+
+[tool.coverage.run]
+core = "ctrace"
+concurrency = ['thread', 'greenlet']
+# Garante que o coverage procure o código no local certo
+source = ["src", "project_part"]

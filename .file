@@ -1,0 +1,19 @@
+-- CREATE SCHEMA public; -> cria shemas publicos
+Apague a base de dados ou faça DROP SCHEMA public CASCADE;
+
+
+
+
+. Executar o Comando SQL de LimpezaClique em Comando SQL no menu lateral esquerdo (abaixo do nome DB: railway).Cole o seguinte código na caixa de texto:sqlDROP SCHEMA public CASCADE;
+CREATE SCHEMA public;
+GRANT ALL ON SCHEMA public TO public;
+Use o código com cuidado.
+Clique no botão Executar.
+
+O que este comando faz?
+
+DROP SCHEMA public CASCADE: Elimina instantaneamente todas as tabelas, sequências, enums e chaves estrangeiras do banco sem dar erros de dependência.
+CREATE SCHEMA public: Recria o espaço padrão do PostgreSQL totalmente limpo.
+GRANT ALL...: Restaura as permissões originais necessárias para o banco voltar a aceitar novas tabelas.
+
+ docker compose cp server_api:/app/migrations/versions/. ./migrations/versions/

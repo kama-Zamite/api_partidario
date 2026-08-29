@@ -1,0 +1,218 @@
+services:
+  server_api:
+    image: partido_uniao:${PROJECT_VERSION}
+    container_name: app_project_real
+    build: .
+    environment:
+      - PYTHONPATH=/app/src      
+    env_file:
+      - .env
+    ports:
+      - "10000:10000"
+    # volumes:
+    #   - .:/app
+    networks:
+      - app_network
+    # dns:
+    #   - 8.8.8.8
+    #   - 1.1.1.1
+    depends_on:
+      database_project:
+        condition: service_healthy
+      redis_database:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:10000/docs', timeout=2)"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  database_project:
+    image: postgres:${POSTGRES_VERSION}
+    container_name: database_db
+    environment:
+      - POSTGRES_USER=${DATABASE_USER}
+      - POSTGRES_PASSWORD=${DATABASE_PASSWORD}
+      - POSTGRES_DB=${DATABASE_NAME}
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - postgres_volume:/var/lib/postgresql/data
+    networks:
+      - app_network
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "${DATABASE_USER}", "-d", "${DATABASE_NAME}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis_database:
+    image: redis:${REDIS_VERSION}
+    container_name: cache_db
+    networks:
+      - app_network
+    ports:
+      - "127.0.0.1:6379:6379"
+    volumes:
+      - redis_volume:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # nginx_proxy:
+  #   image: nginx:${NGINX_VERSION}
+  #   container_name: nginx_server
+  #   ports:
+  #     - "80:80"
+  #     - "443:443"
+  #   volumes:
+  #     - ./nginx_config/nginx.conf:/etc/nginx/templates/nginx.conf.template:ro
+  #     - ./certs:/etc/ssl/certs:ro
+  #   networks:
+  #     - app_network
+  #   depends_on:
+  #     server_api:
+  #       condition: service_healthy
+
+  adminer:
+    image: adminer:${ADMINER_VERSION}
+    container_name: adminer_project
+    ports:
+      - "127.0.0.1:8080:8080"
+    networks:
+      - app_network
+    depends_on:
+      database_project:
+        condition: service_healthy
+
+volumes:
+  app_src_volume:
+  postgres_volume:
+  redis_volume:
+
+networks:
+  app_network:
+    driver: bridge
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# services:
+#   server_api:
+#     image: partido_uniao:${PROJECT_VERSION}
+#     container_name: app_project_real
+#     build: .
+#     environment:
+#       - PYTHONPATH=/app
+#     env_file:
+#       - .env
+#     volumes:
+#       - .:/app
+#     networks:
+#       - app_network
+#     dns:
+#       - 8.8.8.8
+#       - 1.1.1.1
+#     depends_on:
+#       database_project:
+#         condition: service_healthy
+#       redis_database:
+#         condition: service_healthy
+#     healthcheck:
+#       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:10000/docs', timeout=2)"]
+#       interval: 10s
+#       timeout: 5s
+#       retries: 3
+
+#   database_project:
+#     image: postgres:${POSTGRES_VERSION}
+#     container_name: database_db
+#     environment:
+#       - POSTGRES_USER=${DATABASE_USER}
+#       - POSTGRES_PASSWORD=${DATABASE_PASSWORD}
+#       - POSTGRES_DB=${DATABASE_NAME}
+#     ports:
+#       - "127.0.0.1:5432:5432"
+#     volumes:
+#       - postgres_volume:/var/lib/postgresql/data
+#     networks:
+#       - app_network
+#     healthcheck:
+#       test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+#       interval: 5s
+#       timeout: 5s
+#       retries: 5
+
+#   redis_database:
+#     image: redis:${REDIS_VERSION}
+#     container_name: cache_db
+#     networks:
+#       - app_network
+#     ports:
+#       - "127.0.0.1:6379:6379" # Seguro
+#     volumes:
+#       - redis_volume:/data
+#     healthcheck:
+#       test: ["CMD", "redis-cli", "ping"]
+#       interval: 5s
+#       timeout: 3s
+#       retries: 5
+
+#   nginx_proxy:
+#     image: nginx:${NGINX_VERSION}
+#     container_name: nginx_server
+#     ports:
+#       - "80:80"
+#       - "443:443"
+#     volumes:
+#       - ./nginx.conf:/etc/nginx/nginx.conf:ro 
+#       - ./certs:/etc/nginx/certs:ro
+#     networks:
+#       - app_network
+#     depends_on:
+#       server_api:
+#         condition: service_healthy
+
+#   adminer:
+#     image: adminer:${ADMINER_VERSION}
+#     container_name: adminer_project
+#     ports:
+#       - "127.0.0.1:8080:8080"
+#     networks:
+#       - app_network
+#     depends_on:
+#       database_project:
+#         condition: service_healthy
+
+# volumes:
+#   app_src_volume:
+#   postgres_volume:
+#   redis_volume:
+
+# networks:
+#   app_network:
+#     driver: bridge

@@ -1,0 +1,12 @@
+﻿.env
+.env.*
+*.env
+__pycache__/
+*.pyc
+.coverage
+logs/
+*.log
+.pytest_cache/
+.mypy_cache/
+.vscode/
+certs/
