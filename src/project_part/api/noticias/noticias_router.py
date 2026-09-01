@@ -71,10 +71,6 @@ news_router = APIRouter(prefix='/news', tags=['News & Categories'])
 
 
 CACHE_KEY_NOTICIAS = 'v1:noticias:lista'
-CACHE_KEY_CATEGORIAS = 'v1:categorias:lista'
-
-
-# CACHE_KEY_NOTICIAS = 'noticias:list'
 CACHE_TTL_NOTICIAS = 3600 
 
 ALLOWED_EXTENSIONS = {'jpg', 'jpeg'}

@@ -22,12 +22,15 @@ from src.project_part.model.models import (
     CartaoMilitante,
     Genero,
     EstadoCivil,
+    MensagemSuporte,
     CadastrarComo,
     SolicitacaoMilitancia,
     StatusSolicitacaoMilitancia,
     UserRefreshToken,
     RoleCategoriaNotificacao,
     Notification,
+    CategoriaMensagemSuporte,
+    RoleMensagemSuporte,
     )
 from alembic import context
 

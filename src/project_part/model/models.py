@@ -129,6 +129,20 @@ class RoleCategoriaNotificacao(str, Enum):
     NOTICIAS = 'NOTICIAS'
     QUOTA = 'QUOTA'
 
+class RoleMensagemSuporte(str, Enum):
+    PENDENTE = 'Pendente'
+    EM_ANDAMENTO = 'Em_andamento'
+    RESOLVIDO = 'resolvido'
+
+class CategoriaMensagemSuporte(str, Enum):
+    PAGAMENTOS_QUOTAS = "Pagamento_de_Quota"
+    SUGESTOES = "Sugestoes"
+    SUPORTE_TECNICO = "Suporte_Tecnico"
+    PROBLEMA_DE_CONTA = "Problema_de_Conta"
+    OUTROS = "Outros"
+
+
+
     
 
 
@@ -616,7 +630,42 @@ class Notification(Base):
     solicitante: Mapped["User"] = relationship("User", foreign_keys=[user_id])
 
 
+class MensagemSuporte(Base):
+    __tablename__ = "mensagens_suporte"
 
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        default=uuid.uuid4,
+    )
+    categoria: Mapped[CategoriaMensagemSuporte] = mapped_column(default=CategoriaMensagemSuporte.OUTROS, nullable=False)
+    assunto: Mapped[str] = mapped_column(String(200), nullable=False)
+    mensagem: Mapped[str] = mapped_column(TEXT, nullable=False)
+    status: Mapped[RoleMensagemSuporte] = mapped_column(String(30), nullable=False, default=RoleMensagemSuporte.PENDENTE)
+    criado_as: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+    user_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    admin_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+
+    solicitante: Mapped[Optional["User"]] = relationship(
+        "User", foreign_keys=[user_id], lazy="selectin"
+    )
+    admin: Mapped[Optional["User"]] = relationship(
+        "User", foreign_keys=[admin_id], lazy="selectin"
+    )
 
 class BackupCode(Base):
     __tablename__ = "user_backup_codes"

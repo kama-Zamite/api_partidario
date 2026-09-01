@@ -1,5 +1,6 @@
 import uuid
 import re
+from enum import Enum
 from datetime import date, datetime
 from typing import Any, Dict, Optional
 from project_part.model.models import (
@@ -7,6 +8,7 @@ from project_part.model.models import (
     EstadoCivil,
     Genero,
     RoleCategoriaNotificacao,
+    RoleMensagemSuporte,
 )
 from pydantic import (
     BaseModel,
@@ -122,3 +124,25 @@ class NotificationResponse(BaseModel):
 class NotificationListResponse(BaseModel):
     total: int
     results: list[NotificationResponse]
+
+
+
+
+class MensagemSuporteResponse(BaseModel):
+    id: uuid.UUID
+    categoria: str
+    assunto: str
+    mensagem: str
+    status: RoleMensagemSuporte
+    criado_as: datetime
+    user_id: uuid.UUID | None = None
+    admin_id: uuid.UUID | None = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class MensagensSuportePaginadasResponse(BaseModel):
+    # total: int
+    results: list[MensagemSuporteResponse]
+
+

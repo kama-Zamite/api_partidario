@@ -10,6 +10,7 @@ from slowapi.middleware import SlowAPIMiddleware
 from project_part.api.admin.admin_router import admin
 from project_part.api.auth.auth_router import auth
 from project_part.api.events.event_router import event
+from project_part.api.Suporte.router_suporte import suporte_router
 from project_part.api.noticias.noticias_router import news_router
 from project_part.api.provincia.provincia_router import provincia
 from project_part.api.notification_router.notification_router import router_notific
@@ -117,3 +118,4 @@ app.include_router(finance)
 
 app.include_router(health_router)
 app.include_router(privacy)
+app.include_router(suporte_router)

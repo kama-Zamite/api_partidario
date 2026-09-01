@@ -36,6 +36,7 @@ from project_part.model.models import (
     Role,
     SolicitacaoCartao,
     SolicitacaoMilitancia,
+    MensagemSuporte,
     StatusSolicitacao,
     User,
 )
@@ -46,6 +47,7 @@ from .schemas import (
     ResponseAdminScope,
     NotificationResponse,
     NotificationListResponse,
+    MensagensSuportePaginadasResponse,
     )
 
 logger = logging.getLogger(__name__)
@@ -357,6 +359,47 @@ async def listar_logs_auditoria(
     return {'total': total, 'page': page, 'limit': limit, 'results': logs}
 
 
+
+
+@admin.get('/notificacoes/suporte', status_code=HTTPStatus.OK, response_model=MensagensSuportePaginadasResponse)
+async def listar_notificacoes_suporte(
+    session: Session,
+    current_user: Get_current_user,
+    scope: ScopeValid,
+    limit: int = Query(default=10, le=50, description='Número de notificações por página'),
+    offset: int = Query(default=0, ge=0, description='Número de registros a pular (offset)'),
+):
+
+    """
+    Retorna a lista de notificações de suporte destinadas ao Administrador logado,
+    ordenadas das mais recentes para as mais antigas.
+    """
+
+    logger.info('Administrador %s listando suas notificações de suporte...', current_user.id)
+    query = (
+        select(MensagemSuporte)
+        .where(MensagemSuporte.admin_id == current_user.id)
+        .order_by(MensagemSuporte.criado_as.desc())
+        .limit(limit)
+        .offset(offset)
+    )
+
+    result = await session.execute(query)
+    notificacoes = result.scalars().all()
+
+    if not notificacoes:
+        logger.info("Nenhuma notificação de suporte encontrada para o usuário %s", current_user.id)
+        return {
+                'total': 0, 
+                'results': []
+                }
+
+    return {
+        'results': notificacoes
+    }
+
+
+
 @admin.get('/notificacoes', status_code=HTTPStatus.OK, response_model=NotificationListResponse)
 async def listar_notificacoes(
     session: Session,
@@ -447,7 +490,7 @@ async def listar_notificacoes_lidas(
     
 
 
-@admin.patch('/notificacoes/{id_notificacao}/ler', status_code=HTTPStatus.OK, response_model=NotificationResponse)
+@admin.patch('/notificacoes/{id_notificacao}/ler', status_code=HTTPStatus.OK, response_model=MensagensSuportePaginadasResponse)
 async def marcar_como_lida(
     id_notificacao: uuid.UUID, session: Session, current_user: Get_current_user, scope: ScopeValid
 ):
