@@ -25,12 +25,13 @@ from project_part.model.models import (
     AdminScope,
     User,
 )
+from project_part.services.claudflare_turnfile import verificar_turnstile
 from .schemas import (
         MensagemSuporteCreate, 
         MensagemSuporteResponse,
     )
 
-
+Claudflare_turnfile = Annotated[bool, Depends(verificar_turnstile)]
 Session = Annotated[AsyncSession, Depends(get_session)]
 logger = logging.getLogger(__name__)
 
@@ -48,7 +49,7 @@ admin_id = 1
 async def enviar_mensagem_suporte(
     session: Session,
     current_user: Get_current_user,
-    # _captcha: Claudflare_turnfile
+    _captcha: Claudflare_turnfile,
     categoria: CategoriaMensagemSuporte = Form(...),
     assunto: str = Form(..., min_length=5, max_length=200),
     mensagem: str = Form(..., min_length=10, max_length=3000),
