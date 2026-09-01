@@ -73,5 +73,7 @@ class LimitEvent(BaseModel):
     limit: int = Field(ge=10, le=100, default=10)
     skip: int = Field(ge=0, default=0)
 
+    model_config = ConfigDict(from_attributes=True)
+
 
 class UpgradeEvent(EventBase): ...

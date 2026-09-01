@@ -3,6 +3,7 @@ import re
 import secrets
 import unicodedata
 import uuid
+import json
 from datetime import datetime, timezone
 from http import HTTPStatus
 from typing import Annotated, List, Optional
@@ -14,6 +15,7 @@ from fastapi import (
     Form,
     HTTPException,
     Path,
+    Response,
     Request,
     UploadFile,
 )
@@ -28,6 +30,7 @@ from project_part.core.cloudinary_config import (
     apagar_imagem_noticia_cloudinary,
     upload_imagem_geral,
 )
+from project_part.core.setting import settings
 from project_part.core.rate_limit import limiter
 from project_part.core.secury import (
     Get_current_user,
@@ -71,7 +74,10 @@ CACHE_KEY_NOTICIAS = 'v1:noticias:lista'
 CACHE_KEY_CATEGORIAS = 'v1:categorias:lista'
 
 
-ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'webp'}
+# CACHE_KEY_NOTICIAS = 'noticias:list'
+CACHE_TTL_NOTICIAS = 3600 
+
+ALLOWED_EXTENSIONS = {'jpg', 'jpeg'}
 MAX_FILE_SIZE = 50 * 1024 * 1024
 
 
@@ -252,12 +258,12 @@ async def criar_noticia(
 
         mid = municipio_banco.id
 
-        if scope.municipio_id and mid != scope.municipio_id:
-            logger.warning('Admin municipal %s impedido de criar em %s.', current_user.id, dados_validos.nome_municipio)
-            raise HTTPException(
-                status_code=HTTPStatus.FORBIDDEN,
-                detail='Acesso negado: Você só pode criar notícias vinculadas ao seu município.',
-            )
+        # if scope.municipio_id and mid != scope.municipio_id:
+        #     logger.warning('Admin municipal %s impedido de criar em %s.', current_user.id, dados_validos.nome_municipio)
+        #     raise HTTPException(
+        #         status_code=HTTPStatus.FORBIDDEN,
+        #         detail='Acesso negado: Você só pode criar notícias vinculadas ao seu município.',
+        #     )
 
     nova_noticia = Noticia(
         titulo=dados_validos.titulo,
@@ -279,7 +285,7 @@ async def criar_noticia(
 
         if image_news:
             extensao = image_news.filename.split('.')[-1].lower()
-            if extensao not in {'png', 'jpg', 'jpeg', 'webp'}:
+            if extensao not in {'jpg', 'jpeg'}:
                 raise HTTPException(
                     status_code=HTTPStatus.BAD_REQUEST,
                     detail='Formato de imagem inválido. Use apenas PNG, JPG, JPEG ou WEBP.',
@@ -375,36 +381,77 @@ async def criar_noticia(
 
 #     return dados_serializados
 
-
-@news_router.get('/list', status_code=HTTPStatus.OK, response_model=List[NoticiaResponse])
+@news_router.get(
+    '/list',
+    status_code=HTTPStatus.OK,
+    response_model=List[NoticiaResponse],
+)
 async def listar_noticias(
-    session: Session,  # Garantir que é AsyncSession no seu Depends
+    response: Response,
+    session: Session,
+    redes: Redis,
     pagin: Paginacao,
 ):
     """
     Endpoint de alta performance para listar notícias com paginação.
-    Carrega relacionamentos geográficos de forma eficiente.
+    Utiliza cache Redis com chave parametrizada por skip/limit.
     """
+    cache_key = f"{CACHE_KEY_NOTICIAS}:skip={pagin.skip}:limit={pagin.limit}"
+    response.headers['X-Cache-Hit'] = 'false'
 
+    # ── 1. Tenta ler do cache ──────────────────────────────────────────────
+    try:
+        cached = await redes.get(cache_key)
+        if cached:
+            response.headers['X-Cache-Hit'] = 'true'
+            logger.info("Cache de notícias [%s] encontrado e retornado.", cache_key)
+            return TypeAdapter(List[NoticiaResponse]).validate_python(
+                json.loads(cached)
+            )
+    except Exception as err:
+        logger.error("Falha ao ler cache de notícias [%s]: %s", cache_key, err)
+
+    # ── 2. Busca no banco ──────────────────────────────────────────────────
     query = (
         select(Noticia)
-        .options(selectinload(Noticia.provincia), selectinload(Noticia.municipio), selectinload(Noticia.categoria))
+        .options(
+            selectinload(Noticia.provincia),
+            selectinload(Noticia.municipio),
+            selectinload(Noticia.categoria),
+        )
         .order_by(Noticia.publicado_as.desc())
         .limit(pagin.limit)
         .offset(pagin.skip)
     )
 
-    resultado = await session.execute(query)
+    result = await session.execute(query)
+    noticias = result.scalars().all()
 
-    noticias = resultado.scalars().all()
     if not noticias:
         return []
 
+    # ── 3. Serializa e grava no cache ──────────────────────────────────────
+    try:
+        # 1. Converte ORM → Pydantic (com from_attributes=True)
+        noticias_response = TypeAdapter(List[NoticiaResponse]).validate_python(noticias)
+
+        # 2. Gera dicts JSON-serializáveis
+        payload = TypeAdapter(List[NoticiaResponse]).dump_python(
+            noticias_response, mode='json'
+        )
+
+        await redes.set(
+            cache_key,
+            json.dumps(payload),
+            ex=CACHE_TTL_NOTICIAS,
+        )
+    except Exception as err:
+        logger.error("Falha ao gravar cache de notícias [%s]: %s", cache_key, err)
+    logger.info("Notícias [%d] carregadas do banco e cache atualizado.", len(noticias))
     return noticias
 
-
 @news_router.get('/{id_news}', status_code=HTTPStatus.OK, response_model=NoticiaResponse)
-async def obter_noticia(id_news: uuid.UUID, session: Session):
+async def obter_noticia(id_news: int, session: Session):
     """ "
     Endpoint para obter os detalhes de uma notícia específica por ID.
     Retorna os detalhes da notícia solicitada ou um erro 404 se não for encontrada.
@@ -421,7 +468,7 @@ async def obter_noticia(id_news: uuid.UUID, session: Session):
 @limiter.limit('1/minute')
 async def atualizar_status_noticia(
     request: Request,
-    id_news: uuid.UUID,
+    id_news: int,
     status: UgradeStatusNoticia,
     session: Session,
     caches: Redis,
@@ -462,66 +509,11 @@ async def atualizar_status_noticia(
         )
 
 
-@news_router.patch('/{id_news}/categoria', status_code=HTTPStatus.OK)
-@limiter.limit('1/minute')
-async def atualizar_categoria_noticia(
-    request: Request,
-    id_news: uuid.UUID,
-    categoria_id: FormatprimitiveInt,
-    session: Session,
-    caches: Redis,
-    current_user: Get_current_user,
-    scope: ScopeValid,
-):
-    """ "Endpoint para atualizar a categoria de uma notícia específica.
-    Verifica se a notícia existe, se o administrador tem permissão para atualizar a notícia com base no território e se a nova categoria existe.
-    Se todas as validações passarem, atualiza a categoria da notícia e retorna uma mensagem de sucesso. Caso contrário, retorna o erro apropriado."""
-    noticia_banco = await session.scalar(select(Noticia).where(Noticia.id == id_news))
-    if not noticia_banco:
-        raise HTTPException(status_code=HTTPStatus.NOT_FOUND, detail='Notícia não encontrada')
-
-    if scope.provincia_id and scope.provincia_id != noticia_banco.provincia_id:
-        logger.warning('Admin %s bloqueado de atualizar categoria de notícia de outro território.', current_user.id)
-        raise HTTPException(
-            status_code=HTTPStatus.FORBIDDEN, detail='Acesso negado: Você não gerencia o território desta notícia.'
-        )
-    if scope.municipio_id and scope.municipio_id != noticia_banco.municipio_id:
-        logger.warning('Admin %s bloqueado de atualizar categoria de notícia de outro território.', current_user.id)
-        raise HTTPException(
-            status_code=HTTPStatus.FORBIDDEN, detail='Acesso negado: Você não gerencia o território desta notícia.'
-        )
-
-    categoria_banco = await session.scalar(select(NoticiaCategoria).where(NoticiaCategoria.id == categoria_id.id))
-    if not categoria_banco:
-        raise HTTPException(status_code=HTTPStatus.NOT_FOUND, detail='Categoria não encontrada')
-
-    noticia_banco.categoria_id = categoria_id.id
-    noticia_banco.atualizado_as = datetime.now(timezone.utc())
-
-    try:
-        await session.commit()
-        await caches.delete(CACHE_KEY_NOTICIAS)
-        logger.info(
-            'Categoria da notícia [%s] atualizada para [%s] por %s.',
-            noticia_banco.titulo,
-            categoria_banco.name,
-            current_user.email,
-        )
-        return {'msg': 'Categoria da notícia atualizada com sucesso!'}
-    except IntegrityError as e:
-        await session.rollback()
-        logger.error('Erro de integridade ao atualizar categoria da notícia: %s', str(e.orig))
-        raise HTTPException(
-            status_code=HTTPStatus.CONFLICT,
-            detail='Erro de integridade ao atualizar a categoria da notícia.',
-        )
-
-
 @news_router.put('/{id_news}', status_code=HTTPStatus.OK)
 @limiter.limit('1/minute')
 async def atualizar_noticia_completa(
     request: Request,
-    id_news: uuid.UUID,
+    id_news: int,
     schemas: UpgradeNoticia,
     session: Session,
     caches: Redis,
@@ -659,158 +651,3 @@ async def eliminar_noticia(
 
     await caches.delete(CACHE_KEY_NOTICIAS)
     return {'msg': 'Notícia deletada com sucesso!'}
-
-
-@news_router.put('/categories/upgrade/{id_categoria}', status_code=HTTPStatus.OK)
-@limiter.limit('2/minute')
-async def atualizar_categoria(
-    request: Request,
-    id_categoria: FormatprimitiveInt,
-    schema: UpgradeCategoria,
-    session: Session,
-    cache: Redis,
-    current_user: Get_current_user,
-    scope: ScopeValid,
-):
-    verificar_permissao_global_pais(scope, current_user)
-    query = select(NoticiaCategoria).where(NoticiaCategoria.id == id_categoria)
-
-    up_categoria = await session.scalar(query)
-    if not up_categoria:
-        logger.warning('Nenhuma categoria cadastrada no banco de dados.')
-        raise HTTPException(
-            status_code=HTTPStatus.NOT_FOUND,
-            detail='Nenhuma categoria encontrada no sistema.',
-        )
-
-    up_categoria.name = schema.name
-
-    try:
-        session.add(up_categoria)
-        await session.commit()
-        await cache.delete(CACHE_KEY_CATEGORIAS)
-        logger.info('Categoria [%s] atualizado com sucesso por %s.', schema.nome, current_user.email)
-        return {'msg': 'Categoria atualizado com sucesso!'}
-    except IntegrityError as e:
-        await session.rollback()
-        logger.error('Erro de integridade ao atualizar categoria: [%s]', str(e.orig))
-        raise HTTPException(
-            status_code=HTTPStatus.CONFLICT,
-            detail='Dados conflitantes ao atualizar categoria.',
-        )
-
-
-@news_router.delete('/categories/deletar/{id_categoria}', status_code=HTTPStatus.OK)
-@limiter.limit('2/minute')
-async def eliminar_categoria(
-    request: Request,
-    id_categoria: FormatprimitiveInt,
-    schema: UpgradeCategoria,
-    session: Session,
-    cache: Redis,
-    current_user: Get_current_user,
-    scope: ScopeValid,
-):
-    verificar_permissao_global_pais(scope, current_user)
-    query = select(NoticiaCategoria).where(NoticiaCategoria.id == id_categoria)
-
-    up_categoria = await session.scalar(query)
-    if not up_categoria:
-        logger.warning('Nenhuma categoria cadastrada no banco de dados.')
-        raise HTTPException(
-            status_code=HTTPStatus.NOT_FOUND,
-            detail='Nenhuma categoria encontrada no sistema.',
-        )
-
-    try:
-        await session.delete(up_categoria)
-        await session.commit()
-        await cache.delete(CACHE_KEY_CATEGORIAS)
-        logger.info('Categoria [%s] deletada com sucesso por %s.', schema.nome, current_user.email)
-        return {'msg': 'Categoria deletada com sucesso!'}
-    except IntegrityError as e:
-        await session.rollback()
-        logger.error('Erro de integridade ao deletar a categoria: [%s]', str(e.orig))
-        raise HTTPException(
-            status_code=HTTPStatus.CONFLICT,
-            detail='Dados conflitantes ao deletar a categoria.',
-        )
-
-
-@news_router.get('/categories/{id_categoria}', status_code=HTTPStatus.OK, response_model=CategoriaResponse)
-@limiter.limit('2/minute')
-async def obter_categoria(request: Request, id_categoria: FormatprimitiveInt, session: Session, cache: Redis):
-
-    query = select(NoticiaCategoria).where(NoticiaCategoria.id == id_categoria)
-    query = query.options(selectinload(NoticiaCategoria.noticias))
-
-    categoria_noticia = await session.scalar(query)
-
-    if not categoria_noticia:
-        raise HTTPException(status_code=HTTPStatus.NOT_FOUND, detail='Categoria nao encontrada!')
-
-    return categoria_noticia
-
-
-@news_router.put('/upgrade/{id_news}', status_code=HTTPStatus.OK)
-@limiter.limit('2/minute')
-async def atualizar_noticia(
-    request: Request,
-    schemas: UpgradeNoticia,
-    id_news: uuid.UUID,
-    session: Session,
-    caches: Redis,
-    current_user: Get_current_user,
-    scope: ScopeValid,
-):
-    noticia_banco = await session.scalar(select(Noticia).where(Noticia.id == id_news))
-    if not noticia_banco:
-        raise HTTPException(status_code=HTTPStatus.NOT_FOUND, detail='Notícia não encontrada')
-
-    # Verifica se o administrador tem controle sobre a província antiga da notícia
-    if scope.provincia_id and scope.provincia_id != noticia_banco.provincia_id:
-        logger.warning('Admin %s bloqueado de atualizar notícia de outro território.', current_user.id)
-        raise HTTPException(
-            status_code=HTTPStatus.FORBIDDEN, detail='Acesso negado: Você não gerencia o território desta notícia.'
-        )
-
-    pid = None
-    if schemas.nome_provincia:
-        provincia_banco = await session.scalar(
-            select(Provincia).where(Provincia.nome_provincia == schemas.nome_provincia)
-        )
-        if not provincia_banco:
-            raise HTTPException(status_code=HTTPStatus.NOT_FOUND, detail='Província informada não encontrada')
-
-        pid = provincia_banco.id
-
-        # Verifica se o administrador tem permissão para a *nova* província associada
-        if scope.provincia_id and pid != scope.provincia_id:
-            raise HTTPException(
-                status_code=HTTPStatus.FORBIDDEN,
-                detail='Acesso negado: Nova província informada está fora da sua zona permitida.',
-            )
-
-    # Atualização dos atributos do modelo
-    noticia_banco.titulo = schemas.titulo
-    noticia_banco.slug = schemas.slug
-    noticia_banco.subtitulo = schemas.subtitulo
-    noticia_banco.lead = schemas.lead
-    noticia_banco.corpo = schemas.corpo
-    noticia_banco.image_url = schemas.image_url
-    noticia_banco.categoria_id = schemas.categoria_id
-    noticia_banco.provincia_id = pid
-    noticia_banco.status = schemas.status
-
-    try:
-        await session.commit()
-        await caches.delete(CACHE_KEY_NOTICIAS)
-        logger.info('Notícia [%s] modificada com sucesso por %s.', schemas.titulo, current_user.email)
-        return {'msg': 'Notícia atualizada com sucesso!'}
-    except IntegrityError as e:
-        await session.rollback()
-        logger.error('Erro de integridade ao atualizar notícia: %s', str(e.orig))
-        raise HTTPException(
-            status_code=HTTPStatus.CONFLICT,
-            detail='Conflito de dados ao atualizar a notícia. Verifique unicidade de campos como o slug.',
-        )

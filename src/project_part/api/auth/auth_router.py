@@ -887,16 +887,16 @@ async def refresh_token(
 
 
 
-@auth.get("/debug/cookies")
-async def debug_cookies(request: Request):
-    return {
-        "access_token": bool(
-            request.cookies.get("access_token")
-        ),
-        "refresh_token": bool(
-            request.cookies.get("refresh_token")
-        ),
-    }
+# @auth.get("/debug/cookies")
+# async def debug_cookies(request: Request):
+#     return {
+#         "access_token": bool(
+#             request.cookies.get("access_token")
+#         ),
+#         "refresh_token": bool(
+#             request.cookies.get("refresh_token")
+#         ),
+#     }
 
 
 @auth.post(

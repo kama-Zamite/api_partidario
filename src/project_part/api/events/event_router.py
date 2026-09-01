@@ -1,5 +1,6 @@
 import logging
 import uuid
+import json
 from datetime import datetime, timezone
 from http import HTTPStatus
 from typing import Annotated, List
@@ -15,7 +16,7 @@ from fastapi import (
     UploadFile,
     Query,
 )
-from pydantic import ValidationError
+from pydantic import ValidationError, TypeAdapter
 from redis.asyncio import Redis as AsyncRedis
 from sqlalchemy import select, func
 from sqlalchemy.exc import IntegrityError
@@ -63,6 +64,8 @@ ScopeValid = Annotated[AdminScope, Depends(garante_escopo_territorial)]
 event = APIRouter(prefix='/event', tags=['Events'])
 
 CACHE_KEY_LISTA = 'v1:eventos:lista'
+CACHE_TTL_EVENTOS = 3600
+
 ALLOWED_EXTENSIONS = ['.jpg', '.jpeg']
 FILE_SIZE_LIMIT = 5 * 1024 * 1024  # 5 MB
 
@@ -94,7 +97,7 @@ async def criar_evento(
     session: Session,
     caches: Redis,
     current_user: Get_current_user,
-    scope: ScopeValid,
+    # scope: ScopeValid,
     titulo: str = Form(..., max_length=200),
     descricao: str = Form(...),
     localizacao: str = Form(max_length=255),
@@ -146,11 +149,11 @@ async def criar_evento(
             detail=f'O município "{dados_valido.nome_municipio}" não pertence à província "{dados_valido.nome_provincia}"',
         )
 
-    if scope.provincia_id and provincia_banco.id != scope.provincia_id:
-        logger.warning('Admin %s fora da sua província permitida.', current_user.id)
-        raise HTTPException(
-            status_code=HTTPStatus.FORBIDDEN, detail='Acesso negado: Você só pode criar eventos na sua província.'
-        )
+    # if scope.provincia_id and provincia_banco.id != scope.provincia_id:
+    #     logger.warning('Admin %s fora da sua província permitida.', current_user.id)
+    #     raise HTTPException(
+    #         status_code=HTTPStatus.FORBIDDEN, detail='Acesso negado: Você só pode criar eventos na sua província.'
+    #     )
 
     # if scope.municipio_id and municipio_banco.id != scope.municipio_id:
     #     logger.warning('Admin %s fora do seu município permitido.', current_user.id)
@@ -320,40 +323,76 @@ async def listar_eventos(
     }
 
 
-
-
-@event.get('/list', status_code=HTTPStatus.OK, response_model=EventosPaginadosResponse) # <-- Atualize o schema aqui
+@event.get(
+    '/list',
+    status_code=HTTPStatus.OK,
+    response_model=EventosPaginadosResponse,
+)
 async def listar_eventos(
     response: Response,
     session: Session,
     caches: Redis,
     pagin: Paginacao,
 ):
-    # 1. Iniciamos as queries base (uma para os dados e outra para a contagem)
-    query = select(Event).options(selectinload(Event.provincia), selectinload(Event.municipio)).order_by(Event.criado_as.desc())
-    count_query = select(func.count()).select_from(Event) # Query limpa apenas para contar
+    """
+    Lista eventos com paginação + cache Redis.
+    Cache key inclui skip/limit para isolar as páginas.
+    """
+    cache_key = f"{CACHE_KEY_LISTA}:skip={pagin.skip}:limit={pagin.limit}"
+    response.headers['X-Cache-Hit'] = 'false'
 
-    # 4. Executa a contagem TOTAL antes de aplicar a paginação
+    # ── 1. Tenta ler do cache ──────────────────────────────────────────────
+    try:
+        cached = await caches.get(cache_key)
+        if cached:
+            response.headers['X-Cache-Hit'] = 'true'
+            logger.info("Cache de eventos [%s] encontrado.", cache_key)
+            return TypeAdapter(EventosPaginadosResponse).validate_python(
+                json.loads(cached)
+            )
+    except Exception as err:
+        logger.error("Falha ao ler cache de eventos [%s]: %s", cache_key, err)
+
+    # ── 2. Busca no banco ──────────────────────────────────────────────────
+    query = (
+        select(Event)
+        .options(
+            selectinload(Event.provincia),
+            selectinload(Event.municipio),
+        )
+        .order_by(Event.criado_as.desc())
+    )
+
+    # Contagem total (sem paginação)
+    count_query = select(func.count()).select_from(Event)
     total_eventos = await session.scalar(count_query) or 0
 
-    # 5. Aplica a paginação APENAS na query que traz os dados dos eventos
+    # Aplica paginação só na query de dados
     query = query.limit(pagin.limit).offset(pagin.skip)
     resultado = await session.scalars(query)
     eventos = resultado.all()
 
-    # 6. Validação
-    if not eventos:
-        logger.warning('Nenhum evento encontrado.')
-        raise HTTPException(
-            status_code=HTTPStatus.NOT_FOUND,
-            detail='Nenhum evento encontrado no sistema para estes critérios.',
-        )
+    # ── 3. Monta a resposta ────────────────────────────────────────────────
+    # Preferível retornar lista vazia + total=0 em vez de 404
+    resposta = EventosPaginadosResponse(
+        total=total_eventos,
+        eventos=eventos,          # Pydantic converte via from_attributes=True
+    )
 
-    # 7. Retorna a nova estrutura com o total e a lista
-    return {
-        "total": total_eventos,
-        "eventos": eventos
-    }
+    # ── 4. Grava no cache ──────────────────────────────────────────────────
+    try:
+        payload = TypeAdapter(EventosPaginadosResponse).dump_python(
+            resposta, mode='json'
+        )
+        await caches.set(
+            cache_key,
+            json.dumps(payload),
+            ex=CACHE_TTL_EVENTOS,   # 3600 = 1 hora
+        )
+    except Exception as err:
+        logger.error("Falha ao gravar cache de eventos [%s]: %s", cache_key, err)
+
+    return resposta
 
 
 
