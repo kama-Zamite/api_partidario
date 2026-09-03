@@ -570,6 +570,7 @@ class SolicitacaoCartao(Base):
     status: Mapped[StatusSolicitacao] = mapped_column(default=StatusSolicitacao.PENDENTE, index=True, nullable=False)
     observacao: Mapped[None | str] = mapped_column(TEXT, nullable=True)
     criado_as: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    user: Mapped["User"] = relationship("User")
     __table_args__ = (
         Index(
             'uq_cartao_pendente_usuario',
@@ -666,6 +667,7 @@ class MensagemSuporte(Base):
     admin: Mapped[Optional["User"]] = relationship(
         "User", foreign_keys=[admin_id], lazy="selectin"
     )
+
 
 class BackupCode(Base):
     __tablename__ = "user_backup_codes"

@@ -25,7 +25,7 @@ from fastapi import (
 from pydantic import TypeAdapter
 from redis.asyncio import Redis as AsyncRedis
 from sqlalchemy import func, select, extract
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload, joinedload
 
@@ -60,6 +60,8 @@ from .schemas import (
     NotificationResponse,
     NotificationListResponse,
     MensagensSuportePaginadasResponse,
+    RegistrosRecentes,
+    CardSolicitante,
     )
 
 logger = logging.getLogger(__name__)
@@ -337,6 +339,12 @@ async def militantes_registrados(
     current_user: Get_current_user,
     session: Session
 ):
+    """
+    Retorna o total de militantes cadastrados.
+    1. Superadmin → retorna o total de militantes cadastrados em todo o país.
+    2. Admin Provincial → retorna o total de militantes cadastrados na sua província.
+    3. Admin Municipal → acesso negado (não pode acessar totais). 
+    """
     logger.info(
         "Validar permissão do usuário %s para acessar o total de militantes registrados",
         current_user.id
@@ -370,15 +378,18 @@ async def militantes_registrados(
     }
 
 
-
-
 @admin.get('/militantes-registrados/nos-ultimos-dias', status_code=HTTPStatus.OK)
 async def ultimos_militantes_resgistrados(
     session: Session,
     current_user: Get_current_user,
     scope: ScopeValid,
 ):
-    
+    """
+    Retorna o total de militantes registrados nos últimos 7 dias.
+    1. Superadmin → retorna o total de militantes registrados em todo o país.
+    2. Admin Provincial → retorna o total de militantes registrados na sua província.
+    3. Admin Municipal → acesso negado (não pode acessar totais).
+    """
 
     logger.info(
         "Validar permissão do usuário %s para acessar o total de militantes registrados nos últimos dias",
@@ -420,6 +431,13 @@ async def militantes_por_provincia(
     current_user: Get_current_user,
     scope: ScopeValid,
 ):
+    """
+    Retorna o total de militantes cadastrados, agrupados por província ou município,
+    dependendo do nível de acesso do administrador.
+    1. Superadmin → agrupa por província.
+    2. Admin Provincial → agrupa por município da sua província.
+    3. Admin Municipal → acesso negado (não pode acessar totais). 
+    """
     logger.info(
         "Usuário %s tentando acessar total de militantes",
         current_user.id
@@ -507,6 +525,10 @@ async def evolucao_militantes(
     scope: ScopeValid,
     ano: int = Query(None, description="Ano para filtrar (padrão: ano atual)"),
 ):
+    """
+    Retorna a evolução mensal do número de militantes cadastrados ao longo do ano especificado.
+    Se nenhum ano for fornecido, o padrão será o ano atual. 
+    """
     logger.info(
         "Usuário %s tentando acessar evolução de militantes do ano %s",
         current_user.id,
@@ -582,6 +604,58 @@ async def evolucao_militantes(
         "ano": ano_consulta,
         "dados": evolucao
     }
+
+
+@admin.get('/registros-recentes', status_code=HTTPStatus.OK, response_model=RegistrosRecentes)
+async def registros_recentes(       
+    session: Session,
+    current_user: Get_current_user,
+    scope: ScopeValid,
+    limit: int = Query(default=10, ge=1, le=50, description='Número de registros recentes a retornar'),
+):
+    """
+    Retorna os registros recentes de militantes cadastrados.
+    1. Superadmin → retorna os registros recentes em todo o país.
+    2. Admin Provincial → retorna os registros recentes na sua província.
+    3. Admin Municipal → acesso negado (não pode acessar totais). 
+    """
+    logger.info(
+        "Usuário %s tentando acessar registros recentes de militantes",
+        current_user.id
+    )
+
+    if scope.municipio_id is not None:
+        logger.warning(
+            "Acesso negado: Usuário %s (município) não tem permissão",
+            current_user.id
+        )
+        raise HTTPException(
+            status_code=HTTPStatus.FORBIDDEN,
+            detail="Acesso negado: Você não tem permissão para acessar os registros recentes."
+        )
+
+    query = (
+        select(User)
+        .where(User.ativo.is_(True), User.cadastrar_militante == CadastrarComo.MILITANTE)
+        .options(selectinload(User.provincia),
+                 selectinload(User.municipio),
+                 selectinload(User.role))
+        .order_by(User.criado_em.desc())
+        .limit(limit)
+    )
+
+    if scope.provincia_id is not None:
+        query = query.where(User.provincia_id == scope.provincia_id)
+
+    result = await session.execute(query)
+    registros_recentes = result.scalars().all()
+
+    return {
+        'total': len(registros_recentes),
+        'results': registros_recentes
+    }
+
+
 
 
 @admin.get('/audoitLog', response_model=PaginatedAuditLogs)
@@ -662,6 +736,178 @@ async def listar_notificacoes_suporte(
     }
 
 
+
+
+@admin.get('/notificacoes/solicitacoes-cartao', status_code=HTTPStatus.OK, response_model=NotificationListResponse)
+async def listar_notificacoes_cartao(
+    session: Session,
+    current_user: Get_current_user,
+    scope: ScopeValid,
+    limit: int = Query(default=10, le=50, description='Número de notificações por página'),
+    offset: int = Query(default=0, ge=0, description='Número de registros a pular (offset)'),
+):
+    """
+    Retorna a lista de notificações destinadas ao Administrador logado,
+    ordenadas das mais recentes para as mais antigas.
+    """
+    logger.info('Administrador %s listando suas notificações...', current_user.id)
+
+    # CORREÇÃO CRUCIAL: O Admin deve buscar onde o admin_id é igual ao id dele!
+
+    query = (
+        select(Notification)
+        .options(joinedload(Notification.solicitante))
+        .where(Notification.admin_id == current_user.id,
+               Notification.destinatario == 'ADMIN',
+               Notification.categoria == 'SOLICITACAO_CARTAO'
+               )
+        .order_by(Notification.criado_as.desc())
+        .limit(limit)
+        .offset(offset)
+    )
+
+    result = await session.execute(query)
+    notificacoes = result.scalars().all()
+
+    # CORREÇÃO CRUCIAL: Ajustado o contador para usar as mesmas regras de filtro do admin
+    query_nao_lidas = select(func.count(Notification.id)).where(
+        Notification.admin_id == current_user.id, Notification.destinatario == 'ADMIN', Notification.lido_as.is_(None)
+    )
+    total_nao_lidas = await session.scalar(query_nao_lidas) or 0
+
+    return {
+    'total': total_nao_lidas, 
+    'results': notificacoes}
+
+
+
+
+@admin.get(
+    '/solicitante-cartao',
+    status_code=HTTPStatus.OK,
+    response_model=CardSolicitante
+)
+async def listar_solicitante_cartao(
+    session: Session,
+    current_user: Get_current_user,
+    scope: ScopeValid,
+    limit: int = Query(default=10, le=50, description='Número de registros por página'),
+    offset: int = Query(default=0, ge=0, description='Número de registros a pular'),
+):
+    logger.info('Administrador %s listando solicitações de cartão...', current_user.id)
+
+    query = (
+        select(SolicitacaoCartao)
+        .join(User, User.id == SolicitacaoCartao.user_id)
+        .options(
+            selectinload(SolicitacaoCartao.user).selectinload(User.municipio),
+            selectinload(SolicitacaoCartao.user).selectinload(User.provincia),
+        )
+        .order_by(SolicitacaoCartao.criado_as.desc())
+        .limit(limit)
+        .offset(offset)
+    )
+
+    # Filtro por escopo
+    if scope.municipio_id is not None:
+        query = query.where(User.municipio_id == scope.municipio_id)
+    elif scope.provincia_id is not None:
+        query = query.where(User.provincia_id == scope.provincia_id)
+
+    result = await session.execute(query)
+    solicitacoes = result.scalars().all()
+
+    # Contagem total
+    count_query = (
+        select(func.count(SolicitacaoCartao.id))
+        .join(User, User.id == SolicitacaoCartao.user_id)
+    )
+
+    if scope.municipio_id is not None:
+        count_query = count_query.where(User.municipio_id == scope.municipio_id)
+    elif scope.provincia_id is not None:
+        count_query = count_query.where(User.provincia_id == scope.provincia_id)
+
+    total = await session.scalar(count_query) or 0
+
+    results = []
+    for s in solicitacoes:
+        user = s.user
+        results.append({
+            "id": s.id,
+            "numero_cartao": user.militante_numero or "",          # schema exige str
+            "nome_militante": user.nome_completo,
+            "data_emissao": s.criado_as,                           # usando a data da solicitação
+            "data_nascimento": user.data_nascimento,
+            "activo": user.ativo,
+            "estado_civil": user.estado_civil,
+            "municipio": user.municipio,                           # o validator extrai o nome
+            "provincia": user.provincia,                           # o validator extrai o nome
+        })
+
+    return {
+        "total": total,
+        "results": results
+    }
+
+
+
+@admin.get('/notificacoes/dashboard', status_code=HTTPStatus.OK, response_model=NotificationListResponse)
+async def listar_notificacoes_dashboard(
+    session: Session,
+    current_user: Get_current_user,
+        limit: int = Query(
+        default=10,
+        le=50,
+        description="Número de notificações por página"
+    ),
+    offset: int = Query(
+        default=0,
+        ge=0,
+        le=10000,
+        description="Número de registros a pular (offset)"
+    )
+):
+    """
+    Retorna a lista de notificações do usuário logado de forma paginada,
+    conforme o seu tipo de cadastro (Militante ou Simpatizante).
+    """
+    logger.info("Usuário %s listando notificações...", current_user.id)
+
+
+    # 1. Constrói os filtros base (reutilizáveis e seguros)
+    filtros = [Notification.user_id == current_user.id]
+    # if destinatario_tipo:
+    #     filtros.append(Notification.destinatario == destinatario_tipo)
+
+    total_query = (
+        select(func.count(Notification.id))
+        .where(*filtros, Notification.lido_as.is_(None))
+    )
+    total = await session.scalar(total_query) or 0
+    # 2. Consulta Principal (Ordenação e Paginação aplicadas no fim)
+    query = (
+        select(Notification)
+        .options(joinedload(Notification.solicitante))
+        .where(*filtros)
+        .order_by(Notification.criado_as.desc())
+        .limit(limit)
+        .offset(offset)
+    )
+    result = await session.execute(query)
+
+    notificacoes = result.scalars().all()
+
+    if not notificacoes:
+        logger.info("Nenhuma notificação encontrada para o usuário %s", current_user.id)
+        
+
+    # 4. Consulta do Contador (Usa os mesmos filtros dinâmicos de forma consistente)
+    return {
+        "total": total,
+        "results": notificacoes
+    }
+    
 
 @admin.get('/notificacoes', status_code=HTTPStatus.OK, response_model=NotificationListResponse)
 async def listar_notificacoes(
@@ -753,36 +999,79 @@ async def listar_notificacoes_lidas(
     
 
 
-@admin.patch('/notificacoes/{id_notificacao}/ler', status_code=HTTPStatus.OK, response_model=MensagensSuportePaginadasResponse)
+@admin.patch(
+    '/notificacoes/{id_notificacao}/ler',
+    status_code=HTTPStatus.OK,
+    response_model=NotificationResponse
+)
 async def marcar_como_lida(
-    id_notificacao: uuid.UUID, session: Session, current_user: Get_current_user, scope: ScopeValid
+    response: Response,
+    id_notificacao: uuid.UUID,
+    session: Session,
+    current_user: Get_current_user,
+    scope: ScopeValid
 ):
     """
-    Atualiza o campo 'lido_as' de uma notificação específica do Administrador.
+    Marca uma notificação do administrador como lida.
+    Garante que o usuário só possa alterar notificações próprias.
     """
-    logger.info('Administrador %s tentando ler notificação %s', current_user.id, id_notificacao)
 
-    # CORREÇÃO CRUCIAL: Filtro alterado para 'admin_id' para garantir a segurança do painel
-    query = select(Notification).options(joinedload(Notification.solicitante)).where(
-        Notification.id == id_notificacao,
-        Notification.admin_id == current_user.id,
-        Notification.destinatario == 'ADMIN',
+    logger.info(
+        "Usuário %s tentando marcar notificação %s como lida",
+        current_user.id,
+        id_notificacao
     )
-    notificacao = await session.scalar(query)
 
-    if not notificacao:
-        logger.warning('Notificação %s não encontrada para o administrador %s', id_notificacao, current_user.id)
-        raise HTTPException(
-            status_code=HTTPStatus.NOT_FOUND, detail='Notificação não encontrada no seu histórico administrativo.'
+
+    filtros = [Notification.user_id == current_user.id, Notification.id == id_notificacao]
+
+    query = (
+            select(Notification)
+            .options(joinedload(Notification.solicitante))
+            .where(*filtros)
+        )
+    
+    notificacao = await session.scalar(
+        query
+    )
+
+    if notificacao is None:
+        logger.warning(
+            "Notificação %s não pertence ao usuário %s",
+            id_notificacao,
+            current_user.id
         )
 
-    if not notificacao.lido_as:
+        raise HTTPException(
+            status_code=HTTPStatus.NOT_FOUND,
+            detail="Notificação não encontrada."
+        )
+
+    if notificacao.lido_as is None:
         notificacao.lido_as = datetime.now(timezone.utc)
-        await session.commit()
-        await session.refresh(notificacao)
-        logger.info('Notificação %s marcada como lida pelo administrador.', id_notificacao)
+
+        try:
+            await session.commit()
+            logger.info(
+                "Notificação %s marcada como lida pelo usuário %s", 
+                id_notificacao,
+                current_user.id
+            )
+        except SQLAlchemyError:
+            await session.rollback()
+
+            logger.exception(
+                "Erro ao marcar notificação %s como lida",
+                id_notificacao
+            )
+
+            raise HTTPException(
+                status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+                detail="Erro ao atualizar a notificação."
+            )
 
     return notificacao
+
 
 
 @admin.get('/scope/{scope_id}', status_code=HTTPStatus.OK, response_model=ResponseAdminScope)

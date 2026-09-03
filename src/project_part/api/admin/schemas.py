@@ -127,6 +127,45 @@ class NotificationListResponse(BaseModel):
 
 
 
+class SolicitanteCartaoResponse(BaseModel):
+    id: uuid.UUID
+    numero_cartao: str
+    nome_militante: str
+    data_emissao: datetime
+    data_nascimento: date
+    activo: bool
+
+    model_config = ConfigDict(from_attributes=True)
+
+    estado_civil: EstadoCivil = Field(default=EstadoCivil.SOLTEIRO)
+    municipio: str
+    provincia: str
+
+    @field_validator('provincia', mode='before')
+    @classmethod
+    def extrair_nome_provincia(cls, v: Any) -> Optional[str]:
+        if v and hasattr(v, 'nome_provincia'):
+            return getattr(v, 'nome_provincia')
+
+        if isinstance(v, str):
+            return v
+        raise ValueError('Província inválida ou ausente')
+
+    @field_validator('municipio', mode='before')
+    @classmethod
+    def extrair_nome_municipio(cls, v: Any) -> Optional[str]:
+        if v and hasattr(v, 'nome_municipio'):
+            return getattr(v, 'nome_municipio')
+        if isinstance(v, str):
+            return v
+        raise ValueError('Município inválido ou ausente')
+
+class CardSolicitante(BaseModel):
+    total: int
+    results: list[SolicitanteCartaoResponse]
+
+
+
 
 class MensagemSuporteResponse(BaseModel):
     id: uuid.UUID
@@ -146,3 +185,27 @@ class MensagensSuportePaginadasResponse(BaseModel):
     results: list[MensagemSuporteResponse]
 
 
+
+class UserResponse(BaseModel):
+    nome_completo: str
+    genero: Genero | None = None
+    criado_em: datetime
+    provincia: str
+
+
+    model_config = ConfigDict(from_attributes=True, ser_json_circular_logic='ignore')
+
+    @field_validator('provincia', mode='before')
+    @classmethod
+    def extrair_nome_provincia(cls, v: Any) -> Optional[str]:
+        if v and hasattr(v, 'nome_provincia'):
+            return getattr(v, 'nome_provincia')
+    
+        if isinstance(v, str):
+            return v
+        raise ValueError('Província inválida ou ausente')
+    
+
+class RegistrosRecentes(BaseModel):
+    total: int
+    results: list[UserResponse]
