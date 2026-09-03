@@ -378,6 +378,52 @@ async def militantes_registrados(
     }
 
 
+@admin.get('/simpatizantes-registrados', status_code=HTTPStatus.OK)
+async def simpatizantes_registrados(
+    scope: ScopeValid,
+    current_user: Get_current_user,
+    session: Session
+):
+    """
+    Retorna o total de militantes cadastrados.
+    1. Superadmin → retorna o total de militantes cadastrados em todo o país.
+    2. Admin Provincial → retorna o total de militantes cadastrados na sua província.
+    3. Admin Municipal → acesso negado (não pode acessar totais). 
+    """
+    logger.info(
+        "Validar permissão do usuário %s para acessar o total de militantes registrados",
+        current_user.id
+    )
+
+    if scope.municipio_id is not None:
+        logger.warning(
+            "Acesso negado: Usuário %s (município) não tem permissão",
+            current_user.id
+        )
+        raise HTTPException(
+            status_code=HTTPStatus.FORBIDDEN,
+            detail="Acesso negado: Você não tem permissão para acessar o total de militantes registrados."
+        )
+
+    logger.info("Buscando total de militantes na base de dados")
+
+    query = select(func.count(User.id)).where(
+        User.ativo.is_(True),
+        User.cadastrar_militante == CadastrarComo.SIMPATIZANTE
+    )
+
+    if scope.provincia_id is not None:
+        logger.info("Filtrando por província %s", scope.provincia_id)
+        query = query.where(User.provincia_id == scope.provincia_id)
+
+    total = await session.scalar(query)
+
+    return {
+        'total': total or 0
+    }
+
+
+
 @admin.get('/militantes-registrados/nos-ultimos-dias', status_code=HTTPStatus.OK)
 async def ultimos_militantes_resgistrados(
     session: Session,
@@ -637,6 +683,56 @@ async def registros_recentes(
     query = (
         select(User)
         .where(User.ativo.is_(True), User.cadastrar_militante == CadastrarComo.MILITANTE)
+        .options(selectinload(User.provincia),
+                 selectinload(User.municipio),
+                 selectinload(User.role))
+        .order_by(User.criado_em.desc())
+        .limit(limit)
+    )
+
+    if scope.provincia_id is not None:
+        query = query.where(User.provincia_id == scope.provincia_id)
+
+    result = await session.execute(query)
+    registros_recentes = result.scalars().all()
+
+    return {
+        'total': len(registros_recentes),
+        'results': registros_recentes
+    }
+
+
+@admin.get('/registros-recentes/simpatizante', status_code=HTTPStatus.OK, response_model=RegistrosRecentes)
+async def registros_simpatizantes_recentes(       
+    session: Session,
+    current_user: Get_current_user,
+    scope: ScopeValid,
+    limit: int = Query(default=10, ge=1, le=50, description='Número de registros recentes a retornar'),
+):
+    """
+    Retorna os registros recentes de militantes cadastrados.
+    1. Superadmin → retorna os registros recentes em todo o país.
+    2. Admin Provincial → retorna os registros recentes na sua província.
+    3. Admin Municipal → acesso negado (não pode acessar totais). 
+    """
+    logger.info(
+        "Usuário %s tentando acessar registros recentes de militantes",
+        current_user.id
+    )
+
+    if scope.municipio_id is not None:
+        logger.warning(
+            "Acesso negado: Usuário %s (município) não tem permissão",
+            current_user.id
+        )
+        raise HTTPException(
+            status_code=HTTPStatus.FORBIDDEN,
+            detail="Acesso negado: Você não tem permissão para acessar os registros recentes."
+        )
+
+    query = (
+        select(User)
+        .where(User.ativo.is_(True), User.cadastrar_militante == CadastrarComo.SIMPATIZANTE)
         .options(selectinload(User.provincia),
                  selectinload(User.municipio),
                  selectinload(User.role))
