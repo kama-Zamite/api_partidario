@@ -59,7 +59,6 @@ class EventBase(BaseModel):
     localizacao: str = Field(max_length=255)
 
     data_inicio: datetime
-    # data_fim: datetime
     image_url: str | None = Field(default=None)
     nome_provincia: str
     nome_municipio: str

@@ -102,7 +102,6 @@ async def criar_evento(
     descricao: str = Form(...),
     localizacao: str = Form(max_length=255),
     data_inicio: datetime = Form(...),
-    # data_fim: datetime = Form(...),
     nome_categoria: EventoCategoriaEnum = Form(...),
     nome_provincia: str = Form(...),
     nome_municipio: str = Form(...),
@@ -399,7 +398,14 @@ async def listar_eventos(
 @event.get('/get/{id_event}', status_code=HTTPStatus.OK, response_model=EventResponse)
 async def obter_evento(id_event: uuid.UUID, session: Session):
     """Endpoint para obter os detalhes de um evento específico pelo seu ID."""
-    evento_banco = await session.scalar(select(Event).where(Event.id == id_event))
+    evento_banco = await session.scalar(
+        select(Event)
+        .where(Event.id == id_event)
+        .options(
+            selectinload(Event.provincia),
+            selectinload(Event.municipio),
+        )
+    )
     if not evento_banco:
         raise HTTPException(status_code=HTTPStatus.NOT_FOUND, detail='Evento não encontrado')
 
@@ -462,7 +468,6 @@ async def atualizar_evento(
     evento_banco.descricao = schemas.descricao
     evento_banco.localizacao = schemas.localizacao
     evento_banco.data_inicio = schemas.data_inicio
-    evento_banco.data_fim = schemas.data_fim
     evento_banco.provincia_id = provincia_banco.id
     evento_banco.municipio_id = municipio_banco.id
     evento_banco.max_participantes = schemas.max_participantes
@@ -493,7 +498,14 @@ async def deletar_evento(
     scope: ScopeValid,
 ):
 
-    evento_banco = await session.scalar(select(Event).where(Event.id == id_event))
+    evento_banco = await session.scalar(select(Event).where(
+        Event.id == id_event
+        )
+        .options(
+                selectinload(Event.provincia),
+                selectinload(Event.municipio),
+                )
+        )
     if not evento_banco:
         raise HTTPException(status_code=HTTPStatus.NOT_FOUND, detail='Evento não encontrado')
 
@@ -509,7 +521,7 @@ async def deletar_evento(
             status_code=HTTPStatus.FORBIDDEN, detail='Acesso negado: Você só pode deletar eventos no seu município.'
         )
 
-    imagem_evento_para_apagar = evento_banco.image_url
+    imagem_evento_para_apagar = evento_banco.id
     try:
         await session.delete(evento_banco)
         await session.commit()
