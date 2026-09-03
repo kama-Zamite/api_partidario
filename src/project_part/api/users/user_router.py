@@ -1521,39 +1521,6 @@ async def Listar(
     response.headers['X-Cache-lock'] = 'veio do postgres'
     return resposta_obj
 
-
-
-@user.get(
-    "/dashboard/militantes-provincia", status_code=HTTPStatus.OK
-)
-async def militantes_por_provincia(
-    session: Session,
-    current_user: Get_current_user,
-):
-    query = (
-        select(Provincia.nome_provincia.label("provincia"),
-               func.count(User.id).label("total")
-               )
-               .join(User, User.provincia_id == Provincia.id)
-               .where(
-                   User.ativo.is_(True),
-                   User.cadastrar_militante == CadastrarComo.MILITANTE
-               )
-               .group_by(Provincia.nome_provincia)
-               .order_by(func.count(User.id).desc())
-    )
-
-    result = await session.execute(query)
-
-    return [
-        {
-            "provincia": provincia,
-            "total": total
-        }
-        for provincia, total in result.all()
-    ]
-
-
 @user.post('/solicitar/militancia', status_code=HTTPStatus.CREATED)
 @limiter.limit("100/minute")
 async def solicitar_militancia(request: Request, session: Session, current_user: Get_current_user):

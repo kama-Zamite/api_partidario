@@ -4,15 +4,27 @@ import json
 import logging
 import secrets
 import uuid
-from datetime import datetime, timezone, timedelta
+from datetime import (
+    datetime,
+    timezone,
+    timedelta,
+    date
+)
 from http import HTTPStatus
 from typing import Annotated, List, Optional
-
+from calendar import month_abbr
 import qrcode
-from fastapi import APIRouter, Depends, Form, HTTPException, Query, Response
+from fastapi import (
+    APIRouter,
+    Depends,
+    Form,
+    HTTPException,
+    Query,
+    Response
+)
 from pydantic import TypeAdapter
 from redis.asyncio import Redis as AsyncRedis
-from sqlalchemy import func, select
+from sqlalchemy import func, select, extract
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload, joinedload
@@ -399,6 +411,176 @@ async def ultimos_militantes_resgistrados(
 
     return {
         'total': total or 0
+    }
+
+
+@admin.get("/militantes-provincia", status_code=HTTPStatus.OK)
+async def militantes_por_provincia(
+    session: Session,
+    current_user: Get_current_user,
+    scope: ScopeValid,
+):
+    logger.info(
+        "Usuário %s tentando acessar total de militantes",
+        current_user.id
+    )
+
+    # Admin de município não pode acessar
+    if scope.municipio_id is not None:
+        logger.warning(
+            "Acesso negado: Usuário %s (município) tentou acessar totais",
+            current_user.id
+        )
+        raise HTTPException(
+            status_code=HTTPStatus.FORBIDDEN,
+            detail="Acesso negado: Você não tem permissão para acessar esses dados."
+        )
+
+    # ======================
+    # SUPERADMIN → agrupa por PROVÍNCIA
+    # ======================
+    if scope.provincia_id is None:
+        logger.info("Superadmin buscando totais por província")
+
+        query = (
+            select(
+                Provincia.nome_provincia.label("nome"),
+                func.count(User.id).label("total")
+            )
+            .join(User, User.provincia_id == Provincia.id)
+            .where(
+                User.ativo.is_(True),
+                User.cadastrar_militante == CadastrarComo.MILITANTE
+            )
+            .group_by(Provincia.nome_provincia)
+            .order_by(func.count(User.id).desc())
+        )
+
+        result = await session.execute(query)
+
+        return [
+            {
+                "provincia": nome,
+                "total": total
+            }
+            for nome, total in result.all()
+        ]
+
+    # ======================
+    # ADMIN PROVINCIAL → agrupa por MUNICÍPIO da sua província
+    # ======================
+    logger.info(
+        "Admin provincial %s buscando totais por município da província %s",
+        current_user.id,
+        scope.provincia_id
+    )
+
+    query = (
+        select(
+            Municipio.nome_municipio.label("nome"),
+            func.count(User.id).label("total")
+        )
+        .join(User, User.municipio_id == Municipio.id)
+        .where(
+            User.ativo.is_(True),
+            User.cadastrar_militante == CadastrarComo.MILITANTE,
+            Municipio.id_provincia == scope.provincia_id   # só municípios da sua província
+        )
+        .group_by(Municipio.nome_municipio)
+        .order_by(func.count(User.id).desc())
+    )
+
+    result = await session.execute(query)
+
+    return [
+        {
+            "municipio": nome,
+            "total": total
+        }
+        for nome, total in result.all()
+    ]
+
+@admin.get("/evolucao-militantes", status_code=HTTPStatus.OK)
+async def evolucao_militantes(
+    session: Session,
+    current_user: Get_current_user,
+    scope: ScopeValid,
+    ano: int = Query(None, description="Ano para filtrar (padrão: ano atual)"),
+):
+    logger.info(
+        "Usuário %s tentando acessar evolução de militantes do ano %s",
+        current_user.id,
+        ano or "atual"
+    )
+
+    # Admin de município não pode
+    if scope.municipio_id is not None:
+        raise HTTPException(
+            status_code=HTTPStatus.FORBIDDEN,
+            detail="Acesso negado: Você não tem permissão para acessar esses dados."
+        )
+
+    ano_atual = date.today().year
+    ano_consulta = ano or ano_atual
+
+    # Não permite consultar anos futuros
+    if ano_consulta > ano_atual:
+        raise HTTPException(
+            status_code=HTTPStatus.BAD_REQUEST,
+            detail="Não é possível consultar anos futuros."
+        )
+
+    # Query base
+    query = (
+        select(
+            extract("month", User.criado_em).label("mes"),
+            func.count(User.id).label("total")
+        )
+        .where(
+            User.ativo.is_(True),
+            User.cadastrar_militante == CadastrarComo.MILITANTE,
+            extract("year", User.criado_em) == ano_consulta
+        )
+        .group_by(extract("month", User.criado_em))
+        .order_by(extract("month", User.criado_em))
+    )
+
+    # Se for Admin Provincial → filtra só a província dele
+    if scope.provincia_id is not None:
+        query = query.where(User.provincia_id == scope.provincia_id)
+
+    result = await session.execute(query)
+    dados_mes = {int(mes): total for mes, total in result.all()}
+
+    # Nomes dos meses em português
+    meses_pt = {
+        1: "Jan", 2: "Fev", 3: "Mar", 4: "Abr",
+        5: "Mai", 6: "Jun", 7: "Jul", 8: "Ago",
+        9: "Set", 10: "Out", 11: "Nov", 12: "Dez"
+    }
+
+    # Define até qual mês mostrar
+    if ano_consulta == ano_atual:
+        ultimo_mes = date.today().month
+    else:
+        ultimo_mes = 12  # anos anteriores mostram o ano inteiro
+
+    # Monta a lista acumulada
+    evolucao = []
+    acumulado = 0
+
+    for mes in range(1, ultimo_mes + 1):
+        total_mes = dados_mes.get(mes, 0)
+        acumulado += total_mes
+
+        evolucao.append({
+            "mes": meses_pt[mes],
+            "total": acumulado
+        })
+
+    return {
+        "ano": ano_consulta,
+        "dados": evolucao
     }
 
 
