@@ -696,6 +696,12 @@ async def registros_recentes(
     result = await session.execute(query)
     registros_recentes = result.scalars().all()
 
+    if not registros_recentes:
+        return {
+                'total': 0,
+                'results': []
+            }
+
     return {
         'total': len(registros_recentes),
         'results': registros_recentes
@@ -745,7 +751,11 @@ async def registros_simpatizantes_recentes(
 
     result = await session.execute(query)
     registros_recentes = result.scalars().all()
-
+    if not registros_recentes:
+        return {
+                'total': 0,
+                'results': []
+            }
     return {
         'total': len(registros_recentes),
         'results': registros_recentes

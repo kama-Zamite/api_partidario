@@ -190,7 +190,7 @@ class UserResponse(BaseModel):
     nome_completo: str
     genero: Genero | None = None
     criado_em: datetime
-    activo: bool
+    ativo: bool
     provincia: str
 
 
