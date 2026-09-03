@@ -4,7 +4,7 @@ import json
 import logging
 import secrets
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from http import HTTPStatus
 from typing import Annotated, List, Optional
 
@@ -319,6 +319,86 @@ async def listar_admin_scope(
 
 
 
+@admin.get('/militantes-registrados', status_code=HTTPStatus.OK)
+async def militantes_registrados(
+    scope: ScopeValid,
+    current_user: Get_current_user,
+    session: Session
+):
+    logger.info(
+        "Validar permissão do usuário %s para acessar o total de militantes registrados",
+        current_user.id
+    )
+
+    if scope.municipio_id is not None:
+        logger.warning(
+            "Acesso negado: Usuário %s (município) não tem permissão",
+            current_user.id
+        )
+        raise HTTPException(
+            status_code=HTTPStatus.FORBIDDEN,
+            detail="Acesso negado: Você não tem permissão para acessar o total de militantes registrados."
+        )
+
+    logger.info("Buscando total de militantes na base de dados")
+
+    query = select(func.count(User.id)).where(
+        User.ativo.is_(True),
+        User.cadastrar_militante == CadastrarComo.MILITANTE
+    )
+
+    if scope.provincia_id is not None:
+        logger.info("Filtrando por província %s", scope.provincia_id)
+        query = query.where(User.provincia_id == scope.provincia_id)
+
+    total = await session.scalar(query)
+
+    return {
+        'total': total or 0
+    }
+
+
+
+
+@admin.get('/militantes-registrados/nos-ultimos-dias', status_code=HTTPStatus.OK)
+async def ultimos_militantes_resgistrados(
+    session: Session,
+    current_user: Get_current_user,
+    scope: ScopeValid,
+):
+
+    logger.info(
+        "Validar permissão do usuário %s para acessar o total de militantes registrados nos últimos dias",
+        current_user.id
+    )
+
+    if scope.municipio_id is not None:
+        logger.warning(
+            "Acesso negado: Usuário %s (município) não tem permissão",
+            current_user.id
+        )
+        raise HTTPException(
+            status_code=HTTPStatus.FORBIDDEN,
+            detail="Acesso negado: Você não tem permissão para acessar o total de militantes registrados."
+        )
+
+    logger.info("Buscando total de militantes na base de dados")
+
+    query = select(func.count(User.id)).where(
+        User.ativo.is_(True),
+        User.cadastrar_militante == CadastrarComo.MILITANTE,
+        User.criado_em >= datetime.now(timezone.utc) - timedelta(days=7)
+    )
+
+    if scope.provincia_id is not None:
+        logger.info("Filtrando por província %s", scope.provincia_id)
+        query = query.where(User.provincia_id == scope.provincia_id)
+
+    total = await session.scalar(query)
+
+    return {
+        'total': total or 0
+    }
 
 
 @admin.get('/audoitLog', response_model=PaginatedAuditLogs)
