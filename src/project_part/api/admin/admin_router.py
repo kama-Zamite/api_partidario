@@ -366,6 +366,7 @@ async def ultimos_militantes_resgistrados(
     current_user: Get_current_user,
     scope: ScopeValid,
 ):
+    
 
     logger.info(
         "Validar permissão do usuário %s para acessar o total de militantes registrados nos últimos dias",
