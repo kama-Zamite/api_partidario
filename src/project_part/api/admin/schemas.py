@@ -2,7 +2,7 @@ import uuid
 import re
 from enum import Enum
 from datetime import date, datetime
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Annotated
 from project_part.model.models import (
     CadastrarComo,
     EstadoCivil,
@@ -184,7 +184,22 @@ class MensagensSuportePaginadasResponse(BaseModel):
     # total: int
     results: list[MensagemSuporteResponse]
 
+EmailValided = Annotated[EmailStr, StringConstraints(to_lower=True, strip_whitespace=True)]
 
+
+class ValidarFilterSimpatizante(BaseModel):
+    email: EmailValided | None = Field(max_length=255)
+    nif: str | None = None
+
+    @field_validator('nif')
+    @classmethod
+    def validar_nif(cls, val_nif: str) -> str:
+        nif_limpo = val_nif.strip().upper()
+
+        padrao_nif = r'^(\d{9}[A-Z]{2}\d{3}|\d{9}[A-Z]\d{3}[A-Z])$'
+        if not re.match(padrao_nif, nif_limpo):
+            raise ValueError('NIF inválido! Certifique-se de introduzir um NIF de Angola válido com 14 caracteres')
+        return nif_limpo
 
 class UserResponse(BaseModel):
     nome_completo: str

@@ -432,11 +432,6 @@ async def verify_2fa(
 
 
 
-
-
-
-
-
 #     Este endpoint recebe as credenciais do usuário, verifica a autenticidade e retorna um token de acesso e um refresh token.
 #     Args:
 #         response (Response): Objeto de resposta para configurar os cookies.
