@@ -1521,6 +1521,9 @@ async def Listar(
     response.headers['X-Cache-lock'] = 'veio do postgres'
     return resposta_obj
 
+
+
+
 @user.post('/solicitar/militancia', status_code=HTTPStatus.CREATED)
 @limiter.limit("100/minute")
 async def solicitar_militancia(request: Request, session: Session, current_user: Get_current_user):

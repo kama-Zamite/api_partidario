@@ -24,7 +24,7 @@ from fastapi import (
 )
 from pydantic import TypeAdapter, ValidationError
 from redis.asyncio import Redis as AsyncRedis
-from sqlalchemy import func, select, extract, or_
+from sqlalchemy import func, select, extract, or_, case
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload, joinedload
@@ -51,6 +51,7 @@ from project_part.model.models import (
     MensagemSuporte,
     StatusSolicitacao,
     User,
+    Genero,
 )
 
 from .schemas import (
@@ -63,6 +64,7 @@ from .schemas import (
     RegistrosRecentes,
     CardSolicitante,
     ValidarFilterSimpatizante,
+    DistribuicaoGenero,
     )
 
 logger = logging.getLogger(__name__)
@@ -914,6 +916,81 @@ async def registros_simpatizantes_recentes(
 
 
 
+@admin.get(
+    '/militantes/distribuicao_genero',
+    status_code=HTTPStatus.OK,
+    response_model=DistribuicaoGenero,
+)
+# @limiter.limit('30/minute')
+async def distribuicao_genero(
+    response: Response,
+    session: Session,
+    caches: Redis,
+    current_user: Get_current_user,
+    scope: ScopeValid,
+):
+    """Retorna a distribuição de gênero dos militantes ativos."""
+
+    # ---- Cache key por escopo (melhor que por user.id) ----
+    try:
+        versao_cache = (await caches.get('v1:usuarios:lista:versao')) or b'1'
+        versao_cache = versao_cache.decode('utf-8') if isinstance(versao_cache, bytes) else str(versao_cache)
+    except Exception as e:
+        logger.error('Falha ao ler versão do cache no Redis: %s', e)
+        versao_cache = 'fallback'
+
+    scope_key = (
+        f'mun:{scope.municipio_id}' if scope.municipio_id
+        else f'prov:{scope.provincia_id}' if scope.provincia_id
+        else 'all'
+    )
+    cache_key = f'v1:militantes:distribuicao_genero:{scope_key}:v:{versao_cache}'
+
+    # ---- Tenta cache ----
+    try:
+        cached = await caches.get(cache_key)
+        if cached:
+            response.headers['X-Cache'] = 'HIT'
+            data = cached.decode('utf-8') if isinstance(cached, bytes) else cached
+            return DistribuicaoGenero.model_validate_json(data)
+    except Exception as e:
+        logger.warning('Falha ao ler cache de distribuição de gênero: %s', e)
+
+    # ---- Query de contagem ----
+    logger.info('Buscando distribuição de gênero no PostgreSQL (scope=%s)', scope_key)
+
+    count_query = select(
+        func.count(User.id).label('total'),
+        func.sum(case((User.genero == Genero.HOMEM, 1), else_=0)).label('homens'),
+        func.sum(case((User.genero == Genero.MULHER, 1), else_=0)).label('mulheres'),
+    ).where(
+        User.ativo.is_(True),
+        User.cadastrar_militante == CadastrarComo.MILITANTE,
+        # User.deletado_em.is_(None),  # descomente se usar soft delete
+    )
+
+    if scope.municipio_id is not None:
+        count_query = count_query.where(User.municipio_id == scope.municipio_id)
+    elif scope.provincia_id is not None:
+        count_query = count_query.where(User.provincia_id == scope.provincia_id)
+
+    result_counts = await session.execute(count_query)
+    counts = result_counts.one()
+
+    resposta_obj = DistribuicaoGenero(
+        total_user=counts.total or 0,
+        total_homens=counts.homens or 0,
+        total_mulheres=counts.mulheres or 0,
+    )
+
+    # ---- Salva no cache ----
+    try:
+        await caches.set(cache_key, resposta_obj.model_dump_json(), ex=60)
+    except Exception as e:
+        logger.error('Não foi possível guardar o cache no Redis: %s', e)
+
+    response.headers['X-Cache'] = 'MISS'
+    return resposta_obj
 
 
 

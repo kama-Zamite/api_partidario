@@ -225,3 +225,8 @@ class UserResponse(BaseModel):
 class RegistrosRecentes(BaseModel):
     total: int
     results: list[UserResponse]
+
+class DistribuicaoGenero(BaseModel):
+    total_user: int
+    total_homens: int
+    total_mulheres: int
