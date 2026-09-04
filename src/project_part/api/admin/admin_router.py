@@ -929,9 +929,8 @@ async def distribuicao_genero(
     current_user: Get_current_user,
     scope: ScopeValid,
 ):
-    """Retorna a distribuição de gênero dos militantes ativos."""
+    """Retorna a distribuição de gênero dos militantes (para o gráfico donut)."""
 
-    # ---- Cache key por escopo (melhor que por user.id) ----
     try:
         versao_cache = (await caches.get('v1:usuarios:lista:versao')) or b'1'
         versao_cache = versao_cache.decode('utf-8') if isinstance(versao_cache, bytes) else str(versao_cache)
@@ -946,7 +945,7 @@ async def distribuicao_genero(
     )
     cache_key = f'v1:militantes:distribuicao_genero:{scope_key}:v:{versao_cache}'
 
-    # ---- Tenta cache ----
+    # Cache
     try:
         cached = await caches.get(cache_key)
         if cached:
@@ -954,19 +953,17 @@ async def distribuicao_genero(
             data = cached.decode('utf-8') if isinstance(cached, bytes) else cached
             return DistribuicaoGenero.model_validate_json(data)
     except Exception as e:
-        logger.warning('Falha ao ler cache de distribuição de gênero: %s', e)
+        logger.warning('Falha ao ler cache: %s', e)
 
-    # ---- Query de contagem ----
     logger.info('Buscando distribuição de gênero no PostgreSQL (scope=%s)', scope_key)
 
     count_query = select(
         func.count(User.id).label('total'),
-        func.sum(case((User.genero == Genero.HOMEM, 1), else_=0)).label('homens'),
-        func.sum(case((User.genero == Genero.MULHER, 1), else_=0)).label('mulheres'),
+        func.sum(case((User.genero == Genero.HOMEM, 1), else_=0)).label('masculino'),
+        func.sum(case((User.genero == Genero.MULHER, 1), else_=0)).label('feminino'),
     ).where(
         User.ativo.is_(True),
         User.cadastrar_militante == CadastrarComo.MILITANTE,
-        # User.deletado_em.is_(None),  # descomente se usar soft delete
     )
 
     if scope.municipio_id is not None:
@@ -974,23 +971,39 @@ async def distribuicao_genero(
     elif scope.provincia_id is not None:
         count_query = count_query.where(User.provincia_id == scope.provincia_id)
 
-    result_counts = await session.execute(count_query)
-    counts = result_counts.one()
+    counts = (await session.execute(count_query)).one()
 
-    resposta_obj = DistribuicaoGenero(
-        total_user=counts.total or 0,
-        total_homens=counts.homens or 0,
-        total_mulheres=counts.mulheres or 0,
+    total = counts.total or 0
+    masculino = int(counts.masculino or 0)
+    feminino = int(counts.feminino or 0)
+
+    if total > 0:
+        percentual_masculino = round((masculino / total) * 100, 1)
+        percentual_feminino = round((feminino / total) * 100, 1)
+    else:
+        percentual_masculino = 0.0
+        percentual_feminino = 0.0
+
+    resposta = DistribuicaoGenero(
+        total=total,
+        masculino=masculino,
+        feminino=feminino,
+        percentual_masculino=percentual_masculino,
+        percentual_feminino=percentual_feminino,
     )
 
-    # ---- Salva no cache ----
     try:
-        await caches.set(cache_key, resposta_obj.model_dump_json(), ex=60)
+        await caches.set(cache_key, resposta.model_dump_json(), ex=60)
     except Exception as e:
-        logger.error('Não foi possível guardar o cache no Redis: %s', e)
+        logger.error('Não foi possível guardar o cache: %s', e)
 
     response.headers['X-Cache'] = 'MISS'
-    return resposta_obj
+    return resposta
+
+
+
+
+
 
 
 

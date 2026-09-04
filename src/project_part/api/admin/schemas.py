@@ -227,6 +227,8 @@ class RegistrosRecentes(BaseModel):
     results: list[UserResponse]
 
 class DistribuicaoGenero(BaseModel):
-    total_user: int
-    total_homens: int
-    total_mulheres: int
+    total: int
+    masculino: int
+    feminino: int
+    percentual_masculino: float
+    percentual_feminino: float
