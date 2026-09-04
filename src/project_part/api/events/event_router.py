@@ -23,9 +23,11 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from project_part.api.admin import schemas
 from project_part.core.cloudinary_config import (
     apagar_imagem_evento_cloudinary,
     upload_imagem_geral,
+    compensar_upload_orfao,
 )
 from project_part.core.rate_limit import limiter
 from project_part.core.secury import (
@@ -70,26 +72,6 @@ ALLOWED_EXTENSIONS = ['.jpg', '.jpeg']
 FILE_SIZE_LIMIT = 5 * 1024 * 1024  # 5 MB
 
 
-# @event.post('/categories/create', status_code=HTTPStatus.CREATED)
-# @limiter.limit('3/minute')
-# async def criar_categoria(
-#     request: Request, schemas: CreateCategoria, session: Session, current_user: Get_current_user, scope: ScopeValid
-# ):
-#     logger.info('Criando categoria de Eventos: %s por %s', schemas.name, current_user.email)
-
-#     verificar_permissao_global_pais(scope, current_user)
-
-#     nova_categoria = EventoCategoria(name=schemas.name)
-#     try:
-#         session.add(nova_categoria)
-#         await session.commit()
-#         return {'msg': 'Categoria criada com sucesso!'}
-#     except IntegrityError as e:
-#         await session.rollback()
-#         logger.error('Erro de integridade ao criar categoria: %s', str(e.orig))
-#         raise HTTPException(status_code=HTTPStatus.CONFLICT, detail='Já existe uma categoria cadastrada com este nome.')
-
-
 @event.post('/create', status_code=HTTPStatus.CREATED)
 @limiter.limit('3/minute')
 async def criar_evento(
@@ -97,10 +79,10 @@ async def criar_evento(
     session: Session,
     caches: Redis,
     current_user: Get_current_user,
-    # scope: ScopeValid,
+    scope: ScopeValid,                                          # ← reativado
     titulo: str = Form(..., max_length=200),
     descricao: str = Form(...),
-    localizacao: str = Form(max_length=255),
+    localizacao: str = Form(..., max_length=255),
     data_inicio: datetime = Form(...),
     nome_categoria: EventoCategoriaEnum = Form(...),
     nome_provincia: str = Form(...),
@@ -108,14 +90,12 @@ async def criar_evento(
     max_participantes: int | None = Form(None, gt=0),
     image_event: UploadFile = File(..., description='Imagem do evento (jpg, jpeg)'),
 ):
-
     try:
         dados_valido = CreateEvent(
             titulo=titulo,
             descricao=descricao,
             localizacao=localizacao,
             data_inicio=data_inicio,
-            # data_fim=data_fim,
             categoria=nome_categoria,
             nome_provincia=nome_provincia,
             nome_municipio=nome_municipio,
@@ -124,18 +104,16 @@ async def criar_evento(
     except ValidationError as e:
         logger.error('Erro de validação ao criar evento: %s', str(e))
         raise HTTPException(
-            status_code=HTTPStatus.UNPROCESSABLE_ENTITY,  # Mudado para 422 (padrão do FastAPI para falhas de validação)
+            status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
             detail=e.errors(include_url=False, include_context=False),
         )
 
-    logger.info('Buscando a província: %s', dados_valido.nome_provincia)
     provincia_banco = await session.scalar(
         select(Provincia).where(Provincia.nome_provincia == dados_valido.nome_provincia)
     )
     if not provincia_banco:
         raise HTTPException(status_code=HTTPStatus.NOT_FOUND, detail='Província não encontrada')
 
-    logger.info('Buscando o município: %s', dados_valido.nome_municipio)
     municipio_banco = await session.scalar(
         select(Municipio).where(
             Municipio.nome_municipio == dados_valido.nome_municipio,
@@ -148,17 +126,20 @@ async def criar_evento(
             detail=f'O município "{dados_valido.nome_municipio}" não pertence à província "{dados_valido.nome_provincia}"',
         )
 
-    # if scope.provincia_id and provincia_banco.id != scope.provincia_id:
-    #     logger.warning('Admin %s fora da sua província permitida.', current_user.id)
-    #     raise HTTPException(
-    #         status_code=HTTPStatus.FORBIDDEN, detail='Acesso negado: Você só pode criar eventos na sua província.'
-    #     )
+    # Controle de território
+    if scope.provincia_id and provincia_banco.id != scope.provincia_id:
+        logger.warning('Admin %s tentou criar evento fora da sua província.', current_user.id)
+        raise HTTPException(
+            status_code=HTTPStatus.FORBIDDEN,
+            detail='Acesso negado: Você só pode criar eventos na sua província.',
+        )
 
-    # if scope.municipio_id and municipio_banco.id != scope.municipio_id:
-    #     logger.warning('Admin %s fora do seu município permitido.', current_user.id)
-    #     raise HTTPException(
-    #         status_code=HTTPStatus.FORBIDDEN, detail='Acesso negado: Você só pode criar eventos no seu município.'
-    #     )
+    if scope.municipio_id and municipio_banco.id != scope.municipio_id:
+        logger.warning('Admin %s tentou criar evento fora do seu município.', current_user.id)
+        raise HTTPException(
+            status_code=HTTPStatus.FORBIDDEN,
+            detail='Acesso negado: Você só pode criar eventos no seu município.',
+        )
 
     evento = Event(
         titulo=dados_valido.titulo,
@@ -169,91 +150,120 @@ async def criar_evento(
         provincia_id=provincia_banco.id,
         municipio_id=municipio_banco.id,
         max_participantes=dados_valido.max_participantes,
-        status= EventStatusEnum.PUBLICADO,
+        status=EventStatusEnum.PUBLICADO,
         criado_por=current_user.id,
         image_url=None,
     )
 
+    nova_url = None
+    public_id = None
+
     try:
         session.add(evento)
-        await session.flush()
+        await session.flush()   # gera o ID
 
-        if image_event:
-            extensao = image_event.filename.split('.')[-1].lower()
-            if extensao not in {'jpg', 'jpeg'}:
+        # Upload da imagem
+        if image_event and image_event.filename:
+            if image_event.content_type not in {'image/jpeg', 'image/jpg'}:
                 raise HTTPException(
                     status_code=HTTPStatus.BAD_REQUEST,
-                    detail='Formato de imagem inválido. Use apenas PNG, JPG, JPEG ou WEBP.',
+                    detail='Formato de imagem inválido. Use apenas JPG ou JPEG.',
                 )
 
             conteudo_byte = await image_event.read()
             if len(conteudo_byte) > 5 * 1024 * 1024:
                 raise HTTPException(
-                    status_code=HTTPStatus.BAD_REQUEST, detail='A foto de perfil não pode ser maior que 5MB.'
+                    status_code=HTTPStatus.BAD_REQUEST,
+                    detail='A imagem não pode ser maior que 5MB.',
                 )
 
             try:
-                url_secure = await upload_imagem_geral(
+                public_id = f'atividades_partido/event_{evento.id}'
+                nova_url = await upload_imagem_geral(
                     file_bytes=conteudo_byte,
                     identificador=str(evento.id),
                     pasta_alvo='atividades_partido',
                     prefixo_arquivo='event',
                 )
-                evento.image_url = url_secure
+                evento.image_url = nova_url
+            except ValueError as e:
+                raise HTTPException(status_code=HTTPStatus.BAD_REQUEST, detail=str(e))
             except Exception as e:
-                logger.error('Falha ao subir imagem para o Cloudinary: %s', e)
+                logger.error('Falha ao subir imagem do evento: %s', e)
                 raise HTTPException(
                     status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
-                    detail='Falha ao salvar imagem de perfil no serviço de nuvem.',
+                    detail='Falha ao salvar a imagem no serviço de nuvem.',
                 )
             finally:
                 await image_event.close()
 
+        # Notificações (fora do if da imagem)
+        query_destinatarios = (
+            select(User.id)
+            .where(
+                User.ativo.is_(True),
+                User.notificacoes_gerais.is_(True),
+                User.eventos_mobilizacoes.is_(True),
+                User.provincia_id == provincia_banco.id,   # só da mesma província
+            )
+        )
 
-            query_destinatarios = (
-                select(User.id)
-                .where(
-                    User.ativo.is_(True),
-                    User.notificacoes_gerais.is_(True),
-                    User.eventos_mobilizacoes.is_(True)
+        # Se quiser restringir ainda mais ao município:
+        # if scope.municipio_id:
+        #     query_destinatarios = query_destinatarios.where(User.municipio_id == municipio_banco.id)
+
+        resultado_ids = await session.execute(query_destinatarios)
+        lista_ids = resultado_ids.scalars().all()
+
+        if lista_ids:
+            logger.info('Gerando notificações em lote para %s utilizadores.', len(lista_ids))
+            notificacoes_em_lote = [
+                Notification(
+                    user_id=uid,
+                    titulo=f'Novo Evento: {evento.titulo}',
+                    mensagem='Foi agendado um novo evento na sua região. Participe!',
+                    categoria=RoleCategoriaNotificacao.EVENTOS,
+                    criado_as=datetime.now(timezone.utc),
+                    destinatario=None,
                 )
-            )  
-            resultado_ids = await session.execute(query_destinatarios)
-            lista_ids = resultado_ids.scalars().all()
-            if lista_ids:
-                logger.info("A gerar notificações em lote para %s utilizadores autorizados.", len(lista_ids))
-            
-                notificacoes_em_lote = [
-                    Notification(
-                        user_id=uid,
-                        titulo=f"Novo Evento: {evento.titulo}",
-                        mensagem=f"Foi agendado um novo evento na sua região. Participe!",
-                        categoria=RoleCategoriaNotificacao.EVENTOS,  # O seu Enum corrigido
-                        criado_as=datetime.now(timezone.utc),
-                        destinatario=None,
-
-                    )
-                    for uid in lista_ids
-                ]
-                session.add_all(notificacoes_em_lote)
+                for uid in lista_ids
+            ]
+            session.add_all(notificacoes_em_lote)
 
         await session.commit()
         await caches.delete(CACHE_KEY_LISTA)
-        logger.info('Evento [%s] criado com sucesso por %s.', dados_valido.titulo, current_user.email)
-        return {'msg': 'Evento criado com sucesso!', 'evento_id': str(evento.id), 'image_url': evento.image_url}
+
+        logger.info('Evento [%s] criado com sucesso por %s.', evento.titulo, current_user.email)
+        return {
+            'msg': 'Evento criado com sucesso!',
+        }
+
     except IntegrityError as e:
         await session.rollback()
+        if public_id:
+            await compensar_upload_orfao(public_id)
         logger.error('Erro de integridade ao criar evento: [%s]', str(e.orig))
         raise HTTPException(
             status_code=HTTPStatus.CONFLICT,
-            detail='Já existe um evento cadastrado com esses dados, conflitantes (ex: mesmo título).',
+            detail='Já existe um evento cadastrado com esses dados.',
         )
+    except HTTPException:
+        await session.rollback()
+        if public_id:
+            await compensar_upload_orfao(public_id)
+        raise
     except Exception as e:
         await session.rollback()
+        if public_id:
+            await compensar_upload_orfao(public_id)
         logger.critical('Erro inesperado na criação do evento: %s', e)
-        raise HTTPException(status_code=HTTPStatus.INTERNAL_SERVER_ERROR, detail='Erro interno no servidor.')
+        raise HTTPException(
+            status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+            detail='Erro interno no servidor.',
+        )
 
 
+    
 @event.get('/current_user/list/', status_code=HTTPStatus.OK, response_model=EventosPaginadosResponse) # <-- Atualize o schema aqui
 async def listar_eventos(
     response: Response,
@@ -412,79 +422,164 @@ async def obter_evento(id_event: uuid.UUID, session: Session):
     return evento_banco
 
 
+
 @event.put('/upgrade/{id_event}', status_code=HTTPStatus.OK)
 @limiter.limit('2/minute')
 async def atualizar_evento(
-    request: Request,
-    schemas: UpgradeEvent,
     id_event: uuid.UUID,
+    request: Request,
     session: Session,
     caches: Redis,
     current_user: Get_current_user,
     scope: ScopeValid,
+    titulo: str = Form(..., max_length=200),
+    descricao: str = Form(...),
+    localizacao: str = Form(..., max_length=255),
+    data_inicio: datetime = Form(...),
+    nome_categoria: EventoCategoriaEnum = Form(...),
+    nome_provincia: str = Form(...),
+    nome_municipio: str = Form(...),
+    max_participantes: int | None = Form(None, gt=0),
+    image_event: UploadFile | None = File(None, description='Imagem do evento (jpg, jpeg)'),
 ):
+    try:
+        dados_valido = CreateEvent(
+            titulo=titulo,
+            descricao=descricao,
+            localizacao=localizacao,
+            data_inicio=data_inicio,
+            categoria=nome_categoria,
+            nome_provincia=nome_provincia,
+            nome_municipio=nome_municipio,
+            max_participantes=max_participantes,
+        )
+    except ValidationError as e:
+        logger.error('Erro de validação ao atualizar evento: %s', str(e))
+        raise HTTPException(
+            status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
+            detail=e.errors(include_url=False, include_context=False),
+        )
 
     evento_banco = await session.scalar(select(Event).where(Event.id == id_event))
     if not evento_banco:
         raise HTTPException(status_code=HTTPStatus.NOT_FOUND, detail='Evento não encontrado')
 
+    # Validação de território do evento existente
     if scope.provincia_id and scope.provincia_id != evento_banco.provincia_id:
-        logger.warning('Acesso negado: Você não gerencia o território deste evento.')
         raise HTTPException(
-            status_code=HTTPStatus.FORBIDDEN, detail='Acesso negado: Você não gerencia o território deste evento.'
+            status_code=HTTPStatus.FORBIDDEN,
+            detail='Acesso negado: Você não gerencia o território deste evento.',
         )
 
-    provincia_banco = await session.scalar(select(Provincia).where(Provincia.nome_provincia == schemas.nome_provincia))
+    if scope.municipio_id and scope.municipio_id != evento_banco.municipio_id:
+        raise HTTPException(
+            status_code=HTTPStatus.FORBIDDEN,
+            detail='Acesso negado: Você não gerencia o município deste evento.',
+        )
 
+    # Validação da nova província / município
+    provincia_banco = await session.scalar(
+        select(Provincia).where(Provincia.nome_provincia == dados_valido.nome_provincia)
+    )
     if not provincia_banco:
         raise HTTPException(status_code=HTTPStatus.NOT_FOUND, detail='Província não encontrada')
 
     if scope.provincia_id and provincia_banco.id != scope.provincia_id:
-        logger.warning('Admin %s esta a tentar atualizar dados fora da provincia permitida.', current_user.id)
         raise HTTPException(
-            status_code=HTTPStatus.FORBIDDEN, detail='Acesso negado: Você só pode criar eventos na sua provincia.'
+            status_code=HTTPStatus.FORBIDDEN,
+            detail='Acesso negado: Você só pode atualizar eventos na sua província.',
         )
 
     municipio_banco = await session.scalar(
         select(Municipio).where(
-            Municipio.nome_municipio == schemas.nome_municipio,
+            Municipio.nome_municipio == dados_valido.nome_municipio,
             Municipio.id_provincia == provincia_banco.id,
         )
     )
-
     if not municipio_banco:
         raise HTTPException(
             status_code=HTTPStatus.NOT_FOUND,
-            detail=f'O município "{schemas.nome_municipio}" não pertence à província "{schemas.nome_provincia}"',
+            detail=f'O município "{dados_valido.nome_municipio}" não pertence à província "{dados_valido.nome_provincia}"',
         )
 
     if scope.municipio_id and municipio_banco.id != scope.municipio_id:
-        logger.warning('Admin %s esta a tentar atualizar dados fora do seu município permitido.', current_user.id)
         raise HTTPException(
-            status_code=HTTPStatus.FORBIDDEN, detail='Acesso negado: Você só pode criar eventos no seu município.'
+            status_code=HTTPStatus.FORBIDDEN,
+            detail='Acesso negado: Você só pode atualizar eventos no seu município.',
         )
 
-    evento_banco.titulo = schemas.titulo
-    evento_banco.descricao = schemas.descricao
-    evento_banco.localizacao = schemas.localizacao
-    evento_banco.data_inicio = schemas.data_inicio
+    # Atualiza campos
+    evento_banco.titulo = dados_valido.titulo
+    evento_banco.descricao = dados_valido.descricao
+    evento_banco.localizacao = dados_valido.localizacao
+    evento_banco.data_inicio = dados_valido.data_inicio
+    evento_banco.categoria = dados_valido.categoria
     evento_banco.provincia_id = provincia_banco.id
     evento_banco.municipio_id = municipio_banco.id
-    evento_banco.max_participantes = schemas.max_participantes
-    evento_banco.status = schemas.status
+    evento_banco.max_participantes = dados_valido.max_participantes
+
+    nova_url = None
+    public_id_novo = f'atividades_partido/event_{evento_banco.id}'
+
+    # Tratamento de imagem (opcional)
+    if image_event and image_event.filename:
+        if image_event.content_type not in {'image/jpeg', 'image/jpg'}:
+            raise HTTPException(
+                status_code=HTTPStatus.BAD_REQUEST,
+                detail='Formato de imagem inválido. Use apenas JPG ou JPEG.',
+            )
+
+        conteudo_byte = await image_event.read()
+        if len(conteudo_byte) > 5 * 1024 * 1024:
+            raise HTTPException(
+                status_code=HTTPStatus.BAD_REQUEST,
+                detail='A imagem não pode ser maior que 5MB.',
+            )
+
+        try:
+            nova_url = await upload_imagem_geral(
+                file_bytes=conteudo_byte,
+                identificador=str(evento_banco.id),
+                pasta_alvo='atividades_partido',
+                prefixo_arquivo='event',
+            )
+            evento_banco.image_url = nova_url
+        except ValueError as e:
+            # Erros de sanitização da imagem
+            raise HTTPException(status_code=HTTPStatus.BAD_REQUEST, detail=str(e))
+        except Exception as e:
+            logger.error('Falha ao subir imagem do evento %s: %s', id_event, e)
+            raise HTTPException(
+                status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+                detail='Falha ao salvar a imagem no serviço de nuvem.',
+            )
+        finally:
+            await image_event.close()
 
     try:
         await session.commit()
         await caches.delete(CACHE_KEY_LISTA)
-        logger.info('Evento [%s] atualizado com sucesso por %s.', schemas.titulo, current_user.email)
+        logger.info('Evento [%s] atualizado com sucesso por %s.', evento_banco.titulo, current_user.email)
         return {'msg': 'Evento atualizado com sucesso!'}
+
     except IntegrityError as e:
         await session.rollback()
+
+        # Se o upload foi feito mas o commit falhou → remove a imagem órfã
+        if nova_url:
+            await compensar_upload_orfao(public_id_novo)
+
         logger.error('Erro de integridade ao atualizar evento: [%s]', str(e.orig))
         raise HTTPException(
             status_code=HTTPStatus.CONFLICT,
             detail='Dados conflitantes ao atualizar o evento.',
         )
+    except Exception:
+        await session.rollback()
+        if nova_url:
+            await compensar_upload_orfao(public_id_novo)
+        raise
+
 
 
 @event.delete('/delete/{id_event}', status_code=HTTPStatus.OK)
@@ -497,45 +592,76 @@ async def deletar_evento(
     current_user: Get_current_user,
     scope: ScopeValid,
 ):
-
-    evento_banco = await session.scalar(select(Event).where(
-        Event.id == id_event
-        )
-        .options(
-                selectinload(Event.provincia),
-                selectinload(Event.municipio),
-                )
-        )
+    evento_banco = await session.scalar(
+        select(Event).where(Event.id == id_event)
+    )
     if not evento_banco:
-        raise HTTPException(status_code=HTTPStatus.NOT_FOUND, detail='Evento não encontrado')
-
-    if scope.provincia_id and scope.provincia_id != evento_banco.provincia_id:
-        logger.warning('Admin %s esta a tentar deletar dados fora da provincia permitida.', current_user.id)
         raise HTTPException(
-            status_code=HTTPStatus.FORBIDDEN, detail='Acesso negado: Você só pode deletar eventos na sua provincia.'
+            status_code=HTTPStatus.NOT_FOUND,
+            detail='Evento não encontrado',
+        )
+
+    # Controle de território
+    if scope.provincia_id and scope.provincia_id != evento_banco.provincia_id:
+        logger.warning(
+            'Admin %s tentou deletar evento fora da sua província.',
+            current_user.id,
+        )
+        raise HTTPException(
+            status_code=HTTPStatus.FORBIDDEN,
+            detail='Acesso negado: Você só pode deletar eventos na sua província.',
         )
 
     if scope.municipio_id and scope.municipio_id != evento_banco.municipio_id:
-        logger.warning('Admin %s esta a tentar deletar dados fora do seu município permitido.', current_user.id)
+        logger.warning(
+            'Admin %s tentou deletar evento fora do seu município.',
+            current_user.id,
+        )
         raise HTTPException(
-            status_code=HTTPStatus.FORBIDDEN, detail='Acesso negado: Você só pode deletar eventos no seu município.'
+            status_code=HTTPStatus.FORBIDDEN,
+            detail='Acesso negado: Você só pode deletar eventos no seu município.',
         )
 
-    imagem_evento_para_apagar = evento_banco.id
+    tinha_imagem = bool(evento_banco.image_url)
+    evento_id_str = str(evento_banco.id)
+
     try:
         await session.delete(evento_banco)
         await session.commit()
-        logger.info('Evento %s deletado com sucesso.', id_event)
+        logger.info(
+            'Evento %s deletado com sucesso por %s.',
+            id_event,
+            current_user.email,
+        )
+    except IntegrityError as e:
+        await session.rollback()
+        logger.error(
+            'Erro de integridade ao deletar evento %s: %s',
+            id_event,
+            str(e.orig),
+        )
+        raise HTTPException(
+            status_code=HTTPStatus.CONFLICT,
+            detail='Não foi possível deletar o evento devido a dependências ativas no banco.',
+        )
     except Exception as e:
         await session.rollback()
         logger.error('Erro ao deletar o evento %s: %s', id_event, str(e))
         raise HTTPException(
-            status_code=HTTPStatus.BAD_REQUEST,
-            detail='Não foi possível deletar o evento devido a dependências ativas no banco.',
+            status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+            detail='Erro interno ao deletar o evento.',
         )
 
-    if imagem_evento_para_apagar:
-        await apagar_imagem_evento_cloudinary(imagem_evento_para_apagar)
+    # Apaga a imagem depois do commit bem-sucedido
+    if tinha_imagem:
+        removido = await apagar_imagem_evento_cloudinary(evento_id_str)
+        if not removido:
+            # Não falha a request — o evento já foi deletado.
+            # Apenas registra para possível job de limpeza.
+            logger.warning(
+                'Evento %s deletado, mas a imagem não foi removida do Cloudinary.',
+                id_event,
+            )
 
     await caches.delete(CACHE_KEY_LISTA)
     return {'msg': 'Evento deletado com sucesso!'}

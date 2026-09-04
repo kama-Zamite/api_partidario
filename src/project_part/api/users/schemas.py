@@ -307,7 +307,7 @@ class CardBase(BaseModel):
     numero_cartao: str
     nome_militante: str
     data_emissao: datetime
-    activo: bool
+    ativo: bool
 
     model_config = ConfigDict(from_attributes=True)
 
