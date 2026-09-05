@@ -22,10 +22,11 @@ from fastapi import (
     Query,
     Response,
     Path,
+    Request,
 )
 from pydantic import TypeAdapter, ValidationError
 from redis.asyncio import Redis as AsyncRedis
-from sqlalchemy import func, select, extract, or_, case
+from sqlalchemy import func, select, extract, or_, case, and_
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload, joinedload
@@ -66,6 +67,8 @@ from .schemas import (
     CardSolicitante,
     ValidarFilterSimpatizante,
     DistribuicaoGenero,
+    MilitantesTerritorioResponse,
+    MilitantesTerritorioItem,
     )
 
 logger = logging.getLogger(__name__)
@@ -475,98 +478,98 @@ async def ultimos_militantes_resgistrados(
     }
 
 
-@admin.get("/militantes-provincia", status_code=HTTPStatus.OK)
-async def militantes_por_provincia(
-    session: Session,
-    current_user: Get_current_user,
-    scope: ScopeValid,
-):
-    """
-    Retorna o total de militantes cadastrados, agrupados por província ou município,
-    dependendo do nível de acesso do administrador.
-    1. Superadmin → agrupa por província.
-    2. Admin Provincial → agrupa por município da sua província.
-    3. Admin Municipal → acesso negado (não pode acessar totais). 
-    """
-    logger.info(
-        "Usuário %s tentando acessar total de militantes",
-        current_user.id
-    )
+# @admin.get("/militantes-provincia", status_code=HTTPStatus.OK)
+# async def militantes_por_provincia(
+#     session: Session,
+#     current_user: Get_current_user,
+#     scope: ScopeValid,
+# ):
+#     """
+#     Retorna o total de militantes cadastrados, agrupados por província ou município,
+#     dependendo do nível de acesso do administrador.
+#     1. Superadmin → agrupa por província.
+#     2. Admin Provincial → agrupa por município da sua província.
+#     3. Admin Municipal → acesso negado (não pode acessar totais). 
+#     """
+#     logger.info(
+#         "Usuário %s tentando acessar total de militantes",
+#         current_user.id
+#     )
 
-    # Admin de município não pode acessar
-    if scope.municipio_id is not None:
-        logger.warning(
-            "Acesso negado: Usuário %s (município) tentou acessar totais",
-            current_user.id
-        )
-        raise HTTPException(
-            status_code=HTTPStatus.FORBIDDEN,
-            detail="Acesso negado: Você não tem permissão para acessar esses dados."
-        )
+#     # Admin de município não pode acessar
+#     if scope.municipio_id is not None:
+#         logger.warning(
+#             "Acesso negado: Usuário %s (município) tentou acessar totais",
+#             current_user.id
+#         )
+#         raise HTTPException(
+#             status_code=HTTPStatus.FORBIDDEN,
+#             detail="Acesso negado: Você não tem permissão para acessar esses dados."
+#         )
 
-    # ======================
-    # SUPERADMIN → agrupa por PROVÍNCIA
-    # ======================
-    if scope.provincia_id is None:
-        logger.info("Superadmin buscando totais por província")
+#     # ======================
+#     # SUPERADMIN → agrupa por PROVÍNCIA
+#     # ======================
+#     if scope.provincia_id is None:
+#         logger.info("Superadmin buscando totais por província")
 
-        query = (
-            select(
-                Provincia.nome_provincia.label("nome"),
-                func.count(User.id).label("total")
-            )
-            .join(User, User.provincia_id == Provincia.id)
-            .where(
-                User.ativo.is_(True),
-                User.cadastrar_militante == CadastrarComo.MILITANTE
-            )
-            .group_by(Provincia.nome_provincia)
-            .order_by(func.count(User.id).desc())
-        )
+#         query = (
+#             select(
+#                 Provincia.nome_provincia.label("nome"),
+#                 func.count(User.id).label("total")
+#             )
+#             .join(User, User.provincia_id == Provincia.id)
+#             .where(
+#                 User.ativo.is_(True),
+#                 User.cadastrar_militante == CadastrarComo.MILITANTE
+#             )
+#             .group_by(Provincia.nome_provincia)
+#             .order_by(func.count(User.id).desc())
+#         )
 
-        result = await session.execute(query)
+#         result = await session.execute(query)
 
-        return [
-            {
-                "provincia": nome,
-                "total": total
-            }
-            for nome, total in result.all()
-        ]
+#         return [
+#             {
+#                 "provincia": nome,
+#                 "total": total
+#             }
+#             for nome, total in result.all()
+#         ]
 
-    # ======================
-    # ADMIN PROVINCIAL → agrupa por MUNICÍPIO da sua província
-    # ======================
-    logger.info(
-        "Admin provincial %s buscando totais por município da província %s",
-        current_user.id,
-        scope.provincia_id
-    )
+#     # ======================
+#     # ADMIN PROVINCIAL → agrupa por MUNICÍPIO da sua província
+#     # ======================
+#     logger.info(
+#         "Admin provincial %s buscando totais por município da província %s",
+#         current_user.id,
+#         scope.provincia_id
+#     )
 
-    query = (
-        select(
-            Municipio.nome_municipio.label("nome"),
-            func.count(User.id).label("total")
-        )
-        .join(User, User.municipio_id == Municipio.id)
-        .where(
-            User.ativo.is_(True),
-            User.cadastrar_militante == CadastrarComo.MILITANTE,
-            Municipio.id_provincia == scope.provincia_id   # só municípios da sua província
-        )
-        .group_by(Municipio.nome_municipio)
-        .order_by(func.count(User.id).desc())
-    )
+#     query = (
+#         select(
+#             Municipio.nome_municipio.label("nome"),
+#             func.count(User.id).label("total")
+#         )
+#         .join(User, User.municipio_id == Municipio.id)
+#         .where(
+#             User.ativo.is_(True),
+#             User.cadastrar_militante == CadastrarComo.MILITANTE,
+#             Municipio.id_provincia == scope.provincia_id   # só municípios da sua província
+#         )
+#         .group_by(Municipio.nome_municipio)
+#         .order_by(func.count(User.id).desc())
+#     )
 
-    result = await session.execute(query)
+#     result = await session.execute(query)
 
-    return [
-        {
-            "municipio": nome,
-            "total": total
-        }
-        for nome, total in result.all()
-    ]
+#     return [
+#         {
+#             "municipio": nome,
+#             "total": total
+#         }
+#         for nome, total in result.all()
+#     ]
 
 @admin.get("/evolucao-militantes", status_code=HTTPStatus.OK)
 async def evolucao_militantes(
@@ -1184,6 +1187,264 @@ async def distribuicao_genero(
 
     response.headers['X-Cache'] = 'MISS'
     return resposta
+
+
+
+
+@admin.get(
+    '/militantes/por-provincia',
+    status_code=HTTPStatus.OK,
+    response_model=MilitantesTerritorioResponse,
+)
+# @limiter.limit('30/minute')
+async def militantes_por_provincia(
+    request: Request,
+    response: Response,
+    session: Session,
+    caches: Redis,
+    current_user: Get_current_user,
+    scope: ScopeValid,
+):
+    """
+    Estatísticas de militantes agrupadas por província.
+
+    - Superadmin: todas as províncias (incluindo as com 0 militantes)
+    - Admin Provincial: só a sua província
+    - Admin Municipal: acesso negado
+    """
+    logger.info('Usuário %s listando militantes por província', current_user.id)
+
+    if scope.municipio_id is not None:
+        raise HTTPException(
+            status_code=HTTPStatus.FORBIDDEN,
+            detail='Acesso negado: Admin municipal não pode ver o resumo por província.',
+        )
+
+    # ---- Cache ----
+    try:
+        versao = (await caches.get('v1:usuarios:lista:versao')) or b'1'
+        versao = versao.decode() if isinstance(versao, bytes) else str(versao)
+    except Exception:
+        versao = 'fallback'
+
+    scope_key = f'prov:{scope.provincia_id}' if scope.provincia_id else 'all'
+    cache_key = f'v1:militantes:por_provincia:{scope_key}:v:{versao}'
+
+    try:
+        cached = await caches.get(cache_key)
+        if cached:
+            response.headers['X-Cache'] = 'HIT'
+            data = cached.decode() if isinstance(cached, bytes) else cached
+            return MilitantesTerritorioResponse.model_validate_json(data)
+    except Exception as e:
+        logger.warning('Falha ao ler cache: %s', e)
+
+    idade = func.date_part('year', func.age(User.data_nascimento))
+
+    # LEFT JOIN: todas as províncias, mesmo com 0 militantes
+    query = (
+        select(
+            Provincia.id.label('id'),
+            Provincia.nome_provincia.label('nome'),
+            func.count().filter(
+                User.id.isnot(None),
+                User.genero == Genero.HOMEM,
+            ).label('masculino'),
+            func.count().filter(
+                User.id.isnot(None),
+                User.genero == Genero.MULHER,
+            ).label('feminino'),
+            func.count(User.id).label('total'),
+            func.min(idade).label('idade_min'),
+            func.max(idade).label('idade_max'),
+        )
+        .select_from(Provincia)
+        .outerjoin(
+            User,
+            and_(
+                User.provincia_id == Provincia.id,
+                User.ativo.is_(True),
+                User.cadastrar_militante == CadastrarComo.MILITANTE,
+            ),
+        )
+        .group_by(Provincia.id, Provincia.nome_provincia)
+        .order_by(func.count(User.id).desc(), Provincia.nome_provincia.asc())
+    )
+
+    if scope.provincia_id is not None:
+        query = query.where(Provincia.id == scope.provincia_id)
+
+    rows = (await session.execute(query)).all()
+
+    results = []
+    total_geral = 0
+
+    for r in rows:
+        total = int(r.total or 0)
+        total_geral += total
+
+        if total == 0:
+            faixa = '—'
+        else:
+            idade_min = int(r.idade_min) if r.idade_min is not None else None
+            idade_max = int(r.idade_max) if r.idade_max is not None else None
+            faixa = (
+                f'{idade_min}-{idade_max}'
+                if idade_min is not None and idade_max is not None
+                else '—'
+            )
+
+        results.append(
+            MilitantesTerritorioItem(
+                id=r.id,
+                nome=r.nome,
+                masculino=int(r.masculino or 0),
+                feminino=int(r.feminino or 0),
+                idade=faixa,
+                total=total,
+            )
+        )
+
+    resposta = MilitantesTerritorioResponse(total_geral=total_geral, results=results)
+
+    try:
+        await caches.set(cache_key, resposta.model_dump_json(), ex=60)
+    except Exception as e:
+        logger.error('Falha ao guardar cache: %s', e)
+
+    response.headers['X-Cache'] = 'MISS'
+    return resposta
+
+@admin.get(
+    '/militantes/por-municipio',
+    status_code=HTTPStatus.OK,
+    response_model=MilitantesTerritorioResponse,
+)
+# @limiter.limit('30/minute')
+async def militantes_por_municipio(
+    request: Request,
+    response: Response,
+    session: Session,
+    caches: Redis,
+    current_user: Get_current_user,
+    scope: ScopeValid,
+    provincia_id: int = Query(..., description='ID da província'),
+):
+    """Estatísticas de militantes por município de uma província."""
+    logger.info(
+        'Usuário %s listando militantes por município (provincia_id=%s)',
+        current_user.id,
+        provincia_id,
+    )
+
+    if scope.municipio_id is not None:
+        raise HTTPException(status_code=HTTPStatus.FORBIDDEN, detail='Acesso negado.')
+
+    if scope.provincia_id is not None and scope.provincia_id != provincia_id:
+        raise HTTPException(
+            status_code=HTTPStatus.FORBIDDEN,
+            detail='Acesso negado: Você só pode consultar a sua província.',
+        )
+
+    provincia = await session.scalar(select(Provincia).where(Provincia.id == provincia_id))
+    if not provincia:
+        raise HTTPException(status_code=HTTPStatus.NOT_FOUND, detail='Província não encontrada.')
+
+    # ---- Cache ----
+    try:
+        versao = (await caches.get('v1:usuarios:lista:versao')) or b'1'
+        versao = versao.decode() if isinstance(versao, bytes) else str(versao)
+    except Exception:
+        versao = 'fallback'
+
+    cache_key = f'v1:militantes:por_municipio:prov:{provincia_id}:v:{versao}'
+
+    try:
+        cached = await caches.get(cache_key)
+        if cached:
+            response.headers['X-Cache'] = 'HIT'
+            data = cached.decode() if isinstance(cached, bytes) else cached
+            return MilitantesTerritorioResponse.model_validate_json(data)
+    except Exception as e:
+        logger.warning('Falha ao ler cache: %s', e)
+
+    idade = func.date_part('year', func.age(User.data_nascimento))
+
+    # LEFT JOIN: todos os municípios da província, mesmo com 0 militantes
+    # Filtros de User vão no ON, não no WHERE
+    query = (
+        select(
+            Municipio.id.label('id'),
+            Municipio.nome_municipio.label('nome'),
+            func.count().filter(
+                User.id.isnot(None),
+                User.genero == Genero.HOMEM,
+            ).label('masculino'),
+            func.count().filter(
+                User.id.isnot(None),
+                User.genero == Genero.MULHER,
+            ).label('feminino'),
+            func.count(User.id).label('total'),
+            func.min(idade).label('idade_min'),
+            func.max(idade).label('idade_max'),
+        )
+        .select_from(Municipio)
+        .outerjoin(
+            User,
+            and_(
+                User.municipio_id == Municipio.id,
+                User.ativo.is_(True),
+                User.cadastrar_militante == CadastrarComo.MILITANTE,
+            ),
+        )
+        .where(Municipio.id_provincia == provincia_id)  # ou Municipio.provincia_id
+        .group_by(Municipio.id, Municipio.nome_municipio)
+        .order_by(func.count(User.id).desc(), Municipio.nome_municipio.asc())
+    )
+
+    rows = (await session.execute(query)).all()
+
+    results = []
+    total_geral = 0
+
+    for r in rows:
+        total = int(r.total or 0)
+        total_geral += total
+
+        if total == 0:
+            faixa = '—'
+        else:
+            idade_min = int(r.idade_min) if r.idade_min is not None else None
+            idade_max = int(r.idade_max) if r.idade_max is not None else None
+            faixa = (
+                f'{idade_min}-{idade_max}'
+                if idade_min is not None and idade_max is not None
+                else '—'
+            )
+
+        results.append(
+            MilitantesTerritorioItem(
+                id=r.id,
+                nome=r.nome,
+                masculino=int(r.masculino or 0),
+                feminino=int(r.feminino or 0),
+                idade=faixa,
+                total=total,
+            )
+        )
+
+    resposta = MilitantesTerritorioResponse(total_geral=total_geral, results=results)
+
+    try:
+        await caches.set(cache_key, resposta.model_dump_json(), ex=60)
+    except Exception as e:
+        logger.error('Falha ao guardar cache: %s', e)
+
+    response.headers['X-Cache'] = 'MISS'
+    return resposta
+
+
+
 
 
 

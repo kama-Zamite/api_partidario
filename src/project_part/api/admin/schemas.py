@@ -232,3 +232,18 @@ class DistribuicaoGenero(BaseModel):
     feminino: int
     percentual_masculino: float
     percentual_feminino: float
+
+
+class MilitantesTerritorioItem(BaseModel):
+    id: int
+    nome: str
+    masculino: int
+    feminino: int
+    idade: str          # ex: "18-45"
+    total: int
+
+
+class MilitantesTerritorioResponse(BaseModel):
+    total_geral: int
+    results: list[MilitantesTerritorioItem]
+
