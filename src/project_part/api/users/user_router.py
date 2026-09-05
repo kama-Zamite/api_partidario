@@ -140,7 +140,7 @@ async def create_user(
     caches: Redis,
     session: Session,
     backgroundTasks: BackgroundTasks,
-    # _captcha: Claudflare_turnfile,
+    _captcha: Claudflare_turnfile,
     nome_completo: str = Form(...),
     email: str = Form(...),
     password: str = Form(...),
