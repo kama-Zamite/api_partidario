@@ -571,94 +571,83 @@ async def ultimos_militantes_resgistrados(
 #         for nome, total in result.all()
 #     ]
 
+
+
 @admin.get("/evolucao-militantes", status_code=HTTPStatus.OK)
+# @limiter.limit('30/minute')
 async def evolucao_militantes(
+    request: Request,
     session: Session,
     current_user: Get_current_user,
     scope: ScopeValid,
-    ano: int = Query(None, description="Ano para filtrar (padrão: ano atual)"),
+    ano: int | None = Query(None, description="Ano para filtrar (padrão: ano atual)"),
 ):
     """
-    Retorna a evolução mensal do número de militantes cadastrados ao longo do ano especificado.
-    Se nenhum ano for fornecido, o padrão será o ano atual. 
+    Evolução mensal de novos militantes (não acumulada).
+    Sobe se o mês teve mais inscritos; desce se teve menos.
     """
     logger.info(
-        "Usuário %s tentando acessar evolução de militantes do ano %s",
+        "Usuário %s acessando evolução de militantes do ano %s",
         current_user.id,
-        ano or "atual"
+        ano or "atual",
     )
 
-    # Admin de município não pode
     if scope.municipio_id is not None:
         raise HTTPException(
             status_code=HTTPStatus.FORBIDDEN,
-            detail="Acesso negado: Você não tem permissão para acessar esses dados."
+            detail="Acesso negado: Você não tem permissão para acessar esses dados.",
         )
 
     ano_atual = date.today().year
     ano_consulta = ano or ano_atual
 
-    # Não permite consultar anos futuros
     if ano_consulta > ano_atual:
         raise HTTPException(
             status_code=HTTPStatus.BAD_REQUEST,
-            detail="Não é possível consultar anos futuros."
+            detail="Não é possível consultar anos futuros.",
         )
 
-    # Query base
     query = (
         select(
             extract("month", User.criado_em).label("mes"),
-            func.count(User.id).label("total")
+            func.count(User.id).label("total"),
         )
         .where(
             User.ativo.is_(True),
             User.cadastrar_militante == CadastrarComo.MILITANTE,
-            extract("year", User.criado_em) == ano_consulta
+            extract("year", User.criado_em) == ano_consulta,
         )
         .group_by(extract("month", User.criado_em))
         .order_by(extract("month", User.criado_em))
     )
 
-    # Se for Admin Provincial → filtra só a província dele
     if scope.provincia_id is not None:
         query = query.where(User.provincia_id == scope.provincia_id)
 
     result = await session.execute(query)
-    dados_mes = {int(mes): total for mes, total in result.all()}
+    dados_mes = {int(mes): int(total) for mes, total in result.all()}
 
-    # Nomes dos meses em português
     meses_pt = {
         1: "Jan", 2: "Fev", 3: "Mar", 4: "Abr",
         5: "Mai", 6: "Jun", 7: "Jul", 8: "Ago",
-        9: "Set", 10: "Out", 11: "Nov", 12: "Dez"
+        9: "Set", 10: "Out", 11: "Nov", 12: "Dez",
     }
 
-    # Define até qual mês mostrar
-    if ano_consulta == ano_atual:
-        ultimo_mes = date.today().month
-    else:
-        ultimo_mes = 12  # anos anteriores mostram o ano inteiro
+    ultimo_mes = date.today().month if ano_consulta == ano_atual else 12
 
-    # Monta a lista acumulada
-    evolucao = []
-    acumulado = 0
-
-    for mes in range(1, ultimo_mes + 1):
-        total_mes = dados_mes.get(mes, 0)
-        acumulado += total_mes
-
-        evolucao.append({
+    # Só o total do mês (sem acumular)
+    evolucao = [
+        {
             "mes": meses_pt[mes],
-            "total": acumulado
-        })
+            "total": dados_mes.get(mes, 0),
+        }
+        for mes in range(1, ultimo_mes + 1)
+    ]
 
     return {
         "ano": ano_consulta,
-        "dados": evolucao
+        "dados": evolucao,
     }
-
-
 
 
 @admin.get(
