@@ -478,98 +478,98 @@ async def ultimos_militantes_resgistrados(
     }
 
 
-# @admin.get("/militantes-provincia", status_code=HTTPStatus.OK)
-# async def militantes_por_provincia(
-#     session: Session,
-#     current_user: Get_current_user,
-#     scope: ScopeValid,
-# ):
-#     """
-#     Retorna o total de militantes cadastrados, agrupados por província ou município,
-#     dependendo do nível de acesso do administrador.
-#     1. Superadmin → agrupa por província.
-#     2. Admin Provincial → agrupa por município da sua província.
-#     3. Admin Municipal → acesso negado (não pode acessar totais). 
-#     """
-#     logger.info(
-#         "Usuário %s tentando acessar total de militantes",
-#         current_user.id
-#     )
+@admin.get("/militantes-provincia", status_code=HTTPStatus.OK)
+async def militantes_por_provincia_dashboard(
+    session: Session,
+    current_user: Get_current_user,
+    scope: ScopeValid,
+):
+    """
+    Retorna o total de militantes cadastrados, agrupados por província ou município,
+    dependendo do nível de acesso do administrador.
+    1. Superadmin → agrupa por província.
+    2. Admin Provincial → agrupa por município da sua província.
+    3. Admin Municipal → acesso negado (não pode acessar totais). 
+    """
+    logger.info(
+        "Usuário %s tentando acessar total de militantes",
+        current_user.id
+    )
 
-#     # Admin de município não pode acessar
-#     if scope.municipio_id is not None:
-#         logger.warning(
-#             "Acesso negado: Usuário %s (município) tentou acessar totais",
-#             current_user.id
-#         )
-#         raise HTTPException(
-#             status_code=HTTPStatus.FORBIDDEN,
-#             detail="Acesso negado: Você não tem permissão para acessar esses dados."
-#         )
+    # Admin de município não pode acessar
+    if scope.municipio_id is not None:
+        logger.warning(
+            "Acesso negado: Usuário %s (município) tentou acessar totais",
+            current_user.id
+        )
+        raise HTTPException(
+            status_code=HTTPStatus.FORBIDDEN,
+            detail="Acesso negado: Você não tem permissão para acessar esses dados."
+        )
 
-#     # ======================
-#     # SUPERADMIN → agrupa por PROVÍNCIA
-#     # ======================
-#     if scope.provincia_id is None:
-#         logger.info("Superadmin buscando totais por província")
+    # ======================
+    # SUPERADMIN → agrupa por PROVÍNCIA
+    # ======================
+    if scope.provincia_id is None:
+        logger.info("Superadmin buscando totais por província")
 
-#         query = (
-#             select(
-#                 Provincia.nome_provincia.label("nome"),
-#                 func.count(User.id).label("total")
-#             )
-#             .join(User, User.provincia_id == Provincia.id)
-#             .where(
-#                 User.ativo.is_(True),
-#                 User.cadastrar_militante == CadastrarComo.MILITANTE
-#             )
-#             .group_by(Provincia.nome_provincia)
-#             .order_by(func.count(User.id).desc())
-#         )
+        query = (
+            select(
+                Provincia.nome_provincia.label("nome"),
+                func.count(User.id).label("total")
+            )
+            .join(User, User.provincia_id == Provincia.id)
+            .where(
+                User.ativo.is_(True),
+                User.cadastrar_militante == CadastrarComo.MILITANTE
+            )
+            .group_by(Provincia.nome_provincia)
+            .order_by(func.count(User.id).desc())
+        )
 
-#         result = await session.execute(query)
+        result = await session.execute(query)
 
-#         return [
-#             {
-#                 "provincia": nome,
-#                 "total": total
-#             }
-#             for nome, total in result.all()
-#         ]
+        return [
+            {
+                "provincia": nome,
+                "total": total
+            }
+            for nome, total in result.all()
+        ]
 
-#     # ======================
-#     # ADMIN PROVINCIAL → agrupa por MUNICÍPIO da sua província
-#     # ======================
-#     logger.info(
-#         "Admin provincial %s buscando totais por município da província %s",
-#         current_user.id,
-#         scope.provincia_id
-#     )
+    # ======================
+    # ADMIN PROVINCIAL → agrupa por MUNICÍPIO da sua província
+    # ======================
+    logger.info(
+        "Admin provincial %s buscando totais por município da província %s",
+        current_user.id,
+        scope.provincia_id
+    )
 
-#     query = (
-#         select(
-#             Municipio.nome_municipio.label("nome"),
-#             func.count(User.id).label("total")
-#         )
-#         .join(User, User.municipio_id == Municipio.id)
-#         .where(
-#             User.ativo.is_(True),
-#             User.cadastrar_militante == CadastrarComo.MILITANTE,
-#             Municipio.id_provincia == scope.provincia_id   # só municípios da sua província
-#         )
-#         .group_by(Municipio.nome_municipio)
-#         .order_by(func.count(User.id).desc())
-#     )
+    query = (
+        select(
+            Municipio.nome_municipio.label("nome"),
+            func.count(User.id).label("total")
+        )
+        .join(User, User.municipio_id == Municipio.id)
+        .where(
+            User.ativo.is_(True),
+            User.cadastrar_militante == CadastrarComo.MILITANTE,
+            Municipio.id_provincia == scope.provincia_id   # só municípios da sua província
+        )
+        .group_by(Municipio.nome_municipio)
+        .order_by(func.count(User.id).desc())
+    )
 
-#     result = await session.execute(query)
+    result = await session.execute(query)
 
-#     return [
-#         {
-#             "municipio": nome,
-#             "total": total
-#         }
-#         for nome, total in result.all()
-#     ]
+    return [
+        {
+            "municipio": nome,
+            "total": total
+        }
+        for nome, total in result.all()
+    ]
 
 
 
