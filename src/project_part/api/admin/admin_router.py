@@ -20,7 +20,8 @@ from fastapi import (
     Form,
     HTTPException,
     Query,
-    Response
+    Response,
+    Path,
 )
 from pydantic import TypeAdapter, ValidationError
 from redis.asyncio import Redis as AsyncRedis
@@ -916,6 +917,93 @@ async def registros_simpatizantes_recentes(
 
 
 
+# @admin.get(
+#     '/militantes/distribuicao_genero',
+#     status_code=HTTPStatus.OK,
+#     response_model=DistribuicaoGenero,
+# )
+# # @limiter.limit('30/minute')
+# async def distribuicao_genero(
+#     response: Response,
+#     session: Session,
+#     caches: Redis,
+#     current_user: Get_current_user,
+#     scope: ScopeValid,
+# ):
+#     """Retorna a distribuição de gênero dos militantes (para o gráfico donut)."""
+
+#     try:
+#         versao_cache = (await caches.get('v1:usuarios:lista:versao')) or b'1'
+#         versao_cache = versao_cache.decode('utf-8') if isinstance(versao_cache, bytes) else str(versao_cache)
+#     except Exception as e:
+#         logger.error('Falha ao ler versão do cache no Redis: %s', e)
+#         versao_cache = 'fallback'
+
+#     scope_key = (
+#         f'mun:{scope.municipio_id}' if scope.municipio_id
+#         else f'prov:{scope.provincia_id}' if scope.provincia_id
+#         else 'all'
+#     )
+#     cache_key = f'v1:militantes:distribuicao_genero:{scope_key}:v:{versao_cache}'
+
+#     # Cache
+#     try:
+#         cached = await caches.get(cache_key)
+#         if cached:
+#             response.headers['X-Cache'] = 'HIT'
+#             data = cached.decode('utf-8') if isinstance(cached, bytes) else cached
+#             return DistribuicaoGenero.model_validate_json(data)
+#     except Exception as e:
+#         logger.warning('Falha ao ler cache: %s', e)
+
+#     logger.info('Buscando distribuição de gênero no PostgreSQL (scope=%s)', scope_key)
+
+#     count_query = select(
+#         func.count(User.id).label('total'),
+#         func.sum(case((User.genero == Genero.HOMEM, 1), else_=0)).label('masculino'),
+#         func.sum(case((User.genero == Genero.MULHER, 1), else_=0)).label('feminino'),
+#     ).where(
+#         User.ativo.is_(True),
+#         User.cadastrar_militante == CadastrarComo.MILITANTE,
+#     )
+
+#     if scope.municipio_id is not None:
+#         count_query = count_query.where(User.municipio_id == scope.municipio_id)
+#     elif scope.provincia_id is not None:
+#         count_query = count_query.where(User.provincia_id == scope.provincia_id)
+
+#     counts = (await session.execute(count_query)).one()
+
+#     total = counts.total or 0
+#     masculino = int(counts.masculino or 0)
+#     feminino = int(counts.feminino or 0)
+
+#     if total > 0:
+#         percentual_masculino = round((masculino / total) * 100, 1)
+#         percentual_feminino = round((feminino / total) * 100, 1)
+#     else:
+#         percentual_masculino = 0.0
+#         percentual_feminino = 0.0
+
+#     resposta = DistribuicaoGenero(
+#         total=total,
+#         masculino=masculino,
+#         feminino=feminino,
+#         percentual_masculino=percentual_masculino,
+#         percentual_feminino=percentual_feminino,
+#     )
+
+#     try:
+#         await caches.set(cache_key, resposta.model_dump_json(), ex=60)
+#     except Exception as e:
+#         logger.error('Não foi possível guardar o cache: %s', e)
+
+#     response.headers['X-Cache'] = 'MISS'
+#     return resposta
+
+
+
+
 @admin.get(
     '/militantes/distribuicao_genero',
     status_code=HTTPStatus.OK,
@@ -928,24 +1016,113 @@ async def distribuicao_genero(
     caches: Redis,
     current_user: Get_current_user,
     scope: ScopeValid,
+    provincia_id: int | None = Query(None, description='Filtrar por província (só Superadmin)'),
+    municipio_id: int | None = Query(None, description='Filtrar por município'),
 ):
-    """Retorna a distribuição de gênero dos militantes (para o gráfico donut)."""
+    """
+    Distribuição de gênero dos militantes.
 
+    - Superadmin: opcional provincia_id / municipio_id; sem filtro = país inteiro
+    - Admin Provincial: opcional municipio_id da sua província; sem filtro = toda a província
+    - Admin Municipal: sempre só o seu município
+    """
+    logger.info(
+        'Usuário %s pedindo distribuição de gênero (provincia_id=%s, municipio_id=%s)',
+        current_user.id,
+        provincia_id,
+        municipio_id,
+    )
+
+    # ---------- Autorização + resolução do filtro real ----------
+    filtro_provincia_id: int | None = None
+    filtro_municipio_id: int | None = None
+
+    # Admin Municipal → preso ao seu município
+    if scope.municipio_id is not None:
+        if provincia_id is not None or municipio_id is not None:
+            raise HTTPException(
+                status_code=HTTPStatus.FORBIDDEN,
+                detail='Acesso negado: Admin municipal não pode usar filtros de território.',
+            )
+        filtro_municipio_id = scope.municipio_id
+
+    # Admin Provincial → só a sua província; pode filtrar município
+    elif scope.provincia_id is not None:
+        logger.info('Admin provincial %s, província %s', current_user.id, scope.provincia_id)
+        if provincia_id is not None and provincia_id != scope.provincia_id:
+            raise HTTPException(
+                status_code=HTTPStatus.FORBIDDEN,
+                detail='Acesso negado: Você só pode consultar a sua província.',
+            )
+        filtro_provincia_id = scope.provincia_id
+
+        if municipio_id is not None:
+            logger.info('Admin provincial %s filtrando município %s', current_user.id, municipio_id)
+            municipio = await session.scalar(
+                select(Municipio).where(
+                    Municipio.id == municipio_id,
+                    Municipio.id_provincia == scope.provincia_id,
+                )
+            )
+            if not municipio:
+                raise HTTPException(
+                    status_code=HTTPStatus.NOT_FOUND,
+                    detail='Município não encontrado ou não pertence à sua província.',
+                )
+            filtro_municipio_id = municipio_id
+
+    # Superadmin → livre
+    else:
+        logger.info('Superadmin %s acessando todos os dados', current_user.id)
+        if provincia_id is not None:
+            logger.info('Superadmin %s filtrando província %s', current_user.id, provincia_id)
+            provincia = await session.scalar(
+                select(Provincia).where(Provincia.id == provincia_id)
+            )
+            if not provincia:
+                raise HTTPException(
+                    status_code=HTTPStatus.NOT_FOUND,
+                    detail=f'Província {provincia_id} não encontrada.',
+                )
+            filtro_provincia_id = provincia_id
+            logger.info('Superadmin %s filtrando município %s', current_user.id, municipio_id)
+
+        if municipio_id is not None:
+            logger.info('Superadmin %s filtrando município %s', current_user.id, municipio_id)
+            query_mun = select(Municipio).where(Municipio.id == municipio_id)
+            if filtro_provincia_id is not None:
+                query_mun = query_mun.where(Municipio.id_provincia == filtro_provincia_id)
+
+            municipio = await session.scalar(query_mun)
+            if not municipio:
+                logger.warning('Município %s não encontrado ou não pertence à província %s', municipio_id, filtro_provincia_id)
+                raise HTTPException(
+                    status_code=HTTPStatus.NOT_FOUND,
+                    detail='Município não encontrado ou não pertence à província informada.',
+                )
+            filtro_municipio_id = municipio_id
+            # Garante consistência: município define a província
+            filtro_provincia_id = municipio.id_provincia
+
+    # ---------- Cache ----------
     try:
         versao_cache = (await caches.get('v1:usuarios:lista:versao')) or b'1'
-        versao_cache = versao_cache.decode('utf-8') if isinstance(versao_cache, bytes) else str(versao_cache)
+        versao_cache = (
+            versao_cache.decode('utf-8')
+            if isinstance(versao_cache, bytes)
+            else str(versao_cache)
+        )
     except Exception as e:
-        logger.error('Falha ao ler versão do cache no Redis: %s', e)
+        logger.error('Falha ao ler versão do cache: %s', e)
         versao_cache = 'fallback'
 
     scope_key = (
-        f'mun:{scope.municipio_id}' if scope.municipio_id
-        else f'prov:{scope.provincia_id}' if scope.provincia_id
+        f'mun:{filtro_municipio_id}' if filtro_municipio_id is not None
+        else f'prov:{filtro_provincia_id}' if filtro_provincia_id is not None
         else 'all'
     )
     cache_key = f'v1:militantes:distribuicao_genero:{scope_key}:v:{versao_cache}'
 
-    # Cache
     try:
         cached = await caches.get(cache_key)
         if cached:
@@ -955,21 +1132,23 @@ async def distribuicao_genero(
     except Exception as e:
         logger.warning('Falha ao ler cache: %s', e)
 
-    logger.info('Buscando distribuição de gênero no PostgreSQL (scope=%s)', scope_key)
+    # ---------- Query ----------
+    logger.info('Distribuição de gênero no PostgreSQL (%s)', scope_key)
+
+    filtros = [
+        User.ativo.is_(True),
+        User.cadastrar_militante == CadastrarComo.MILITANTE,
+    ]
+    if filtro_municipio_id is not None:
+        filtros.append(User.municipio_id == filtro_municipio_id)
+    elif filtro_provincia_id is not None:
+        filtros.append(User.provincia_id == filtro_provincia_id)
 
     count_query = select(
         func.count(User.id).label('total'),
-        func.sum(case((User.genero == Genero.HOMEM, 1), else_=0)).label('masculino'),
-        func.sum(case((User.genero == Genero.MULHER, 1), else_=0)).label('feminino'),
-    ).where(
-        User.ativo.is_(True),
-        User.cadastrar_militante == CadastrarComo.MILITANTE,
-    )
-
-    if scope.municipio_id is not None:
-        count_query = count_query.where(User.municipio_id == scope.municipio_id)
-    elif scope.provincia_id is not None:
-        count_query = count_query.where(User.provincia_id == scope.provincia_id)
+        func.count().filter(User.genero == Genero.HOMEM).label('masculino'),
+        func.count().filter(User.genero == Genero.MULHER).label('feminino'),
+    ).where(*filtros)
 
     counts = (await session.execute(count_query)).one()
 
@@ -983,6 +1162,12 @@ async def distribuicao_genero(
     else:
         percentual_masculino = 0.0
         percentual_feminino = 0.0
+
+    if masculino + feminino != total:
+        logger.warning(
+            'Género incompleto (%s): total=%s masculino=%s feminino=%s',
+            scope_key, total, masculino, feminino,
+        )
 
     resposta = DistribuicaoGenero(
         total=total,
@@ -999,7 +1184,6 @@ async def distribuicao_genero(
 
     response.headers['X-Cache'] = 'MISS'
     return resposta
-
 
 
 
