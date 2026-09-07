@@ -25,6 +25,10 @@ class Settings(BaseSettings):
     ENV: str
 
 
+    ADMIN_ROLE_ID: int
+    ROLE_MILITANTE_ID: int
+
+
     CLOUDINARY_CLOUD_NAME: str
     CLOUDINARY_API_KEY: str
     CLOUDINARY_API_SECRET: str

@@ -10,6 +10,7 @@ from datetime import (
     timedelta,
     date
 )
+from decimal import Decimal
 from http import HTTPStatus
 from typing import Annotated, List, Optional
 from calendar import month_abbr
@@ -26,10 +27,11 @@ from fastapi import (
 )
 from pydantic import TypeAdapter, ValidationError
 from redis.asyncio import Redis as AsyncRedis
-from sqlalchemy import func, select, extract, or_, case, and_
+from sqlalchemy import UUID, func, select, extract, or_, case, and_
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload, joinedload
+from project_part.services.finance_audit import registar_movimento
 
 from project_part.core.cloudinary_config import upload_imagem_geral
 from project_part.core.secury import (
@@ -37,6 +39,7 @@ from project_part.core.secury import (
     garante_escopo_territorial,
     verificar_permissao_global_pais,
 )
+from project_part.core.setting import settings
 from project_part.db.cache import get_redis
 from project_part.db.session import get_session
 from project_part.model.models import (
@@ -48,13 +51,35 @@ from project_part.model.models import (
     Notification,
     Provincia,
     Role,
+    RoleCategoriaNotificacao,
     SolicitacaoCartao,
     SolicitacaoMilitancia,
     MensagemSuporte,
     StatusSolicitacao,
     User,
     Genero,
+    Doacao,
+    SolicitacaoFundo,
+    DespesaStatusEnum,
+    PagamentoQuota,
+    DonationStatusEnum,
+    MetodoPagamentoEnum,
+    QuotaStatusEnum,
+    TipoMovimentoEnum,
+    MovimentoFinanceiro,
+    AcaoMovimentoEnum,
 )
+
+# from project_part.model.finance import (
+#     Doacao,
+#     PagamentoQuota,
+#     DonationStatusEnum,
+#     MetodoPagamentoEnum,
+#     QuotaStatusEnum,
+#     TipoMovimentoEnum,
+#     MovimentoFinanceiro,
+#     AcaoMovimentoEnum,
+# )
 
 from .schemas import (
     CreateAdminScope,
@@ -69,8 +94,23 @@ from .schemas import (
     DistribuicaoGenero,
     MilitantesTerritorioResponse,
     MilitantesTerritorioItem,
+    QuotaRejeitar,
+    DoacaoRejeitar,
+    DoacaoResponse,
+    QuotaResponse,
+    SolicitacaoFundoCreate,
+    SolicitacaoFundoRejeitar,
+    SolicitacaoFundoList,
+    DoacaoList,
+    QuotaList,
+    ResumoFinanceiroResponse,
+    SolicitacaoFundoResponse,
     )
-
+from .util import (
+    to_doacao_response,
+    to_quota_response,
+    to_solicitacao_response,
+)
 logger = logging.getLogger(__name__)
 Session = Annotated[AsyncSession, Depends(get_session)]
 Redis = Annotated[AsyncRedis, Depends(get_redis)]
@@ -279,6 +319,7 @@ async def listar_admin_scope(
 
         resultado.append(
             ResponseAdminScope(
+                id=admin_scope.id,
                 user_id=admin_scope.user_id,
 
                 nome_completo=usuario.nome_completo,
@@ -909,6 +950,8 @@ async def registros_simpatizantes_recentes(
 
 
 
+
+
 # @admin.get(
 #     '/militantes/distribuicao_genero',
 #     status_code=HTTPStatus.OK,
@@ -1481,6 +1524,402 @@ async def listar_logs_auditoria(
 
 
 
+@admin.get('/financeiro/movimentos', status_code=HTTPStatus.OK)
+# @limiter.limit('30/minute')
+async def listar_movimentos(
+    request: Request,
+    session: Session,
+    current_user: Get_current_user,
+    scope: ScopeValid,
+    tipo: TipoMovimentoEnum | None = Query(None),
+    acao: AcaoMovimentoEnum | None = Query(None),
+    limit: int = Query(20, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+):
+    """Histórico append-only para auditoria. Superadmin vê tudo; provincial filtra por user do território."""
+    if scope.municipio_id is not None:
+        raise HTTPException(HTTPStatus.FORBIDDEN, detail='Acesso negado.')
+
+    filtros = []
+    if tipo:
+        filtros.append(MovimentoFinanceiro.tipo == tipo)
+    if acao:
+        filtros.append(MovimentoFinanceiro.acao == acao)
+
+    q = select(MovimentoFinanceiro)
+    cq = select(func.count(MovimentoFinanceiro.id))
+
+    if scope.provincia_id is not None:
+        q = q.join(User, User.id == MovimentoFinanceiro.user_id).where(
+            User.provincia_id == scope.provincia_id, *filtros
+        )
+        cq = cq.join(User, User.id == MovimentoFinanceiro.user_id).where(
+            User.provincia_id == scope.provincia_id, *filtros
+        )
+    elif filtros:
+        q = q.where(*filtros)
+        cq = cq.where(*filtros)
+
+    total = await session.scalar(cq) or 0
+    rows = (
+        await session.execute(
+            q.order_by(MovimentoFinanceiro.criado_em.desc()).limit(limit).offset(offset)
+        )
+    ).scalars().all()
+
+    return {'total': total, 'results': rows}
+
+
+@admin.get('/doacoes', status_code=HTTPStatus.OK, response_model=DoacaoList)
+# @limiter.limit('30/minute')
+async def listar_doacoes(
+    request: Request,
+    session: Session,
+    current_user: Get_current_user,
+    scope: ScopeValid,
+    status: DonationStatusEnum | None = Query(None),
+    metodo: MetodoPagamentoEnum | None = Query(None),
+    limit: int = Query(10, ge=1, le=50),
+    offset: int = Query(0, ge=0),
+):
+    """
+    Lista doações.
+    - Superadmin: todas
+    - Admin provincial: doadores da sua província
+    """
+    logger.info(
+        'Admin %s listando doações (status=%s, metodo=%s)',
+        current_user.id,
+        status,
+        metodo,
+    )
+
+    filtros = []
+    if status is not None:
+        filtros.append(Doacao.status == status)
+    if metodo is not None:
+        filtros.append(Doacao.metodo_pagamento == metodo)
+
+    precisa_join_user = (
+        scope.provincia_id is not None or scope.municipio_id is not None
+    )
+
+    if precisa_join_user:
+        base = (
+            select(Doacao)
+            .join(User, User.id == Doacao.user_id)
+            .where(Doacao.user_id.isnot(None), *filtros)
+        )
+        count_q = (
+            select(func.count(Doacao.id))
+            .join(User, User.id == Doacao.user_id)
+            .where(Doacao.user_id.isnot(None), *filtros)
+        )
+        if scope.municipio_id is not None:
+            base = base.where(User.municipio_id == scope.municipio_id)
+            count_q = count_q.where(User.municipio_id == scope.municipio_id)
+        else:
+            base = base.where(User.provincia_id == scope.provincia_id)
+            count_q = count_q.where(User.provincia_id == scope.provincia_id)
+    else:
+        base = select(Doacao).where(*filtros) if filtros else select(Doacao)
+        count_q = (
+            select(func.count(Doacao.id)).where(*filtros)
+            if filtros
+            else select(func.count(Doacao.id))
+        )
+
+    total = await session.scalar(count_q) or 0
+
+    result = await session.execute(
+        base.options(selectinload(Doacao.doador))
+        .order_by(Doacao.data_doacao.desc())
+        .limit(limit)
+        .offset(offset)
+    )
+    doacoes = result.scalars().all()
+
+    results = [to_doacao_response(d) for d in doacoes]
+
+    return DoacaoList(
+        total=total,
+        limit=limit,
+        offset=offset,
+        results=results,
+    )
+
+
+@admin.get('/quotas', status_code=HTTPStatus.OK, response_model=QuotaList)
+# @limiter.limit('30/minute')
+async def listar_quotas(
+    request: Request,
+    session: Session,
+    current_user: Get_current_user,
+    scope: ScopeValid,
+    status: QuotaStatusEnum | None = Query(None),
+    periodo: str | None = Query(None, description='YYYY ou YYYY-MM'),
+    metodo: MetodoPagamentoEnum | None = Query(None),
+    limit: int = Query(10, ge=1, le=50),
+    offset: int = Query(0, ge=0),
+):
+    """
+    Lista pagamentos de quota.
+    - Superadmin: todos
+    - Admin provincial: militantes da sua província
+    """
+    logger.info(
+        'Admin %s listando quotas (status=%s, periodo=%s)',
+        current_user.id,
+        status,
+        periodo,
+    )
+
+    filtros = []
+    if status is not None:
+        filtros.append(PagamentoQuota.status == status)
+    if metodo is not None:
+        filtros.append(PagamentoQuota.metodo_pagamento == metodo)
+    if periodo is not None:
+        filtros.append(PagamentoQuota.periodo == periodo.strip())
+
+    # Quota sempre tem user_id → join para scope
+    base = (
+        select(PagamentoQuota)
+        .join(User, User.id == PagamentoQuota.user_id)
+        .where(*filtros)
+    )
+    count_q = (
+        select(func.count(PagamentoQuota.id))
+        .join(User, User.id == PagamentoQuota.user_id)
+        .where(*filtros)
+    )
+
+    if scope.municipio_id is not None:
+        base = base.where(User.municipio_id == scope.municipio_id)
+        count_q = count_q.where(User.municipio_id == scope.municipio_id)
+    elif scope.provincia_id is not None:
+        base = base.where(User.provincia_id == scope.provincia_id)
+        count_q = count_q.where(User.provincia_id == scope.provincia_id)
+
+    total = await session.scalar(count_q) or 0
+
+    result = await session.execute(
+        base.options(selectinload(PagamentoQuota.militante))
+        .order_by(PagamentoQuota.data_pagamento.desc())
+        .limit(limit)
+        .offset(offset)
+    )
+    pagamentos = result.scalars().all()
+
+    results = [to_quota_response(p) for p in pagamentos]
+
+    return QuotaList(
+        total=total,
+        limit=limit,
+        offset=offset,
+        results=results,
+    )
+
+
+
+def _apenas_superadmin(scope: ScopeValid) -> None:
+    if scope.provincia_id is not None or scope.municipio_id is not None:
+        raise HTTPException(
+            status_code=HTTPStatus.FORBIDDEN,
+            detail='Acesso negado: apenas Superadmin.',
+        )
+
+
+# ─── Provincial cria ────────────────────────────────────────────
+@admin.post(
+    '/fundos/solicitacoes',
+    status_code=HTTPStatus.CREATED,
+    response_model=SolicitacaoFundoResponse,
+)
+# @limiter.limit('10/minute')
+async def criar_solicitacao_fundo(
+    request: Request,
+    body: SolicitacaoFundoCreate,
+    session: Session,
+    current_user: Get_current_user,
+    scope: ScopeValid,
+):
+    """Só admin provincial pode solicitar fundos para a sua província."""
+    if scope.provincia_id is None:
+        raise HTTPException(
+            status_code=HTTPStatus.FORBIDDEN,
+            detail='Só admin provincial pode solicitar fundos.',
+        )
+    if scope.municipio_id is not None:
+        raise HTTPException(
+            status_code=HTTPStatus.FORBIDDEN,
+            detail='Admin municipal não pode solicitar fundos.',
+        )
+
+    solicitacao = SolicitacaoFundo(
+        provincia_id=scope.provincia_id,  # sempre a do scope
+        municipio_id=None,
+        finalidade=body.finalidade,
+        descricao=body.descricao.strip(),
+        quantia=body.quantia,
+        moeda='AOA',
+        status=DespesaStatusEnum.PENDING,
+        observacao=body.observacao,
+        solicitado_por=current_user.id,
+    )
+    session.add(solicitacao)
+    await session.flush()
+
+    await registar_movimento(
+        session,
+        tipo=TipoMovimentoEnum.DESPESA,
+        origem_id=solicitacao.id,
+        user_id=None,  # não é por militante
+        quantia=solicitacao.quantia,
+        moeda=solicitacao.moeda,
+        acao=AcaoMovimentoEnum.CRIADA,
+        status_anterior=None,
+        status_novo=DespesaStatusEnum.PENDING.value,
+        ator_id=current_user.id,
+        detalhe={
+            'provincia_id': solicitacao.provincia_id,
+            'finalidade': solicitacao.finalidade.value,
+            'descricao': solicitacao.descricao,
+        },
+    )
+
+    await session.commit()
+
+    result = await session.scalar(
+        select(SolicitacaoFundo)
+        .where(SolicitacaoFundo.id == solicitacao.id)
+        .options(selectinload(SolicitacaoFundo.provincia))
+    )
+    logger.info(
+        'Solicitação de fundo %s criada pela província %s (user %s)',
+        result.id,
+        result.provincia_id,
+        current_user.id,
+    )
+    return to_solicitacao_response(result)
+
+
+# ─── Listar ─────────────────────────────────────────────────────
+@admin.get(
+    '/fundos/solicitacoes',
+    status_code=HTTPStatus.OK,
+    response_model=SolicitacaoFundoList,
+)
+# @limiter.limit('30/minute')
+async def listar_solicitacoes_fundo(
+    request: Request,
+    session: Session,
+    current_user: Get_current_user,
+    scope: ScopeValid,
+    status: DespesaStatusEnum | None = Query(None),
+    limit: int = Query(10, ge=1, le=50),
+    offset: int = Query(0, ge=0),
+):
+    """
+    Superadmin: todas as solicitações.
+    Admin provincial: só as da sua província.
+    Admin municipal: negado.
+    """
+    if scope.municipio_id is not None:
+        raise HTTPException(status_code=HTTPStatus.FORBIDDEN, detail='Acesso negado.')
+
+    filtros = []
+    if status is not None:
+        filtros.append(SolicitacaoFundo.status == status)
+    if scope.provincia_id is not None:
+        filtros.append(SolicitacaoFundo.provincia_id == scope.provincia_id)
+
+    count_q = select(func.count(SolicitacaoFundo.id))
+    q = select(SolicitacaoFundo).options(selectinload(SolicitacaoFundo.provincia))
+
+    if filtros:
+        count_q = count_q.where(*filtros)
+        q = q.where(*filtros)
+
+    total = await session.scalar(count_q) or 0
+    rows = (
+        await session.execute(
+            q.order_by(SolicitacaoFundo.data_solicitacao.desc())
+            .limit(limit)
+            .offset(offset)
+        )
+    ).scalars().all()
+
+    return SolicitacaoFundoList(
+        total=total,
+        limit=limit,
+        offset=offset,
+        results=[to_solicitacao_response(s) for s in rows],
+    )
+
+
+
+
+@admin.get('/financeiro/resumo', response_model=ResumoFinanceiroResponse)
+# @limiter.limit('30/minute')
+async def resumo_financeiro(
+    request: Request,
+    session: Session,
+    current_user: Get_current_user,
+    scope: ScopeValid,
+):
+    """
+    Receitas  = doações APPROVED + quotas APPROVED (do território)
+    Despesas  = solicitações de fundo APPROVED (da província / todas)
+    Saldo     = receitas - despesas
+    """
+    if scope.municipio_id is not None:
+        raise HTTPException(HTTPStatus.FORBIDDEN, detail='Acesso negado.')
+
+    # ----- RECEITAS (doações + quotas dos users do território) -----
+    q_doacoes = select(func.coalesce(func.sum(Doacao.quantia), 0)).where(
+        Doacao.status == DonationStatusEnum.APPROVED
+    )
+    q_quotas = select(func.coalesce(func.sum(PagamentoQuota.quantia), 0)).where(
+        PagamentoQuota.status == QuotaStatusEnum.APPROVED
+    )
+
+    if scope.provincia_id is not None:
+        q_doacoes = (
+            q_doacoes.join(User, User.id == Doacao.user_id)
+            .where(User.provincia_id == scope.provincia_id)
+        )
+        q_quotas = (
+            q_quotas.join(User, User.id == PagamentoQuota.user_id)
+            .where(User.provincia_id == scope.provincia_id)
+        )
+
+    # ----- DESPESAS (por província, NÃO por user) -----
+    q_despesas = select(func.coalesce(func.sum(SolicitacaoFundo.quantia), 0)).where(
+        SolicitacaoFundo.status == DespesaStatusEnum.APPROVED
+    )
+    if scope.provincia_id is not None:
+        q_despesas = q_despesas.where(
+            SolicitacaoFundo.provincia_id == scope.provincia_id
+        )
+
+    receitas = Decimal(str(await session.scalar(q_doacoes) or 0)) + Decimal(
+        str(await session.scalar(q_quotas) or 0)
+    )
+    despesas = Decimal(str(await session.scalar(q_despesas) or 0))
+    saldo = receitas - despesas
+
+    return ResumoFinanceiroResponse(
+        receitas=receitas,
+        despesas=despesas,
+        saldo=saldo,
+        moeda='AOA',
+    )
+
+
+
+
+
 @admin.get('/notificacoes/suporte', status_code=HTTPStatus.OK, response_model=MensagensSuportePaginadasResponse)
 async def listar_notificacoes_suporte(
     session: Session,
@@ -1618,14 +2057,14 @@ async def listar_solicitante_cartao(
         user = s.user
         results.append({
             "id": s.id,
-            "numero_cartao": user.militante_numero or "",          # schema exige str
+            "numero_cartao": user.militante_numero or "",  
             "nome_militante": user.nome_completo,
-            "data_emissao": s.criado_as,                           # usando a data da solicitação
+            "data_emissao": s.criado_as,        
             "data_nascimento": user.data_nascimento,
             "activo": user.ativo,
             "estado_civil": user.estado_civil,
-            "municipio": user.municipio,                           # o validator extrai o nome
-            "provincia": user.provincia,                           # o validator extrai o nome
+            "municipio": user.municipio, 
+            "provincia": user.provincia, 
         })
 
     return {
@@ -1883,44 +2322,87 @@ async def obter_escopo_por_id(scope_id: uuid.UUID, session: Session, current_use
 
 @admin.delete('/scope/{scope_id}', status_code=HTTPStatus.OK)
 async def remover_escopo_administrativo(
-    scope_id: uuid.UUID, session: Session, redis: Redis, current_user: Get_current_user, scope: ScopeValid
+    scope_id: uuid.UUID,
+    session: Session,
+    redis: Redis,
+    current_user: Get_current_user,
+    scope: ScopeValid
 ):
     """Remove definitivamente o registro de escopo de um usuário (Revogação de Poderes).
     Bloqueia concorrência e restringe a ação com base na hierarquia regional.
     """
     verificar_permissao_global_pais(scope, current_user)
+    
+    # 1. Busca o escopo com lock de concorrência
+    logger.info('Admin %s tentando revogar escopo administrativo %s.', current_user.id, scope_id)
     query = select(AdminScope).where(AdminScope.id == scope_id).with_for_update()
     scope_to_delete = await session.scalar(query)
     if not scope_to_delete:
+        logger.warning('Escopo administrativo %s não encontrado para revogação.', scope_id)
         raise HTTPException(status_code=HTTPStatus.NOT_FOUND, detail='Escopo não encontrado.')
 
+    # 2. Validação de Hierarquia de Permissões
     if scope.municipio_id is not None:
+        logger.warning('Admin municipal %s tentou revogar escopo %s, ação não permitida.', current_user.id, scope_id)
         raise HTTPException(status_code=HTTPStatus.FORBIDDEN, detail='Admins municipais não podem revogar escopos.')
+        
     elif scope.provincia_id is not None:
+        logger.info('Admin provincial %s revogando escopo %s.', current_user.id, scope_id)
         if scope_to_delete.provincia_id != scope.provincia_id:
+            logger.warning('Admin provincial %s tentou revogar escopo %s de outra província.', current_user.id, scope_id)
             raise HTTPException(
                 status_code=HTTPStatus.FORBIDDEN, detail='Você só pode revogar escopos da sua própria província.'
             )
 
         if scope_to_delete.municipio_id is None:
+            logger.warning('Admin provincial %s tentou revogar escopo %s de outro Admin Provincial.', current_user.id, scope_id)
             raise HTTPException(
                 status_code=HTTPStatus.FORBIDDEN,
                 detail='Um Admin Provincial não pode revogar o escopo de outro Admin Provincial.',
             )
 
-        try:
-            await session.delete(scope_to_delete)
-            await session.commit()
-            await redis.incr('v1:admin:scope:versao')
-            await redis.incr('v1:usuarios:lista:versao')
-            logger.info(f'Escopo administrativo {scope_id} revogado com sucesso pelo Admin {current_user.id}.')
-            return {'msg': 'Escopo administrativo revogado e removido com sucesso!'}
-        except Exception as e:
-            await session.rollback()
-            logger.error(f'Falha crítica ao deletar escopo {scope_id}: {str(e)}')
-            raise HTTPException(
-                status_code=HTTPStatus.INTERNAL_SERVER_ERROR, detail='Não foi possível revogar o escopo.'
-            )
+    # 3. Busca o usuário alvo para rebaixar a Role (Ajustado para rodar fora do bloco elif)
+    logger.info('Buscando usuário alvo do escopo %s para rebaixar a role.', scope_id)
+    query_user = (
+        select(User)
+        .where(User.id == scope_to_delete.user_id)
+        .options(
+            selectinload(User.municipio),
+            selectinload(User.provincia),
+            selectinload(User.role)
+        )
+    )
+    user_target = await session.scalar(query_user)
+    if not user_target:
+        logger.error('Usuário alvo do escopo %s não encontrado para rebaixar a role.', scope_id)
+        raise HTTPException(
+            status_code=HTTPStatus.NOT_FOUND,
+            detail='Usuário alvo do escopo não encontrado.'
+        )
+    
+    # Rebaixa a role do usuário
+    logger.info('Rebaixando role do usuário %s para Militante.', user_target.id)
+    user_target.role = settings.ROLE_MILITANTE_ID
+    session.add(user_target)
+
+    # 4. Execução da deleção e persistência (Ajustado para o fluxo principal)
+    try:
+        await session.delete(scope_to_delete)
+        await session.commit()
+        
+        # Invalidação de cache no Redis
+        await redis.incr('v1:admin:scope:versao')
+        await redis.incr('v1:usuarios:lista:versao')
+        
+        logger.info(f'Escopo administrativo {scope_id} revogado com sucesso pelo Admin {current_user.id}.')
+        return {'msg': 'Escopo administrativo revogado e removido com sucesso!'}
+        
+    except Exception as e:
+        await session.rollback()
+        logger.error(f'Falha crítica ao deletar escopo {scope_id}: {str(e)}')
+        raise HTTPException(
+            status_code=HTTPStatus.INTERNAL_SERVER_ERROR, detail='Não foi possível revogar o escopo.'
+        )
 
 
 @admin.put('/role/militante-upgrade/{id_militante}', status_code=HTTPStatus.OK)
@@ -2231,6 +2713,420 @@ async def rejeitar_militante_card(
         raise HTTPException(
             status_code=HTTPStatus.INTERNAL_SERVER_ERROR, detail='Erro interno ao processar a rejeição.'
         )
+
+
+@admin.post('/doacoes/{doacao_id}/aprovar', status_code=HTTPStatus.OK)
+# @limiter.limit('20/minute')
+async def aprovar_doacao(
+    request: Request,
+    doacao_id: uuid.UUID,
+    session: Session,
+    current_user: Get_current_user,
+    scope: ScopeValid,
+):
+    doacao = await session.scalar(
+        select(Doacao).where(Doacao.id == doacao_id).options(selectinload(Doacao.doador))
+    )
+    if not doacao:
+        raise HTTPException(HTTPStatus.NOT_FOUND, detail='Doação não encontrada.')
+    if doacao.status != DonationStatusEnum.PENDING:
+        raise HTTPException(HTTPStatus.CONFLICT, detail=f'Status atual: {doacao.status}')
+
+    # scope territorial (se tiver doador)
+    if doacao.doador:
+        if scope.municipio_id and doacao.doador.municipio_id != scope.municipio_id:
+            raise HTTPException(HTTPStatus.FORBIDDEN, detail='Acesso negado.')
+        if scope.provincia_id and doacao.doador.provincia_id != scope.provincia_id:
+            raise HTTPException(HTTPStatus.FORBIDDEN, detail='Acesso negado.')
+
+    anterior = doacao.status.value
+    doacao.status = DonationStatusEnum.APPROVED
+    doacao.aprovado_por = current_user.id
+    doacao.aprovado_em = datetime.now(timezone.utc)
+
+    await registar_movimento(
+        session,
+        tipo=TipoMovimentoEnum.DOACAO,
+        origem_id=doacao.id,
+        user_id=doacao.user_id,
+        quantia=doacao.quantia,
+        moeda=doacao.moeda,
+        acao=AcaoMovimentoEnum.APROVADA,
+        status_anterior=anterior,
+        status_novo=DonationStatusEnum.APPROVED.value,
+        ator_id=current_user.id,
+        detalhe={'referencia': doacao.referencia},
+    )
+
+    
+    notificacao_user = Notification(
+        user_id = doacao.doador.id,
+        titulo="Doação Aprovada",
+        mensagem=f"Ola {doacao.doador.nome_completo if doacao.doador else 'militante'}! Sua doação com referência {doacao.referencia} no valor de {doacao.quantia} AOA foi aprovada.",
+        # destinatario="ADMIN",
+        categoria=RoleCategoriaNotificacao.DOACAO
+    )
+
+    session.add(notificacao_user)
+
+    try:
+        await session.commit()
+        await session.refresh(doacao)
+    except Exception as e:
+        await session.rollback()
+        logger.error("Erro ao salvar solicitação e notificação: %s", str(e))
+        raise HTTPException(status_code=HTTPStatus.INTERNAL_SERVER_ERROR, detail="Erro ao salvar dados no banco.")
+
+
+    # await session.commit()
+    return {
+        "msg": f"Doação aprovado com sucesso. Pelo admin {current_user.nome_completo},\n {current_user.email}"
+    }
+
+
+
+@admin.post('/doacoes/{doacao_id}/rejeitar', status_code=HTTPStatus.OK)
+# @limiter.limit('20/minute')
+async def rejeitar_doacao(
+    request: Request,
+    doacao_id: uuid.UUID,
+    body: DoacaoRejeitar,
+    session: Session,
+    current_user: Get_current_user,
+    scope: ScopeValid,
+):
+    doacao = await session.scalar(
+        select(Doacao).where(Doacao.id == doacao_id).options(selectinload(Doacao.doador))
+    )
+    if not doacao:
+        raise HTTPException(HTTPStatus.NOT_FOUND, detail='Doação não encontrada.')
+    if doacao.status != DonationStatusEnum.PENDING:
+        raise HTTPException(HTTPStatus.CONFLICT, detail=f'Status atual: {doacao.status}')
+
+    if doacao.doador:
+        if scope.municipio_id and doacao.doador.municipio_id != scope.municipio_id:
+            raise HTTPException(HTTPStatus.FORBIDDEN, detail='Acesso negado.')
+        if scope.provincia_id and doacao.doador.provincia_id != scope.provincia_id:
+            raise HTTPException(HTTPStatus.FORBIDDEN, detail='Acesso negado.')
+
+    anterior = doacao.status.value
+    doacao.status = DonationStatusEnum.REJECTED
+    doacao.aprovado_por = current_user.id
+    doacao.aprovado_em = datetime.now(timezone.utc)
+    doacao.observacao = body.observacao
+
+    await registar_movimento(
+        session,
+        tipo=TipoMovimentoEnum.DOACAO,
+        origem_id=doacao.id,
+        user_id=doacao.user_id,
+        quantia=doacao.quantia,
+        moeda=doacao.moeda,
+        acao=AcaoMovimentoEnum.REJEITADA,
+        status_anterior=anterior,
+        status_novo=DonationStatusEnum.REJECTED.value,
+        ator_id=current_user.id,
+        detalhe={'motivo': body.observacao},
+    )
+
+    
+    notificacao_user = Notification(
+        user_id = doacao.doador.id,
+        titulo="Doação Rejeitada",
+        mensagem=f"Ola {doacao.doador.nome_completo if doacao.doador else 'militante'}! Sua doação com referência {doacao.referencia} no valor de {doacao.quantia} AOA foi rejeitada.",
+        # destinatario="ADMIN",
+        motivo=f"Motivo: {body.observacao}",
+        categoria=RoleCategoriaNotificacao.DOACAO
+    )
+
+    session.add(notificacao_user)
+
+    try:
+        await session.commit()
+        await session.refresh(doacao)
+    except Exception as e:
+        await session.rollback()
+        logger.error("Erro ao salvar solicitação e notificação: %s", str(e))
+        raise HTTPException(status_code=HTTPStatus.INTERNAL_SERVER_ERROR, detail="Erro ao salvar dados no banco.")
+
+    return {
+        "msg": f"Doação rejeitado com sucesso. Pelo admin {current_user.nome_completo},\n {current_user.email} com o seguinte motivo: {body.observacao}"
+    }
+
+
+
+
+@admin.post('/quotas/{quota_id}/aprovar', status_code=HTTPStatus.OK)
+# @limiter.limit('20/minute')
+async def aprovar_quota(
+    request: Request,
+    quota_id: uuid.UUID,
+    session: Session,
+    current_user: Get_current_user,
+    scope: ScopeValid,
+):
+    pag = await session.scalar(
+        select(PagamentoQuota)
+        .where(PagamentoQuota.id == quota_id)
+        .options(selectinload(PagamentoQuota.militante))
+    )
+    if not pag:
+        raise HTTPException(HTTPStatus.NOT_FOUND, detail='Pagamento de quota não encontrado.')
+    if pag.status != QuotaStatusEnum.PENDING:
+        raise HTTPException(HTTPStatus.CONFLICT, detail=f'Status atual: {pag.status}')
+
+    m = pag.militante
+    if scope.municipio_id and m.municipio_id != scope.municipio_id:
+        raise HTTPException(HTTPStatus.FORBIDDEN, detail='Acesso negado.')
+    if scope.provincia_id and m.provincia_id != scope.provincia_id:
+        raise HTTPException(HTTPStatus.FORBIDDEN, detail='Acesso negado.')
+
+    anterior = pag.status.value
+    pag.status = QuotaStatusEnum.APPROVED
+    pag.aprovado_por = current_user.id
+    pag.aprovado_em = datetime.now(timezone.utc)
+
+    await registar_movimento(
+        session,
+        tipo=TipoMovimentoEnum.QUOTA,
+        origem_id=pag.id,
+        user_id=pag.user_id,
+        quantia=pag.quantia,
+        moeda=pag.moeda,
+        acao=AcaoMovimentoEnum.APROVADA,
+        status_anterior=anterior,
+        status_novo=QuotaStatusEnum.APPROVED.value,
+        ator_id=current_user.id,
+        detalhe={'periodo': pag.periodo},
+    )
+
+    notificacao_user = Notification(
+        user_id = pag.militante.id,
+        titulo="Pagamento de Quota Rejeitada",
+        mensagem=f"Ola {pag.militante.nome_completo if pag.militante else 'militante'}! Seu pagamento de quota com referência {pag.referencia} no valor de {pag.quantia} AOA foi rejeitada.",
+        # destinatario="ADMIN",
+        motivo=f"",
+        categoria=RoleCategoriaNotificacao.QUOTA
+    )
+
+    session.add(notificacao_user)
+    try:
+        await session.commit()
+        await session.refresh(pag)
+    except Exception as e:
+        await session.rollback()
+        raise HTTPException(
+            status_code=HTTPStatus.BAD_REQUEST,
+            detail='Erro, ao registrar quota'
+        )
+    return {
+        "msg": f"Pagamento de quota aprovado com sucesso. Pelo admin {current_user.nome_completo}.\n Email: {current_user.email}"
+    }
+
+
+
+@admin.post('/quotas/{quota_id}/rejeitar', status_code=HTTPStatus.OK)
+# @limiter.limit('20/minute')
+async def rejeitar_quota(
+    request: Request,
+    quota_id: uuid.UUID,
+    body: QuotaRejeitar,
+    session: Session,
+    current_user: Get_current_user,
+    scope: ScopeValid,
+):
+    pag = await session.scalar(
+        select(PagamentoQuota)
+        .where(PagamentoQuota.id == quota_id)
+        .options(selectinload(PagamentoQuota.militante))
+    )
+    if not pag:
+        raise HTTPException(HTTPStatus.NOT_FOUND, detail='Pagamento de quota não encontrado.')
+    if pag.status != QuotaStatusEnum.PENDING:
+        raise HTTPException(HTTPStatus.CONFLICT, detail=f'Status atual: {pag.status}')
+
+    m  = pag.militante
+    if scope.municipio_id and m.municipio_id != scope.municipio_id:
+        raise HTTPException(HTTPStatus.FORBIDDEN, detail='Acesso negado.')
+    if scope.provincia_id and m.provincia_id != scope.provincia_id:
+        raise HTTPException(HTTPStatus.FORBIDDEN, detail='Acesso negado.')
+
+    anterior = pag.status.value
+    pag.status = QuotaStatusEnum.REJECTED
+    pag.aprovado_por = current_user.id
+    pag.aprovado_em = datetime.now(timezone.utc)
+    pag.observacao = body.observacao
+
+    await registar_movimento(
+        session,
+        tipo=TipoMovimentoEnum.QUOTA,
+        origem_id=pag.id,
+        user_id=pag.user_id,
+        quantia=pag.quantia,
+        moeda=pag.moeda,
+        acao=AcaoMovimentoEnum.REJEITADA,
+        status_anterior=anterior,
+        status_novo=QuotaStatusEnum.REJECTED.value,
+        ator_id=current_user.id,
+        detalhe={'periodo': pag.periodo, 'motivo': body.observacao},
+    )
+
+    notificacao_user = Notification(
+        user_id = pag.militante.id,
+        titulo="Pagamento de Quota Rejeitada",
+        mensagem=f"Ola {pag.militante.nome_completo if pag.militante else 'militante'}! Seu pagamento de quota com referência {pag.referencia} no valor de {pag.quantia} AOA foi rejeitada.",
+        # destinatario="ADMIN",
+        motivo=f"Motivo: {body.observacao}",
+        categoria=RoleCategoriaNotificacao.QUOTA
+    )
+
+    session.add(notificacao_user)
+    try:
+        await session.commit()
+        await session.refresh(pag)
+    except Exception as e:
+        await session.rollback()
+        raise HTTPException(
+            status_code=HTTPStatus.BAD_REQUEST,
+            detail='Erro no processo de aprovacao do pagamento de quota'
+        )
+    return {
+        "msg": f"Pagamento de quota rejeitado com sucesso. Pelo admin {current_user.nome_completo} \n Email: {current_user.email}, com o seguinte motivo: {body.observacao}"
+    }
+
+
+
+
+
+
+# ─── Superadmin aprova ──────────────────────────────────────────
+@admin.post(
+    '/fundos/solicitacoes/{solicitacao_id}/aprovar',
+    status_code=HTTPStatus.OK,
+    response_model=SolicitacaoFundoResponse,
+)
+# @limiter.limit('20/minute')
+async def aprovar_solicitacao_fundo(
+    request: Request,
+    solicitacao_id: uuid.UUID,
+    session: Session,
+    current_user: Get_current_user,
+    scope: ScopeValid,
+):
+    _apenas_superadmin(scope)
+
+    solicitacao = await session.scalar(
+        select(SolicitacaoFundo)
+        .where(SolicitacaoFundo.id == solicitacao_id)
+        .options(selectinload(SolicitacaoFundo.provincia))
+    )
+    if not solicitacao:
+        raise HTTPException(status_code=HTTPStatus.NOT_FOUND, detail='Solicitação não encontrada.')
+
+    if solicitacao.status != DespesaStatusEnum.PENDING:
+        raise HTTPException(
+            status_code=HTTPStatus.CONFLICT,
+            detail=f'Só é possível aprovar pedidos PENDING (atual: {solicitacao.status}).',
+        )
+
+    anterior = solicitacao.status.value
+    solicitacao.status = DespesaStatusEnum.APPROVED
+    solicitacao.aprovado_por = current_user.id
+    solicitacao.aprovado_em = datetime.now(timezone.utc)
+
+    await registar_movimento(
+        session,
+        tipo=TipoMovimentoEnum.DESPESA,
+        origem_id=solicitacao.id,
+        user_id=None,
+        quantia=solicitacao.quantia,
+        moeda=solicitacao.moeda,
+        acao=AcaoMovimentoEnum.APROVADA,
+        status_anterior=anterior,
+        status_novo=DespesaStatusEnum.APPROVED.value,
+        ator_id=current_user.id,
+        detalhe={
+            'provincia_id': solicitacao.provincia_id,
+            'finalidade': solicitacao.finalidade.value,
+        },
+    )
+
+    await session.commit()
+    await session.refresh(solicitacao)
+
+    logger.info(
+        'Solicitação %s APROVADA por superadmin %s (provincia=%s, quantia=%s)',
+        solicitacao.id,
+        current_user.id,
+        solicitacao.provincia_id,
+        solicitacao.quantia,
+    )
+    return to_solicitacao_response(solicitacao)
+
+
+# ─── Superadmin rejeita ─────────────────────────────────────────
+@admin.post(
+    '/fundos/solicitacoes/{solicitacao_id}/rejeitar',
+    status_code=HTTPStatus.OK,
+    response_model=SolicitacaoFundoResponse,
+)
+# @limiter.limit('20/minute')
+async def rejeitar_solicitacao_fundo(
+    request: Request,
+    solicitacao_id: uuid.UUID,
+    body: SolicitacaoFundoRejeitar,
+    session: Session,
+    current_user: Get_current_user,
+    scope: ScopeValid,
+):
+    _apenas_superadmin(scope)
+
+    solicitacao = await session.scalar(
+        select(SolicitacaoFundo)
+        .where(SolicitacaoFundo.id == solicitacao_id)
+        .options(selectinload(SolicitacaoFundo.provincia))
+    )
+    if not solicitacao:
+        raise HTTPException(status_code=HTTPStatus.NOT_FOUND, detail='Solicitação não encontrada.')
+
+    if solicitacao.status != DespesaStatusEnum.PENDING:
+        raise HTTPException(
+            status_code=HTTPStatus.CONFLICT,
+            detail=f'Só é possível rejeitar pedidos PENDING (atual: {solicitacao.status}).',
+        )
+
+    anterior = solicitacao.status.value
+    solicitacao.status = DespesaStatusEnum.REJECTED
+    solicitacao.aprovado_por = current_user.id
+    solicitacao.aprovado_em = datetime.now(timezone.utc)
+    solicitacao.observacao = body.observacao
+
+    await registar_movimento(
+        session,
+        tipo=TipoMovimentoEnum.DESPESA,
+        origem_id=solicitacao.id,
+        user_id=None,
+        quantia=solicitacao.quantia,
+        moeda=solicitacao.moeda,
+        acao=AcaoMovimentoEnum.REJEITADA,
+        status_anterior=anterior,
+        status_novo=DespesaStatusEnum.REJECTED.value,
+        ator_id=current_user.id,
+        detalhe={
+            'provincia_id': solicitacao.provincia_id,
+            'motivo': body.observacao,
+        },
+    )
+
+    await session.commit()
+    await session.refresh(solicitacao)
+
+    logger.info(
+        'Solicitação %s REJEITADA por superadmin %s',
+        solicitacao.id,
+        current_user.id,
+    )
+    return to_solicitacao_response(solicitacao)
 
 
 # @admin.post('/solicitacao/militancia/aprovado', status_code=HTTPStatus.OK)

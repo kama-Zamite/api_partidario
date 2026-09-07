@@ -1,53 +1,235 @@
-import uuid
 from datetime import datetime, timezone
-from fastapi import APIRouter, Depends
-from sqlalchemy.ext.asyncio import AsyncSession
-from typing import Annotated
-from sqlalchemy.future import select
-from project_part.services.notification import disparar_notificacao_usuario
-from project_part.model.models import RoleCategoriaNotificacao, User
-from project_part.db.session import get_session
+from http import HTTPStatus
+
+from typing import Any, Optional, Annotated
 import logging
+from fastapi import APIRouter, Request, Query, HTTPException, Depends
 
+from sqlalchemy import select, func
+from sqlalchemy.orm import selectinload
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.exc import IntegrityError
 
+# from project_part.model.finance import (
+#     DonationStatusEnum,
+#     Doacao,
+#     TipoMovimentoEnum,
+#     AcaoMovimentoEnum,
+#     PagamentoQuota,
+#     QuotaStatusEnum,
+    
+# )
+from project_part.core.setting import settings
+from project_part.model.models import (
+    CadastrarComo,
+    RoleCategoriaNotificacao,
+    Notification,
+    User,
+    AdminScope,
+    DonationStatusEnum,
+    Doacao,
+    TipoMovimentoEnum,
+    AcaoMovimentoEnum,
+    PagamentoQuota,
+    QuotaStatusEnum,
+)
+from project_part.core.secury import Get_current_user
+from project_part.db.session import get_session
+from project_part.services.finance_audit import registar_movimento
+from .schemas import (
+    DoacaoCreate,
+    QuotaCreate,
+
+) 
 
 Session = Annotated[AsyncSession, Depends(get_session)]
 
-
 logger = logging.getLogger(__name__)
+finance = APIRouter(prefix='/finance', tags=['Financeiro'])
 
-finance = APIRouter(prefix="/finance", tags=["Financeiro"])
-
-@finance.post("/quotas/validar/{user_id}", summary="Validar pagamento de quota e notificar militante")
-async def validar_pagamento_quota(
-    user_id: uuid.UUID,
-    session: Session
+@finance.post('/doacao', status_code=HTTPStatus.CREATED)
+async def criar_doacao(
+    request: Request,
+    body: DoacaoCreate,
+    session: Session,
+    current_user: Get_current_user,
 ):
-    # ... Lógica do banco de dados para validar a quota do militante ...]
-
-    query = select(User).where(User.id == user_id)
-    user_militante = await session.scalar(query)
-
-    if not user_militante:
-        logger.error("Militante com ID %s não encontrado.", user_id)
-        return {"detail": "Militante não encontrado."}
-
-    logger.info("Validando pagamento de quota para o usuário %s", user_id)
-    # A FUNÇÃO ENTRA AQUI:
-    # Se o militante tiver desativado o toggle de Quotas, a função ignora silenciosamente.
-    await disparar_notificacao_usuario(
-        session=session,
-        user_id=user_militante.id,  # Certifique-se de que user_militante é um objeto User válido
-        titulo="Quota Confirmada!",
-        mensagem="A sua contribuição mensal foi registada com sucesso na Plataforma Digital.",
-        destinatario="MILITANTE",
-        criado_as = datetime.now(timezone.utc),
-        categoria=RoleCategoriaNotificacao.QUOTA
+    doacao = Doacao(
+        user_id=current_user.id,
+        quantia=body.quantia,
+        moeda='AOA',
+        metodo_pagamento=body.metodo_pagamento,
+        referencia=body.referencia.strip() if body.referencia else None,
+        id_transacao=body.id_transacao.strip() if body.id_transacao else None,
+        observacao=body.observacao,
+        status=DonationStatusEnum.PENDING,
     )
+    session.add(doacao)
+    await session.flush()
+
+    await registar_movimento(
+        session,
+        tipo=TipoMovimentoEnum.DOACAO,
+        origem_id=doacao.id,
+        user_id=current_user.id,
+        quantia=doacao.quantia,
+        moeda=doacao.moeda,
+        acao=AcaoMovimentoEnum.CRIADA,
+        status_anterior=None,
+        status_novo=DonationStatusEnum.PENDING.value,
+        ator_id=current_user.id,
+        detalhe={
+            'metodo_pagamento': doacao.metodo_pagamento.value,
+            'referencia': doacao.referencia,
+        },
+    )
+
+    query_admin_regional = (
+        select(User)
+        .join(AdminScope, AdminScope.user_id == User.id)
+        .where(
+            User.role_id == settings.ADMIN_ROLE_ID,
+            (AdminScope.municipio_id == current_user.municipio_id) | 
+            (AdminScope.provincia_id == current_user.provincia_id)
+        )
+        .limit(1)
+    )
+    admin_alvo = await session.scalar(query_admin_regional)
+    
+    if not admin_alvo:
+        logger.warning("Nenhum admin regional específico encontrado. Buscando Admin Geral...")
+        query_admin_geral = select(User).where(User.role_id == settings.ADMIN_ROLE_ID).limit(1)
+        admin_alvo = await session.scalar(query_admin_geral)
+
+    # --- CORREÇÃO DO BUG AQUI ---
+    # Usamos a foreign key direta 'role_id' do current_user em vez da relação de objeto 'role'
+    if current_user.role_id == settings.ADMIN_ROLE_ID or current_user.role_id == settings.ROLE_MILITANTE_ID:
+        tipo_user = 'militante'
+    else:
+        tipo_user = 'simpatizante'
+    
+    if admin_alvo:
+        notificacao_admin = Notification(
+            admin_id=admin_alvo.id,
+            user_id=current_user.id,
+            titulo="Doacao",
+            mensagem=f"O {tipo_user} {current_user.nome_completo} (Nº {current_user.militante_numero or 'Pendente'}) fez uma doacao.",
+            destinatario="ADMIN",
+            categoria=RoleCategoriaNotificacao.DOACAO
+        )
+        session.add(notificacao_admin)
+    
     try:
         await session.commit()
-        return {"detail": "Quota validada e militante notificado se autorizado."}
+        # O session.refresh foi ELIMINADO daqui, pois não é necessário para o dicionário de retorno.
+    except IntegrityError:
+        await session.rollback()
+        raise HTTPException(HTTPStatus.CONFLICT, detail='Referência ou ID de transação já existe.')
+
+    return {
+        "msg": "doacao enviada com sucesso, aguarde a aprovação do admin.",
+    }
+
+
+
+@finance.post('/quota', status_code=HTTPStatus.CREATED)
+# @limiter.limit('10/minute')
+async def criar_pagamento_quota(
+    request: Request,
+    body: QuotaCreate,
+    session: Session,
+    current_user: Get_current_user,
+):
+    if current_user.cadastrar_militante != CadastrarComo.MILITANTE:
+        raise HTTPException(
+            HTTPStatus.FORBIDDEN,
+            detail='Apenas militantes pagam quota.'
+            )
+
+    pagamento = PagamentoQuota(
+        user_id=current_user.id,
+        quantia=body.quantia,
+        moeda='AOA',
+        periodo=body.periodo,
+        metodo_pagamento=body.metodo_pagamento,
+        referencia=body.referencia.strip() if body.referencia else None,
+        id_transacao=body.id_transacao.strip() if body.id_transacao else None,
+        observacao=body.observacao,
+        status=QuotaStatusEnum.PENDING,
+    )
+    try:
+        session.add(pagamento)
+        await session.flush()
     except Exception as e:
         await session.rollback()
-        logger.error("Erro ao validar quota para o usuário %s: %s", user_id, str(e))
-        return {"detail": "Erro ao validar quota."}
+        raise HTTPException(
+            status_code=HTTPStatus.BAD_REQUEST,
+            detail='Erro ao armazenar o pagamento de quota'
+        )
+
+    await registar_movimento(
+        session,
+        tipo=TipoMovimentoEnum.QUOTA,
+        origem_id=pagamento.id,
+        user_id=current_user.id,
+        quantia=pagamento.quantia,
+        moeda=pagamento.moeda,
+        acao=AcaoMovimentoEnum.CRIADA,
+        status_novo=QuotaStatusEnum.PENDING.value,
+        ator_id=current_user.id,
+        detalhe={'periodo': pagamento.periodo, 'metodo': pagamento.metodo_pagamento.value},
+    )
+
+    # try:
+    #     await session.commit()
+    # except Exception as e:
+    #     await session.rollback()
+    #     logger.error("Erro ao salvar solicitação e notificação: %s", str(e))
+    #     raise HTTPException(status_code=HTTPStatus.INTERNAL_SERVER_ERROR, detail="Erro ao salvar dados no banco.")
+    
+    query_admin_regional = (
+            select(User)
+            .join(AdminScope, AdminScope.user_id == User.id)
+            .where(
+                User.role_id == settings.ADMIN_ROLE_ID,
+                (AdminScope.municipio_id == current_user.municipio_id) | 
+                (AdminScope.provincia_id == current_user.provincia_id)
+            )
+            .limit(1)
+        )
+    admin_alvo = await session.scalar(query_admin_regional)
+    
+    if not admin_alvo:
+        logger.warning("Nenhum admin regional específico encontrado. Buscando Admin Geral...")
+        query_admin_geral = select(User).where(User.role_id == settings.ADMIN_ROLE_ID).limit(1)
+        admin_alvo = await session.scalar(query_admin_geral)
+
+    notificacao_admin = Notification(
+        admin_id=admin_alvo.id,
+        user_id = current_user.id,
+        titulo="Pagamento de Quota",
+        mensagem=f"O militante {current_user.nome_completo} (Nº {current_user.militante_numero or 'Pendente'}) fez um pagamento de quota.",
+        destinatario="ADMIN",
+        categoria=RoleCategoriaNotificacao.QUOTA
+        )
+    
+    session.add(notificacao_admin)
+    try:
+        await session.commit()
+        await session.refresh(pagamento)
+    except IntegrityError:
+        await session.rollback()
+        raise HTTPException(HTTPStatus.CONFLICT, detail='Referência ou ID de transação já existe.')
+
+
+    return {
+        "msg": "Pagamento de quota enviado com sucesso, aguarde a aprovação do admin.",
+    }
+
+
+
+
+
+
+
+

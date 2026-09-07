@@ -86,6 +86,10 @@ from project_part.model.models import (
     CadastrarComo,
     RoleCategoriaNotificacao,
     UserRefreshToken,
+    Doacao,
+    MetodoPagamentoEnum,
+    DonationStatusEnum,
+
 )
 
 from .schemas import (
@@ -100,6 +104,8 @@ from .schemas import (
     NotificationResponse,
     NotificationListResponse,
     DeleteUser,
+    DoacaoList,
+    DoacaoResponse,
 )
 
 logger = logging.getLogger(__name__)
@@ -1834,6 +1840,83 @@ async def obter_cartao(session: Session, current_user: Get_current_user):
     cartao.nome_militante = current_user.nome_completo
     
     return cartao
+
+
+
+
+
+
+@user.get('/doacoes', status_code=HTTPStatus.OK, response_model=DoacaoList)
+# @limiter.limit('30/minute')
+async def listar_doacoes(
+    request: Request,
+    session: Session,
+    current_user: Get_current_user,
+    status: DonationStatusEnum | None = Query(None),
+    metodo: MetodoPagamentoEnum | None = Query(None),
+    limit: int = Query(10, ge=1, le=50),
+    offset: int = Query(0, ge=0),
+):
+    """Lista doações. Filtro territorial via doador (se aplicável)."""
+    filtros = []
+
+    if status:
+        filtros.append(Doacao.status == status)
+    if metodo:
+        filtros.append(Doacao.metodo_pagamento == metodo)
+
+
+    filtros.append(Doacao.user_id == current_user.id)
+    # Escopo: admin provincial/municipal só vê doações de users do território
+    filtros.append(Doacao.user_id.isnot(None))
+    query = (
+        select(Doacao)
+        .join(User, User.id == Doacao.user_id)
+        .options(selectinload(Doacao.doador))
+        .where(*filtros)
+    )
+
+
+    count_q = (
+        select(func.count(Doacao.id))
+        .join(User, User.id == Doacao.user_id)
+        .where(*filtros)
+    )
+
+    count_q = select(func.count(Doacao.id)).where(*filtros) if filtros else select(func.count(Doacao.id))
+
+    total = await session.scalar(count_q) or 0
+
+    result = await session.execute(
+        query.order_by(Doacao.data_doacao.desc()).limit(limit).offset(offset)
+    )
+    doacoes = result.scalars().all()
+
+    results = []
+    for d in doacoes:
+        results.append(
+            DoacaoResponse(
+                id=d.id,
+                user_id=d.user_id,
+                quantia=d.quantia,
+                moeda=d.moeda,
+                meses_pagar=d.meses_pagar,
+                descricao=d.descricao,
+                metodo_pagamento=d.metodo_pagamento,
+                id_transacao=d.id_transacao,
+                status=d.status,
+                observacao=d.observacao,
+                data_doacao=d.data_doacao,
+                aprovado_em=d.aprovado_em,
+            )
+        )
+
+    return {'total': total, 'results': results}
+
+
+
+
+
 
 
 

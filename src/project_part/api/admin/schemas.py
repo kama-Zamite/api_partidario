@@ -1,6 +1,7 @@
 import uuid
 import re
 from enum import Enum
+from decimal import Decimal
 from datetime import date, datetime
 from typing import Any, Dict, Optional, Annotated
 from project_part.model.models import (
@@ -9,6 +10,11 @@ from project_part.model.models import (
     Genero,
     RoleCategoriaNotificacao,
     RoleMensagemSuporte,
+    MetodoPagamentoEnum,
+    DonationStatusEnum,
+    QuotaStatusEnum,
+    FinalidadeFundoEnum,
+    DespesaStatusEnum,
 )
 from pydantic import (
     BaseModel,
@@ -38,6 +44,7 @@ class ResponseAdminScopeBase(BaseModel):
 
 
 class ResponseAdminScope(BaseModel):
+    id: uuid.UUID
     provincia: str | None = None
     municipio: str | None = None
     user_id: uuid.UUID
@@ -112,6 +119,7 @@ class NotificationResponse(BaseModel):
     mensagem: str
     destinatario: str | None
     criado_as: datetime
+    motivo: str | None
     lido_as: datetime | None
     categoria: RoleCategoriaNotificacao | None = None
 
@@ -207,6 +215,7 @@ class UserResponse(BaseModel):
     criado_em: datetime
     ativo: bool
     provincia: str
+    municipio: str
 
 
     model_config = ConfigDict(from_attributes=True, ser_json_circular_logic='ignore')
@@ -216,11 +225,20 @@ class UserResponse(BaseModel):
     def extrair_nome_provincia(cls, v: Any) -> Optional[str]:
         if v and hasattr(v, 'nome_provincia'):
             return getattr(v, 'nome_provincia')
-    
+
         if isinstance(v, str):
             return v
         raise ValueError('Província inválida ou ausente')
-    
+
+    @field_validator('municipio', mode='before')
+    @classmethod
+    def extrair_nome_municipio(cls, v: Any) -> Optional[str]:
+        if v and hasattr(v, 'nome_municipio'):
+            return getattr(v, 'nome_municipio')
+        if isinstance(v, str):
+            return v
+        raise ValueError('Município inválido ou ausente')
+
 
 class RegistrosRecentes(BaseModel):
     total: int
@@ -246,4 +264,115 @@ class MilitantesTerritorioItem(BaseModel):
 class MilitantesTerritorioResponse(BaseModel):
     total_geral: int
     results: list[MilitantesTerritorioItem]
+
+
+class DoacaoResponse(BaseModel):
+    id: uuid.UUID
+    user_id: uuid.UUID | None
+    quantia: Decimal
+    moeda: str
+    metodo_pagamento: MetodoPagamentoEnum
+    referencia: str | None
+    id_transacao: str | None
+    status: DonationStatusEnum
+    observacao: str | None
+    data_doacao: datetime
+    aprovado_por: uuid.UUID | None
+    aprovado_em: datetime | None
+    recibo_url: str | None
+    recibo_gerado_em: datetime | None
+    atualizado_em: datetime
+    nome_doador: str | None = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class DoacaoList(BaseModel):
+    total: int
+    limit: int
+    offset: int
+    results: list[DoacaoResponse]
+
+class DoacaoRejeitar(BaseModel):
+    observacao: str = Field(..., min_length=3, max_length=500)
+
+
+
+class QuotaResponse(BaseModel):
+    id: uuid.UUID
+    user_id: uuid.UUID
+    quantia: Decimal
+    moeda: str
+    periodo: str
+    metodo_pagamento: MetodoPagamentoEnum
+    referencia: str | None
+    id_transacao: str | None
+    status: QuotaStatusEnum
+    observacao: str | None
+    data_pagamento: datetime
+    aprovado_por: uuid.UUID | None
+    aprovado_em: datetime | None
+    atualizado_em: datetime
+    nome_militante: str | None = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class QuotaList(BaseModel):
+    total: int
+    limit: int
+    offset: int
+    results: list[QuotaResponse]
+
+class QuotaRejeitar(BaseModel):
+    observacao: str = Field(..., min_length=3, max_length=500)
+
+
+
+
+class SolicitacaoFundoCreate(BaseModel):
+    finalidade: FinalidadeFundoEnum
+    descricao: str = Field(..., min_length=5, max_length=500)
+    quantia: Decimal = Field(..., gt=0, decimal_places=2)
+    observacao: str | None = Field(None, max_length=500)
+
+
+class SolicitacaoFundoRejeitar(BaseModel):
+    observacao: str = Field(..., min_length=3, max_length=500)
+
+
+class SolicitacaoFundoResponse(BaseModel):
+    id: uuid.UUID
+    provincia_id: int
+    municipio_id: int | None
+    finalidade: FinalidadeFundoEnum
+    descricao: str
+    quantia: Decimal
+    moeda: str
+    status: DespesaStatusEnum
+    observacao: str | None
+    solicitado_por: uuid.UUID | None
+    aprovado_por: uuid.UUID | None
+    data_solicitacao: datetime
+    aprovado_em: datetime | None
+    nome_provincia: str | None = None
+    nome_solicitante: str | None = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class SolicitacaoFundoList(BaseModel):
+    total: int
+    limit: int
+    offset: int
+    results: list[SolicitacaoFundoResponse]
+
+
+
+class ResumoFinanceiroResponse(BaseModel):
+    receitas: Decimal
+    despesas: Decimal
+    saldo: Decimal
+    moeda: str = 'AOA'
+
 

@@ -31,7 +31,28 @@ from src.project_part.model.models import (
     Notification,
     CategoriaMensagemSuporte,
     RoleMensagemSuporte,
+    Doacao,
+    PagamentoQuota,
+    DonationStatusEnum,
+    MetodoPagamentoEnum,
+    QuotaStatusEnum,
+    TipoMovimentoEnum,
+    MovimentoFinanceiro,
+    AcaoMovimentoEnum,
+    SolicitacaoFundo,
+    FinalidadeFundoEnum,
+    DespesaStatusEnum,
     )
+# from project_part.model.finance import (
+#     Doacao,
+#     PagamentoQuota,
+#     DonationStatusEnum,
+#     MetodoPagamentoEnum,
+#     QuotaStatusEnum,
+#     TipoMovimentoEnum,
+#     MovimentoFinanceiro,
+#     AcaoMovimentoEnum,
+# )
 from alembic import context
 
 # this is the Alembic Config object, which provides

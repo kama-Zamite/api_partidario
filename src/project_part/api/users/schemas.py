@@ -2,7 +2,7 @@ import re
 import uuid
 from datetime import date, datetime
 from typing import Annotated, Any, List, Optional
-
+from decimal import Decimal
 from pydantic import (
     BaseModel,
     ConfigDict,
@@ -17,6 +17,8 @@ from project_part.model.models import (
     CadastrarComo,
     EstadoCivil,
     Genero,
+    DonationStatusEnum,
+    MetodoPagamentoEnum
 )
 
 EmailValided = Annotated[EmailStr, StringConstraints(to_lower=True, strip_whitespace=True)]
@@ -346,6 +348,7 @@ class NotificationResponse(BaseModel):
     id: uuid.UUID
     titulo: str
     mensagem: str
+    motivo: str | None
     destinatario: str | None
     criado_as: datetime
     lido_as: datetime | None
@@ -362,5 +365,25 @@ class NotificationListResponse(BaseModel):
 
 
 
+class DoacaoResponse(BaseModel):
+    id: uuid.UUID
+    user_id: uuid.UUID | None
+    quantia: Decimal
+    moeda: str
+    metodo_pagamento: MetodoPagamentoEnum
+    id_transacao: str | None
+    meses_pagar: int
+    status: DonationStatusEnum
+    observacao: str | None
+    data_doacao: datetime
+    descricao: str | None
+    aprovado_em: datetime | None
 
+    model_config = ConfigDict(from_attributes=True)
+
+
+
+class DoacaoList(BaseModel):
+    total: int
+    results: list[DoacaoResponse]
 
