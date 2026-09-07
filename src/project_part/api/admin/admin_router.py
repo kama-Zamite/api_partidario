@@ -1566,6 +1566,280 @@ async def militantes_por_municipio(
 
 
 
+
+@admin.get(
+    '/simpatizante/por-provincia',
+    status_code=HTTPStatus.OK,
+    response_model=MilitantesTerritorioResponse,
+)
+# @limiter.limit('30/minute')
+async def simpatizante_por_provincia(
+    request: Request,
+    response: Response,
+    session: Session,
+    caches: Redis,
+    current_user: Get_current_user,
+    scope: ScopeValid,
+):
+    """
+    Estatísticas de simpatizante agrupadas por província.
+
+    - Superadmin: todas as províncias (incluindo as com 0 simpatizante)
+    - Admin Provincial: só a sua província
+    - Admin Municipal: acesso negado
+    """
+    logger.info('Usuário %s listando simpatizante por província', current_user.id)
+
+    if scope.municipio_id is not None:
+        raise HTTPException(
+            status_code=HTTPStatus.FORBIDDEN,
+            detail='Acesso negado: Admin municipal não pode ver o resumo por província.',
+        )
+
+    # ---- Cache ----
+    try:
+        versao = (await caches.get('v1:usuarios:lista:versao')) or b'1'
+        versao = versao.decode() if isinstance(versao, bytes) else str(versao)
+    except Exception:
+        versao = 'fallback'
+
+    scope_key = f'prov:{scope.provincia_id}' if scope.provincia_id else 'all'
+    cache_key = f'v1:militantes:por_provincia:{scope_key}:v:{versao}'
+
+    try:
+        cached = await caches.get(cache_key)
+        if cached:
+            response.headers['X-Cache'] = 'HIT'
+            data = cached.decode() if isinstance(cached, bytes) else cached
+            return MilitantesTerritorioResponse.model_validate_json(data)
+    except Exception as e:
+        logger.warning('Falha ao ler cache: %s', e)
+
+    idade = func.date_part('year', func.age(User.data_nascimento))
+
+    # LEFT JOIN: todas as províncias, mesmo com 0 militantes
+    query = (
+        select(
+            Provincia.id.label('id'),
+            Provincia.nome_provincia.label('nome'),
+            func.count().filter(
+                User.id.isnot(None),
+                User.genero == Genero.HOMEM,
+            ).label('masculino'),
+            func.count().filter(
+                User.id.isnot(None),
+                User.genero == Genero.MULHER,
+            ).label('feminino'),
+            func.count(User.id).label('total'),
+            func.min(idade).label('idade_min'),
+            func.max(idade).label('idade_max'),
+        )
+        .select_from(Provincia)
+        .outerjoin(
+            User,
+            and_(
+                User.provincia_id == Provincia.id,
+                User.ativo.is_(True),
+                User.cadastrar_militante == CadastrarComo.SIMPATIZANTE,
+            ),
+        )
+        .group_by(Provincia.id, Provincia.nome_provincia)
+        .order_by(func.count(User.id).desc(), Provincia.nome_provincia.asc())
+    )
+
+    if scope.provincia_id is not None:
+        query = query.where(Provincia.id == scope.provincia_id)
+
+    rows = (await session.execute(query)).all()
+
+    results = []
+    total_geral = 0
+
+    for r in rows:
+        total = int(r.total or 0)
+        total_geral += total
+
+        if total == 0:
+            faixa = '—'
+        else:
+            idade_min = int(r.idade_min) if r.idade_min is not None else None
+            idade_max = int(r.idade_max) if r.idade_max is not None else None
+            faixa = (
+                f'{idade_min}-{idade_max}'
+                if idade_min is not None and idade_max is not None
+                else '—'
+            )
+
+        results.append(
+            MilitantesTerritorioItem(
+                id=r.id,
+                nome=r.nome,
+                masculino=int(r.masculino or 0),
+                feminino=int(r.feminino or 0),
+                idade=faixa,
+                total=total,
+            )
+        )
+
+    resposta = MilitantesTerritorioResponse(total_geral=total_geral, results=results)
+
+    try:
+        await caches.set(cache_key, resposta.model_dump_json(), ex=60)
+    except Exception as e:
+        logger.error('Falha ao guardar cache: %s', e)
+
+    response.headers['X-Cache'] = 'MISS'
+    return resposta
+
+
+
+
+
+@admin.get(
+    '/simpatizante/por-municipio',
+    status_code=HTTPStatus.OK,
+    response_model=MilitantesTerritorioResponse,
+)
+# @limiter.limit('30/minute')
+async def simpatizante_por_municipio(
+    request: Request,
+    response: Response,
+    session: Session,
+    caches: Redis,
+    current_user: Get_current_user,
+    scope: ScopeValid,
+    provincia_id: int = Query(..., description='ID da província'),
+):
+    """Estatísticas de simpatizante por município de uma província."""
+    logger.info(
+        'Usuário %s listando simpatizante por município (provincia_id=%s)',
+        current_user.id,
+        provincia_id,
+    )
+
+    if scope.municipio_id is not None:
+        raise HTTPException(status_code=HTTPStatus.FORBIDDEN, detail='Acesso negado.')
+
+    if scope.provincia_id is not None and scope.provincia_id != provincia_id:
+        raise HTTPException(
+            status_code=HTTPStatus.FORBIDDEN,
+            detail='Acesso negado: Você só pode consultar a sua província.',
+        )
+
+    provincia = await session.scalar(select(Provincia).where(Provincia.id == provincia_id))
+    if not provincia:
+        raise HTTPException(status_code=HTTPStatus.NOT_FOUND, detail='Província não encontrada.')
+
+    # ---- Cache ----
+    try:
+        versao = (await caches.get('v1:usuarios:lista:versao')) or b'1'
+        versao = versao.decode() if isinstance(versao, bytes) else str(versao)
+    except Exception:
+        versao = 'fallback'
+
+    cache_key = f'v1:militantes:por_municipio:prov:{provincia_id}:v:{versao}'
+
+    try:
+        cached = await caches.get(cache_key)
+        if cached:
+            response.headers['X-Cache'] = 'HIT'
+            data = cached.decode() if isinstance(cached, bytes) else cached
+            return MilitantesTerritorioResponse.model_validate_json(data)
+    except Exception as e:
+        logger.warning('Falha ao ler cache: %s', e)
+
+    idade = func.date_part('year', func.age(User.data_nascimento))
+
+    # LEFT JOIN: todos os municípios da província, mesmo com 0 militantes
+    # Filtros de User vão no ON, não no WHERE
+    query = (
+        select(
+            Municipio.id.label('id'),
+            Municipio.nome_municipio.label('nome'),
+            func.count().filter(
+                User.id.isnot(None),
+                User.genero == Genero.HOMEM,
+            ).label('masculino'),
+            func.count().filter(
+                User.id.isnot(None),
+                User.genero == Genero.MULHER,
+            ).label('feminino'),
+            func.count(User.id).label('total'),
+            func.min(idade).label('idade_min'),
+            func.max(idade).label('idade_max'),
+        )
+        .select_from(Municipio)
+        .outerjoin(
+            User,
+            and_(
+                User.municipio_id == Municipio.id,
+                User.ativo.is_(True),
+                User.cadastrar_militante == CadastrarComo.SIMPATIZANTE,
+            ),
+        )
+        .where(Municipio.id_provincia == provincia_id)  # ou Municipio.provincia_id
+        .group_by(Municipio.id, Municipio.nome_municipio)
+        .order_by(func.count(User.id).desc(), Municipio.nome_municipio.asc())
+    )
+
+    rows = (await session.execute(query)).all()
+
+    results = []
+    total_geral = 0
+
+    for r in rows:
+        total = int(r.total or 0)
+        total_geral += total
+
+        if total == 0:
+            faixa = '—'
+        else:
+            idade_min = int(r.idade_min) if r.idade_min is not None else None
+            idade_max = int(r.idade_max) if r.idade_max is not None else None
+            faixa = (
+                f'{idade_min}-{idade_max}'
+                if idade_min is not None and idade_max is not None
+                else '—'
+            )
+
+        results.append(
+            MilitantesTerritorioItem(
+                id=r.id,
+                nome=r.nome,
+                masculino=int(r.masculino or 0),
+                feminino=int(r.feminino or 0),
+                idade=faixa,
+                total=total,
+            )
+        )
+
+    resposta = MilitantesTerritorioResponse(total_geral=total_geral, results=results)
+
+    try:
+        await caches.set(cache_key, resposta.model_dump_json(), ex=60)
+    except Exception as e:
+        logger.error('Falha ao guardar cache: %s', e)
+
+    response.headers['X-Cache'] = 'MISS'
+    return resposta
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 @admin.get('/audoitLog', response_model=PaginatedAuditLogs)
 async def listar_logs_auditoria(
     session: Session,
