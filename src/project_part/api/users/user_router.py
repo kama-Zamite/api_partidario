@@ -1809,6 +1809,17 @@ async def obter_cartao(session: Session, current_user: Get_current_user):
     """
     Retorna os detalhes do cartão do militante logado, se houver um cartão ativo.
     """
+    logger.info('Buscar por solicitação de cartão de militante do usuario %s', current_user.email)
+    solicitacao_existente = await session.scalar(
+        select(SolicitacaoCartao).where(
+            SolicitacaoCartao.user_id == current_user.id, 
+            SolicitacaoCartao.status == StatusSolicitacao.APROVADO
+        )
+    )
+    if not solicitacao_existente:
+        raise HTTPException(status_code=HTTPStatus.BAD_REQUEST, detail="Você ainda não possui um cartão.")
+
+    
     if current_user.cadastrar_militante != 'MILITANTE':
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
