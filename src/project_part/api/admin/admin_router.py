@@ -691,6 +691,88 @@ async def evolucao_militantes(
     }
 
 
+
+@admin.get("/evolucao-simpatizante", status_code=HTTPStatus.OK)
+# @limiter.limit('30/minute')
+async def evolucao_simpatizante(
+    request: Request,
+    session: Session,
+    current_user: Get_current_user,
+    scope: ScopeValid,
+    ano: int | None = Query(None, description="Ano para filtrar (padrão: ano atual)"),
+):
+    """
+    Evolução mensal de novos simpatizante (não acumulada).
+    Sobe se o mês teve mais inscritos; desce se teve menos.
+    """
+    logger.info(
+        "Usuário %s acessando evolução de simpatizante do ano %s",
+        current_user.id,
+        ano or "atual",
+    )
+
+    if scope.municipio_id is not None:
+        raise HTTPException(
+            status_code=HTTPStatus.FORBIDDEN,
+            detail="Acesso negado: Você não tem permissão para acessar esses dados.",
+        )
+
+    ano_atual = date.today().year
+    ano_consulta = ano or ano_atual
+
+    if ano_consulta > ano_atual:
+        raise HTTPException(
+            status_code=HTTPStatus.BAD_REQUEST,
+            detail="Não é possível consultar anos futuros.",
+        )
+
+    query = (
+        select(
+            extract("month", User.criado_em).label("mes"),
+            func.count(User.id).label("total"),
+        )
+        .where(
+            User.ativo.is_(True),
+            User.cadastrar_militante == CadastrarComo.SIMPATIZANTE,
+            extract("year", User.criado_em) == ano_consulta,
+        )
+        .group_by(extract("month", User.criado_em))
+        .order_by(extract("month", User.criado_em))
+    )
+
+    if scope.provincia_id is not None:
+        query = query.where(User.provincia_id == scope.provincia_id)
+
+    result = await session.execute(query)
+    dados_mes = {int(mes): int(total) for mes, total in result.all()}
+
+    meses_pt = {
+        1: "Jan", 2: "Fev", 3: "Mar", 4: "Abr",
+        5: "Mai", 6: "Jun", 7: "Jul", 8: "Ago",
+        9: "Set", 10: "Out", 11: "Nov", 12: "Dez",
+    }
+
+    ultimo_mes = date.today().month if ano_consulta == ano_atual else 12
+
+    # Só o total do mês (sem acumular)
+    evolucao = [
+        {
+            "mes": meses_pt[mes],
+            "total": dados_mes.get(mes, 0),
+        }
+        for mes in range(1, ultimo_mes + 1)
+    ]
+
+    return {
+        "ano": ano_consulta,
+        "dados": evolucao,
+    }
+
+
+
+
+
+
 @admin.get(
     '/registros-recentes',
     status_code=HTTPStatus.OK,
