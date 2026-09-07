@@ -142,7 +142,7 @@ class SolicitanteCartaoResponse(BaseModel):
     nome_militante: str
     data_emissao: datetime
     data_nascimento: date
-    activo: bool
+    ativo: bool
 
     model_config = ConfigDict(from_attributes=True)
 

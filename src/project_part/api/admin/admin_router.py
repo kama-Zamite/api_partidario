@@ -2355,6 +2355,7 @@ async def listar_notificacoes_cartao(
     query_nao_lidas = select(func.count(Notification.id)).where(
         Notification.admin_id == current_user.id, 
         Notification.destinatario == 'ADMIN', 
+        Notification.categoria == RoleCategoriaNotificacao.SOLICITACAO_CARTAO,
         Notification.lido_as.is_(None)
     )
     total_nao_lidas = await session.scalar(query_nao_lidas) or 0
