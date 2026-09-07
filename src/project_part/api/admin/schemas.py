@@ -137,6 +137,7 @@ class NotificationListResponse(BaseModel):
 
 class SolicitanteCartaoResponse(BaseModel):
     id: uuid.UUID
+    user_id: uuid.UUID
     numero_cartao: str
     nome_militante: str
     data_emissao: datetime

@@ -105,6 +105,7 @@ from .schemas import (
     QuotaList,
     ResumoFinanceiroResponse,
     SolicitacaoFundoResponse,
+    SolicitanteCartaoResponse,
     )
 from .util import (
     to_doacao_response,
@@ -2315,8 +2316,8 @@ async def listar_notificacoes_suporte(
 
 
 
-
-@admin.get('/notificacoes/solicitacoes-cartao', status_code=HTTPStatus.OK, response_model=NotificationListResponse)
+# CORREÇÃO: Removido o List[] do response_model, agora espera diretamente o CardSolicitante
+@admin.get('/notificacoes/solicitacoes-cartao', status_code=HTTPStatus.OK, response_model=CardSolicitante)
 async def listar_notificacoes_cartao(
     session: Session,
     current_user: Get_current_user,
@@ -2325,20 +2326,23 @@ async def listar_notificacoes_cartao(
     offset: int = Query(default=0, ge=0, description='Número de registros a pular (offset)'),
 ):
     """
-    Retorna a lista de notificações destinadas ao Administrador logado,
-    ordenadas das mais recentes para as mais antigas.
+    Retorna a lista paginada de notificações destinadas ao Administrador logado,
+    mapeando os dados dos solicitantes de cartão.
     """
     logger.info('Administrador %s listando suas notificações...', current_user.id)
 
-    # CORREÇÃO CRUCIAL: O Admin deve buscar onde o admin_id é igual ao id dele!
-
+    # 1. Query para buscar as notificações trazendo o solicitante e as suas relações geográficas
     query = (
         select(Notification)
-        .options(joinedload(Notification.solicitante))
-        .where(Notification.admin_id == current_user.id,
-               Notification.destinatario == 'ADMIN',
-               Notification.categoria == 'SOLICITACAO_CARTAO'
-               )
+        .options(
+            joinedload(Notification.solicitante).joinedload(User.municipio),
+            joinedload(Notification.solicitante).joinedload(User.provincia)
+        )
+        .where(
+            Notification.admin_id == current_user.id,
+            Notification.destinatario == 'ADMIN',
+            Notification.categoria == RoleCategoriaNotificacao.SOLICITACAO_CARTAO
+        )
         .order_by(Notification.criado_as.desc())
         .limit(limit)
         .offset(offset)
@@ -2347,16 +2351,39 @@ async def listar_notificacoes_cartao(
     result = await session.execute(query)
     notificacoes = result.scalars().all()
 
-    # CORREÇÃO CRUCIAL: Ajustado o contador para usar as mesmas regras de filtro do admin
+    # 2. Contador de notificações não lidas para o total
     query_nao_lidas = select(func.count(Notification.id)).where(
-        Notification.admin_id == current_user.id, Notification.destinatario == 'ADMIN', Notification.lido_as.is_(None)
+        Notification.admin_id == current_user.id, 
+        Notification.destinatario == 'ADMIN', 
+        Notification.lido_as.is_(None)
     )
     total_nao_lidas = await session.scalar(query_nao_lidas) or 0
 
-    return {
-    'total': total_nao_lidas, 
-    'results': notificacoes}
+    # 3. Mapeamento das notificações para os objetos do SolicitanteCartaoResponse
+    lista_solicitantes = []
+    for notificacao in notificacoes:
+        u = notificacao.solicitante
+        if not u:
+            continue
+            
+        lista_solicitantes.append({
+            "id": notificacao.id, # ID da notificação ou do processo
+            "user_id": u.id,
+            "numero_cartao": u.militante_numero or "Pendente",
+            "nome_militante": u.nome_completo,
+            "data_emissao": notificacao.criado_as,
+            "data_nascimento": u.data_nascimento,
+            "ativo": u.ativo,
+            "estado_civil": u.estado_civil,
+            "municipio": u.municipio, # Passa o objeto completo, os validators cuidam do resto
+            "provincia": u.provincia  # Passa o objeto completo, os validators cuidam do resto
+        })
 
+    # 4. Retorno estruturado respeitando o CardSolicitante exatamente
+    return {
+        'total': total_nao_lidas, 
+        'results': lista_solicitantes
+    }
 
 
 
