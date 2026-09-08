@@ -107,6 +107,9 @@ from .schemas import (
     SolicitacaoFundoResponse,
     SolicitanteCartaoResponse,
     SolicitacoesFundoContadores,
+    MovimentacoesList,
+    MovimentacaoItem,
+    TipoMovimentacaoUI,
     )
 from .util import (
     to_doacao_response,
@@ -2328,6 +2331,121 @@ async def contadores_solicitacoes_fundo(
         aprovadas=int(row.aprovadas or 0),
         rejeitadas=int(row.rejeitadas or 0),
     )
+
+
+@admin.get(
+    '/financeiro/ultimas_movimentacoes',
+    status_code=HTTPStatus.OK,
+    response_model=MovimentacoesList,
+)
+# @limiter.limit('30/minute')
+async def ultimas_movimentacoes(
+    request: Request,
+    session: Session,
+    current_user: Get_current_user,
+    scope: ScopeValid,
+    limit: int = Query(10, ge=1, le=50),
+    offset: int = Query(0, ge=0),
+):
+    """
+    Junta doações APPROVED + quotas APPROVED (receitas)
+    e solicitações de fundo APPROVED (despesas).
+    Ordenado por data desc.
+    """
+    if scope.municipio_id is not None:
+        raise HTTPException(status_code=HTTPStatus.FORBIDDEN, detail='Acesso negado.')
+
+    provincia_filter = scope.provincia_id  # None = superadmin (todas)
+
+    items: list[MovimentacaoItem] = []
+
+    # ── RECEITAS: doações aprovadas ──────────────────────────────
+    q_doacoes = (
+        select(Doacao, User, Provincia)
+        .outerjoin(User, User.id == Doacao.user_id)
+        .outerjoin(Provincia, Provincia.id == User.provincia_id)
+        .where(Doacao.status == DonationStatusEnum.APPROVED)
+    )
+    if provincia_filter is not None:
+        q_doacoes = q_doacoes.where(User.provincia_id == provincia_filter)
+
+    for doacao, user, prov in (await session.execute(q_doacoes)).all():
+        nome = (user.nome_completo if user else None) or 'Doação'
+        items.append(
+            MovimentacaoItem(
+                tipo=TipoMovimentacaoUI.RECEITA,
+                descricao=doacao.observacao or f'Doação — {nome}',
+                provincia=prov.nome_provincia if prov else None,
+                data=doacao.aprovado_em or doacao.data_doacao,
+                valor=doacao.quantia,
+            )
+        )
+
+    # ── RECEITAS: quotas aprovadas ───────────────────────────────
+    q_quotas = (
+        select(PagamentoQuota, User, Provincia)
+        .join(User, User.id == PagamentoQuota.user_id)
+        .outerjoin(Provincia, Provincia.id == User.provincia_id)
+        .where(PagamentoQuota.status == QuotaStatusEnum.APPROVED)
+    )
+    if provincia_filter is not None:
+        q_quotas = q_quotas.where(User.provincia_id == provincia_filter)
+
+    for pag, user, prov in (await session.execute(q_quotas)).all():
+        items.append(
+            MovimentacaoItem(
+                tipo=TipoMovimentacaoUI.RECEITA,
+                descricao=f'Quota #{pag.periodo}',
+                provincia=prov.nome_provincia if prov else None,
+                data=pag.aprovado_em or pag.data_pagamento,
+                valor=pag.quantia,
+            )
+        )
+
+    # ── DESPESAS: solicitações APPROVED ──────────────────────────
+    q_fundos = (
+        select(SolicitacaoFundo)
+        .options(selectinload(SolicitacaoFundo.provincia))
+        .where(SolicitacaoFundo.status == DespesaStatusEnum.APPROVED)
+    )
+    if provincia_filter is not None:
+        q_fundos = q_fundos.where(SolicitacaoFundo.provincia_id == provincia_filter)
+
+    for s in (await session.execute(q_fundos)).scalars().all():
+        # Ex.: "SF-2026-0006 — motivo teste ui"
+        ref = f'SF-{s.data_solicitacao.year}-{str(s.id)[:4].upper()}'
+        desc = f'{ref} — {s.descricao}'
+        items.append(
+            MovimentacaoItem(
+                tipo=TipoMovimentacaoUI.DESPESA,
+                descricao=desc,
+                provincia=s.provincia.nome_provincia if s.provincia else None,
+                data=s.aprovado_em or s.data_solicitacao,
+                valor=s.quantia,  # front mostra como negativo
+            )
+        )
+
+    # Ordenar por data (mais recente primeiro)
+    items.sort(key=lambda x: x.data, reverse=True)
+
+    total = len(items)
+    page = items[offset : offset + limit]
+
+    return MovimentacoesList(
+        total=total,
+        limit=limit,
+        offset=offset,
+        results=page,
+    )
+
+
+
+
+
+
+
+
+
 
 
 

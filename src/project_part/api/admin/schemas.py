@@ -381,3 +381,22 @@ class SolicitacoesFundoContadores(BaseModel):
     pendentes: int
     aprovadas: int
     rejeitadas: int
+
+class TipoMovimentacaoUI(str, Enum):
+    RECEITA = 'RECEITA'
+    DESPESA = 'DESPESA'
+
+
+class MovimentacaoItem(BaseModel):
+    tipo: TipoMovimentacaoUI
+    descricao: str
+    provincia: str | None
+    data: datetime
+    valor: Decimal  # positivo = receita; o front pode mostrar despesa a vermelho
+
+
+class MovimentacoesList(BaseModel):
+    total: int
+    limit: int
+    offset: int
+    results: list[MovimentacaoItem]
