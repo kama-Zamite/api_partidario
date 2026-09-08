@@ -3400,6 +3400,8 @@ async def aprovar_solicitacao_fundo(
     scope: ScopeValid,
 ):
     _apenas_superadmin(scope)
+    logger.info('Superadmin %s tentando aprovar solicitação %s', current_user.id, solicitacao_id)
+    verificar_permissao_global_pais(scope, current_user)
 
     solicitacao = await session.scalar(
         select(SolicitacaoFundo)
@@ -3415,6 +3417,32 @@ async def aprovar_solicitacao_fundo(
             detail=f'Só é possível aprovar pedidos PENDING (atual: {solicitacao.status}).',
         )
 
+    # ----- RECEITAS (doações + quotas dos users do território) -----
+    q_doacoes = select(func.coalesce(func.sum(Doacao.quantia), 0)).where(
+        Doacao.status == DonationStatusEnum.APPROVED
+    )
+    q_quotas = select(func.coalesce(func.sum(PagamentoQuota.quantia), 0)).where(
+        PagamentoQuota.status == QuotaStatusEnum.APPROVED
+    )
+
+    receitas = Decimal(str(await session.scalar(q_doacoes) or 0)) + Decimal(
+            str(await session.scalar(q_quotas) or 0)
+    )
+
+    if not receitas:
+        raise HTTPException(
+            status_code=HTTPStatus.BAD_REQUEST,
+            detail='Não é possível aprovar a solicitação. Não existem receitas aprovadas para o território.',
+        )
+
+    logger.info('Superadmin %s verificando receitas para solicitação %s', current_user.id, solicitacao.id)
+    if receitas < solicitacao.quantia:
+        raise HTTPException(
+            status_code=HTTPStatus.BAD_REQUEST,
+            detail=f'Não é possível aprovar a solicitação. Receitas ({receitas}) insuficientes para o valor solicitado ({solicitacao.quantia}).',
+        )
+
+    logger.info('Superadmin %s aprovando solicitação %s', current_user.id, solicitacao.id)
     anterior = solicitacao.status.value
     solicitacao.status = DespesaStatusEnum.APPROVED
     solicitacao.aprovado_por = current_user.id
@@ -3437,8 +3465,16 @@ async def aprovar_solicitacao_fundo(
         },
     )
 
-    await session.commit()
-    await session.refresh(solicitacao)
+    try:
+        await session.commit()
+        await session.refresh(solicitacao)
+    except Exception as e:
+        await session.rollback()
+        raise HTTPException(
+            status_code=HTTPStatus.BAD_REQUEST,
+            detail='Erro no processo de aprovação do pagamento de quota'
+        )
+    
 
     logger.info(
         'Solicitação %s APROVADA por superadmin %s (provincia=%s, quantia=%s)',
