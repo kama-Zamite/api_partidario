@@ -232,6 +232,8 @@ async def listar_admin_scope(
     Admins regionais só visualizam os escopos
     pertencentes à sua própria área geográfica.
     """
+    logger.info('Usuário %s listando escopos administrativos', current_user.id)
+    verificar_permissao_global_pais(scope, current_user)
 
     try:
         versao_cache = await redis.get(
