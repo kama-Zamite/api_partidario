@@ -106,6 +106,7 @@ from .schemas import (
     ResumoFinanceiroResponse,
     SolicitacaoFundoResponse,
     SolicitanteCartaoResponse,
+    SolicitacoesFundoContadores,
     )
 from .util import (
     to_doacao_response,
@@ -2276,6 +2277,57 @@ async def resumo_financeiro(
     )
 
 
+
+@admin.get(
+    '/fundos/solicitacoes/contadores',
+    status_code=HTTPStatus.OK,
+    response_model=SolicitacoesFundoContadores,
+)
+# @limiter.limit('30/minute')
+async def contadores_solicitacoes_fundo(
+    request: Request,
+    session: Session,
+    current_user: Get_current_user,
+    scope: ScopeValid,
+):
+    """
+    Conta solicitações por status.
+    - Superadmin: todas as províncias
+    - Admin provincial: só a sua província
+    - Admin municipal: negado
+    """
+    if scope.municipio_id is not None:
+        raise HTTPException(
+            status_code=HTTPStatus.FORBIDDEN,
+            detail='Acesso negado.',
+        )
+
+    filtros = []
+    if scope.provincia_id is not None:
+        filtros.append(SolicitacaoFundo.provincia_id == scope.provincia_id)
+
+    query = select(
+        func.count().filter(
+            SolicitacaoFundo.status == DespesaStatusEnum.PENDING
+        ).label('pendentes'),
+        func.count().filter(
+            SolicitacaoFundo.status == DespesaStatusEnum.APPROVED
+        ).label('aprovadas'),
+        func.count().filter(
+            SolicitacaoFundo.status == DespesaStatusEnum.REJECTED
+        ).label('rejeitadas'),
+    ).select_from(SolicitacaoFundo)
+
+    if filtros:
+        query = query.where(*filtros)
+
+    row = (await session.execute(query)).one()
+
+    return SolicitacoesFundoContadores(
+        pendentes=int(row.pendentes or 0),
+        aprovadas=int(row.aprovadas or 0),
+        rejeitadas=int(row.rejeitadas or 0),
+    )
 
 
 

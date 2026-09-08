@@ -377,3 +377,7 @@ class ResumoFinanceiroResponse(BaseModel):
     moeda: str = 'AOA'
 
 
+class SolicitacoesFundoContadores(BaseModel):
+    pendentes: int
+    aprovadas: int
+    rejeitadas: int
