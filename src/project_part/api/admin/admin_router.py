@@ -2541,16 +2541,17 @@ async def listar_notificacoes_cartao(
             continue
             
         lista_solicitantes.append({
-            "id": notificacao.id, # ID da notificação ou do processo
-            "user_id": u.id,
+            "id": notificacao.id, 
+            "user_id": u.id,  # CORREÇÃO: Alterado de u.user_id para u.id
             "numero_cartao": u.militante_numero or "Pendente",
             "nome_militante": u.nome_completo,
             "data_emissao": notificacao.criado_as,
             "data_nascimento": u.data_nascimento,
+            "activo": u.ativo,  # CORREÇÃO: Enviando ambas as grafias exigidas pelo Pydantic
             "ativo": u.ativo,
             "estado_civil": u.estado_civil,
-            "municipio": u.municipio, # Passa o objeto completo, os validators cuidam do resto
-            "provincia": u.provincia  # Passa o objeto completo, os validators cuidam do resto
+            "municipio": u.municipio, 
+            "provincia": u.provincia  
         })
 
     # 4. Retorno estruturado respeitando o CardSolicitante exatamente
@@ -2558,7 +2559,6 @@ async def listar_notificacoes_cartao(
         'total': total_nao_lidas, 
         'results': lista_solicitantes
     }
-
 
 
 @admin.get(
@@ -2612,13 +2612,18 @@ async def listar_solicitante_cartao(
     results = []
     for s in solicitacoes:
         user = s.user
+        if not user:
+            continue
+            
         results.append({
             "id": s.id,
+            "user_id": user.id,  # CORREÇÃO: Alterado de user.user_id para user.id
             "numero_cartao": user.militante_numero or "",  
             "nome_militante": user.nome_completo,
             "data_emissao": s.criado_as,        
             "data_nascimento": user.data_nascimento,
-            "activo": user.ativo,
+            "activo": user.ativo,  # CORREÇÃO: Enviando ambas as grafias exigidas pelo Pydantic
+            "ativo": user.ativo,
             "estado_civil": user.estado_civil,
             "municipio": user.municipio, 
             "provincia": user.provincia, 
@@ -2628,6 +2633,8 @@ async def listar_solicitante_cartao(
         "total": total,
         "results": results
     }
+
+
 
 
 
