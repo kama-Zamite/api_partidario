@@ -2731,19 +2731,19 @@ async def remover_escopo_administrativo(
         raise HTTPException(status_code=HTTPStatus.FORBIDDEN, detail='Admins municipais não podem revogar escopos.')
         
     elif scope.provincia_id is not None:
-        logger.info('Admin provincial %s revogando escopo %s.', current_user.id, scope_id)
-        if scope_to_delete.provincia_id != scope.provincia_id:
-            logger.warning('Admin provincial %s tentou revogar escopo %s de outra província.', current_user.id, scope_id)
-            raise HTTPException(
-                status_code=HTTPStatus.FORBIDDEN, detail='Você só pode revogar escopos da sua própria província.'
-            )
+        # logger.info('Admin provincial %s revogando escopo %s.', current_user.id, scope_id)
+        # if scope_to_delete.provincia_id != scope.provincia_id:
+        logger.warning('Admin provincial %s tentou revogar escopo %s, ação não permitida.', current_user.id, scope_id)
+        raise HTTPException(
+            status_code=HTTPStatus.FORBIDDEN, detail='Você só pode revogar escopos da sua própria província.'
+        )
 
-        if scope_to_delete.municipio_id is None:
-            logger.warning('Admin provincial %s tentou revogar escopo %s de outro Admin Provincial.', current_user.id, scope_id)
-            raise HTTPException(
-                status_code=HTTPStatus.FORBIDDEN,
-                detail='Um Admin Provincial não pode revogar o escopo de outro Admin Provincial.',
-            )
+        # if scope_to_delete.municipio_id is None:
+        #     logger.warning('Admin provincial %s tentou revogar escopo %s de outro Admin Provincial.', current_user.id, scope_id)
+        #     raise HTTPException(
+        #         status_code=HTTPStatus.FORBIDDEN,
+        #         detail='Um Admin Provincial não pode revogar o escopo de outro Admin Provincial.',
+        #     )
 
     # 3. Busca o usuário alvo para rebaixar a Role (Ajustado para rodar fora do bloco elif)
     logger.info('Buscando usuário alvo do escopo %s para rebaixar a role.', scope_id)
