@@ -3075,11 +3075,11 @@ async def militante_card(
             raise HTTPException(
                 status_code=HTTPStatus.FORBIDDEN, detail='Operação negada. Região geográfica diferente.'
             )
-    elif scope.municipio_id is not None:
-        if usuario_banco.municipio_id != scope.municipio_id:
-            raise HTTPException(
-                status_code=HTTPStatus.FORBIDDEN, detail='Operação negada. Região geográfica diferente.'
-            )
+    # elif scope.municipio_id is not None:
+    #     if usuario_banco.municipio_id != scope.municipio_id:
+    #         raise HTTPException(
+    #             status_code=HTTPStatus.FORBIDDEN, detail='Operação negada. Região geográfica diferente.'
+    #         )
 
     # # Define data de expiração (5 anos)
     # data_expire_card = agora + timedelta(days=365*5)
@@ -3164,6 +3164,11 @@ async def militante_card(
     session.add(nova_notificacao)
 
     try:
+
+        await session.flush()
+
+        card_militante.activo = True
+        
         await session.commit()
         await session.refresh(card_militante)
 

@@ -1,5 +1,6 @@
 from datetime import datetime, timezone
 from http import HTTPStatus
+from decimal import Decimal
 
 from typing import Any, Optional, Annotated
 import logging
@@ -32,6 +33,7 @@ from project_part.model.models import (
     AcaoMovimentoEnum,
     PagamentoQuota,
     QuotaStatusEnum,
+    MetodoPagamentoEnum,
 )
 from project_part.core.secury import Get_current_user
 from project_part.db.session import get_session
@@ -136,7 +138,12 @@ async def criar_doacao(
 # @limiter.limit('10/minute')
 async def criar_pagamento_quota(
     request: Request,
-    body: QuotaCreate,
+    quantia: Decimal,
+    metodo_pagamento: MetodoPagamentoEnum,
+    referencia: str | None,
+    id_transacao: str | None,
+    meses_pagar: int,
+    observacao: str | None,
     session: Session,
     current_user: Get_current_user,
 ):
@@ -146,11 +153,51 @@ async def criar_pagamento_quota(
             detail='Apenas militantes pagam quota.'
             )
 
+
+    try:
+        logger.info("Criando pagamento de quota para o usuário %s", current_user.id)
+        body = QuotaCreate(
+            quantia=quantia,
+            metodo_pagamento=metodo_pagamento,
+            referencia=referencia,
+            id_transacao=id_transacao,
+            meses_pagar=meses_pagar,
+            observacao=observacao,
+        )
+    except ValueError as e:
+        logger.error("Erro de validação ao criar pagamento de quota: %s", str(e))
+        raise HTTPException(
+            status_code=HTTPStatus.BAD_REQUEST,
+            detail=str(e)
+        )
+
+    
+    query_quota = (
+        select(PagamentoQuota)
+        .where(
+            PagamentoQuota.user_id == current_user.id,
+            PagamentoQuota.status == QuotaStatusEnum.PENDING
+        )
+    )
+
+    pagamento_pendente = await session.scalar(query_quota)
+    if pagamento_pendente:
+        logger.warning("Usuário %s já possui um pagamento de quota pendente.", current_user.id)
+        raise HTTPException(
+            status_code=HTTPStatus.CONFLICT,
+            detail='Você já possui um pagamento de quota pendente.'
+        )
+
+    quota_periodo = query_quota.where(PagamentoQuota.periodo == current_user.id)
+
+    logger.info("Calculando o valor total da quota para o usuário %s", current_user.id)
+    periodo_atual = datetime.now(timezone.utc).strftime('%Y-%m')
+    valor_total_quota = body.quantia * body.meses_pagar
     pagamento = PagamentoQuota(
         user_id=current_user.id,
-        quantia=body.quantia,
+        quantia=valor_total_quota,
         moeda='AOA',
-        periodo=body.periodo,
+        periodo=periodo_atual,
         metodo_pagamento=body.metodo_pagamento,
         referencia=body.referencia.strip() if body.referencia else None,
         id_transacao=body.id_transacao.strip() if body.id_transacao else None,
@@ -158,6 +205,7 @@ async def criar_pagamento_quota(
         status=QuotaStatusEnum.PENDING,
     )
     try:
+        logger.info("Adicionando pagamento de quota à sessão para o usuário %s", current_user.id)
         session.add(pagamento)
         await session.flush()
     except Exception as e:

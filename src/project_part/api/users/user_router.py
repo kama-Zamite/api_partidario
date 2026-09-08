@@ -1228,6 +1228,26 @@ async def atualizar_foto_perfil(
     background_tasks: BackgroundTasks,
     arquivo: UploadFile = File(..., description="Selecione uma imagem JPG ou JPEG (max 5MB)"),
 ):
+
+    """ 
+    Atualiza a foto de perfil do usuário.
+    - Valida o arquivo enviado (extensão, tamanho, conteúdo real).
+    - Sanitiza a imagem removendo EXIF e reconstrói o JPEG.
+    """
+
+    logger.info("Usuário %s iniciou o upload de nova foto de perfil.", current_user.id)
+    query_checar_card = (
+        select(CartaoMilitante)
+        .where(CartaoMilitante.id_user == current_user.id, CartaoMilitante.ativo == True)
+    )
+
+    cartao_ativo = await session.scalar(query_checar_card)
+    if cartao_ativo:
+        logger.warning("Usuário %s tentou alterar a foto de perfil com cartão de militante ativo.", current_user.id)
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Não é permitido alterar a foto de perfil enquanto houver um cartão de militante ativo."
+        )
     if not arquivo.filename:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Nenhum arquivo enviado.")
 
@@ -1809,15 +1829,15 @@ async def obter_cartao(session: Session, current_user: Get_current_user):
     """
     Retorna os detalhes do cartão do militante logado, se houver um cartão ativo.
     """
-    logger.info('Buscar por solicitação de cartão de militante do usuario %s', current_user.email)
-    solicitacao_existente = await session.scalar(
-        select(SolicitacaoCartao).where(
-            SolicitacaoCartao.user_id == current_user.id, 
-            SolicitacaoCartao.status == StatusSolicitacao.APROVADO
-        )
-    )
-    if not solicitacao_existente:
-        raise HTTPException(status_code=HTTPStatus.BAD_REQUEST, detail="Você ainda não possui um cartão.")
+    # logger.info('Buscar por solicitação de cartão de militante do usuario %s', current_user.email)
+    # solicitacao_existente = await session.scalar(
+    #     select(SolicitacaoCartao).where(
+    #         SolicitacaoCartao.user_id == current_user.id, 
+    #         SolicitacaoCartao.status == StatusSolicitacao.APROVADO
+    #     )
+    # )
+    # if not solicitacao_existente:
+    #     raise HTTPException(status_code=HTTPStatus.BAD_REQUEST, detail="Você ainda não possui um cartão.")
 
     
     if current_user.cadastrar_militante != 'MILITANTE':

@@ -460,7 +460,7 @@ class CartaoMilitante(Base):
 
     data_emissao: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
-    activo: Mapped[bool] = mapped_column(Boolean, default=True)
+    activo: Mapped[bool] = mapped_column(Boolean, default=False)
 
     user: Mapped['User'] = relationship('User', back_populates='cards', foreign_keys=[user_id])
     emissor: Mapped['User'] = relationship('User', foreign_keys=[gerado_por])
@@ -802,6 +802,7 @@ class PagamentoQuota(Base):
     )
     quantia: Mapped[Decimal] = mapped_column(Numeric(15, 2), nullable=False)
     moeda: Mapped[str] = mapped_column(String(3), default='AOA', nullable=False)
+    meses_pagar: Mapped[int] = mapped_column(Integer, nullable=True)
     # Ex.: "2026-01" ou "2026"
     periodo: Mapped[str] = mapped_column(String(7), nullable=False, index=True)
     metodo_pagamento: Mapped[MetodoPagamentoEnum] = mapped_column(nullable=False)
