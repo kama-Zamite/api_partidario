@@ -2766,7 +2766,7 @@ async def remover_escopo_administrativo(
     
     # Rebaixa a role do usuário
     logger.info('Rebaixando role do usuário %s para Militante.', user_target.id)
-    user_target.role = settings.ROLE_MILITANTE_ID
+    user_target.role_id = settings.ROLE_MILITANTE_ID
     session.add(user_target)
 
     # 4. Execução da deleção e persistência (Ajustado para o fluxo principal)
