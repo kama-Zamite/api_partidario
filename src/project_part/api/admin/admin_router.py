@@ -2331,6 +2331,7 @@ async def contadores_solicitacoes_fundo(
 
 
 
+
 @admin.get('/notificacoes/suporte', status_code=HTTPStatus.OK, response_model=MensagensSuportePaginadasResponse)
 async def listar_notificacoes_suporte(
     session: Session,
