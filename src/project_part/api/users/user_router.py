@@ -1981,7 +1981,7 @@ async def listar_notificacoes(
     #     destinatario_tipo = "SIMPATIZANTE"
 
     # 2. Constrói os filtros base (reutilizáveis e seguros)
-    filtros = [Notification.user_id == current_user.id]
+    filtros = [Notification.user_id == current_user.id, Notification.destinatario != 'ADMIN']
     # if destinatario_tipo:
     #     filtros.append(Notification.destinatario == destinatario_tipo)
 
@@ -2036,7 +2036,7 @@ async def listar_notificacoes_nao_lidas(
     #     destinatario_tipo = "SIMPATIZANTE"
 
     # 2. Constrói os filtros base (reutilizáveis e seguros)
-    filtros = [Notification.user_id == current_user.id]
+    filtros = [Notification.user_id == current_user.id, Notification.destinatario != 'ADMIN']
     # if destinatario_tipo:
     #     filtros.append(Notification.destinatario == destinatario_tipo)
 
@@ -2104,7 +2104,7 @@ async def listar_notificacoes_dashboard(
     #     destinatario_tipo = "SIMPATIZANTE"
 
     # 2. Constrói os filtros base (reutilizáveis e seguros)
-    filtros = [Notification.user_id == current_user.id]
+    filtros = [Notification.user_id == current_user.id, Notification.destinatario != 'ADMIN']
     # if destinatario_tipo:
     #     filtros.append(Notification.destinatario == destinatario_tipo)
 
@@ -2160,7 +2160,7 @@ async def listar_notificacoes_lidas(
     #     destinatario_tipo = "SIMPATIZANTE"
 
     # 2. Constrói os filtros base (reutilizáveis e seguros)
-    filtros = [Notification.user_id == current_user.id, Notification.lido_as.is_not(None)]
+    filtros = [Notification.user_id == current_user.id, Notification.lido_as.is_not(None), Notification.destinatario != 'ADMIN']
     # if destinatario_tipo:
     #     filtros.append(Notification.destinatario == destinatario_tipo)
 
@@ -2275,7 +2275,7 @@ async def marcar_como_lida(
     # elif current_user.cadastrar_militante == CadastrarComo.SIMPATIZANTE:
     #     destinatario_tipo = "SIMPATIZANTE"
 
-    filtros = [Notification.user_id == current_user.id, Notification.id == id_notificacao]
+    filtros = [Notification.user_id == current_user.id, Notification.id == id_notificacao, Notification.destinatario != 'ADMIN']
     # if destinatario_tipo:
     #     filtros.append(Notification.destinatario == destinatario_tipo)
 

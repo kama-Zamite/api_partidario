@@ -15,6 +15,7 @@ from project_part.model.models import (
     QuotaStatusEnum,
     FinalidadeFundoEnum,
     DespesaStatusEnum,
+    StatusSolicitacao,
 )
 from pydantic import (
     BaseModel,
@@ -138,11 +139,14 @@ class NotificationListResponse(BaseModel):
 class SolicitanteCartaoResponse(BaseModel):
     id: uuid.UUID
     user_id: uuid.UUID
+    image_url: str
     numero_cartao: str
     nome_militante: str
     data_emissao: datetime
     data_nascimento: date
+    status: StatusSolicitacao 
     ativo: bool
+
 
     model_config = ConfigDict(from_attributes=True)
 

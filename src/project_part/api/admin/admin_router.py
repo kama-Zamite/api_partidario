@@ -2489,7 +2489,7 @@ async def listar_notificacoes_suporte(
 
 
 # CORREÇÃO: Removido o List[] do response_model, agora espera diretamente o CardSolicitante
-@admin.get('/notificacoes/solicitacoes-cartao', status_code=HTTPStatus.OK, response_model=CardSolicitante)
+@admin.get('/notificacoes/solicitacoes-cartao', status_code=HTTPStatus.OK, response_model=NotificationListResponse)
 async def listar_notificacoes_cartao(
     session: Session,
     current_user: Get_current_user,
@@ -2501,63 +2501,39 @@ async def listar_notificacoes_cartao(
     Retorna a lista paginada de notificações destinadas ao Administrador logado,
     mapeando os dados dos solicitantes de cartão.
     """
+
+
     logger.info('Administrador %s listando suas notificações...', current_user.id)
 
-    # 1. Query para buscar as notificações trazendo o solicitante e as suas relações geográficas
+    # CORREÇÃO CRUCIAL: O Admin deve buscar onde o admin_id é igual ao id dele!
     query = (
         select(Notification)
-        .options(
-            joinedload(Notification.solicitante).joinedload(User.municipio),
-            joinedload(Notification.solicitante).joinedload(User.provincia)
-        )
+        .options(joinedload(Notification.solicitante))
         .where(
-            Notification.admin_id == current_user.id,
-            Notification.destinatario == 'ADMIN',
-            Notification.categoria == RoleCategoriaNotificacao.SOLICITACAO_CARTAO
-        )
+                Notification.admin_id == current_user.id,
+                Notification.destinatario == 'ADMIN',
+                Notification.categoria == RoleCategoriaNotificacao.SOLICITACAO_CARTAO
+                )
         .order_by(Notification.criado_as.desc())
         .limit(limit)
         .offset(offset)
     )
 
+
+
     result = await session.execute(query)
     notificacoes = result.scalars().all()
 
-    # 2. Contador de notificações não lidas para o total
+    # CORREÇÃO CRUCIAL: Ajustado o contador para usar as mesmas regras de filtro do admin
     query_nao_lidas = select(func.count(Notification.id)).where(
-        Notification.admin_id == current_user.id, 
-        Notification.destinatario == 'ADMIN', 
-        Notification.categoria == RoleCategoriaNotificacao.SOLICITACAO_CARTAO,
-        Notification.lido_as.is_(None)
+        Notification.admin_id == current_user.id, Notification.destinatario == 'ADMIN', Notification.lido_as.is_(None)
     )
     total_nao_lidas = await session.scalar(query_nao_lidas) or 0
 
-    # 3. Mapeamento das notificações para os objetos do SolicitanteCartaoResponse
-    lista_solicitantes = []
-    for notificacao in notificacoes:
-        u = notificacao.solicitante
-        if not u:
-            continue
-            
-        lista_solicitantes.append({
-            "id": notificacao.id, 
-            "user_id": u.id,  # CORREÇÃO: Alterado de u.user_id para u.id
-            "numero_cartao": u.militante_numero or "Pendente",
-            "nome_militante": u.nome_completo,
-            "data_emissao": notificacao.criado_as,
-            "data_nascimento": u.data_nascimento,
-            "activo": u.ativo,  # CORREÇÃO: Enviando ambas as grafias exigidas pelo Pydantic
-            "ativo": u.ativo,
-            "estado_civil": u.estado_civil,
-            "municipio": u.municipio, 
-            "provincia": u.provincia  
-        })
-
-    # 4. Retorno estruturado respeitando o CardSolicitante exatamente
     return {
-        'total': total_nao_lidas, 
-        'results': lista_solicitantes
-    }
+    'total': total_nao_lidas, 
+    'results': notificacoes}
+
 
 
 @admin.get(
@@ -2617,9 +2593,11 @@ async def listar_solicitante_cartao(
         results.append({
             "id": s.id,
             "user_id": user.id,  # CORREÇÃO: Alterado de user.user_id para user.id
+            "image_url": user.image_url,
             "numero_cartao": user.militante_numero or "",  
             "nome_militante": user.nome_completo,
-            "data_emissao": s.criado_as,        
+            "data_emissao": s.criado_as,  
+            "status": s.status,      
             "data_nascimento": user.data_nascimento,
             "activo": user.ativo,  # CORREÇÃO: Enviando ambas as grafias exigidas pelo Pydantic
             "ativo": user.ativo,
