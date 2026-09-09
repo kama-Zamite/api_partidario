@@ -27,6 +27,7 @@ class Settings(BaseSettings):
 
     ADMIN_ROLE_ID: int
     ROLE_MILITANTE_ID: int
+    ROLE_SIMPATIZANTE_ID: int
 
 
     CLOUDINARY_CLOUD_NAME: str

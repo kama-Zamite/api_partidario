@@ -27,67 +27,121 @@ MAX_IMAGE_PIXELS = 16_000_000
 Image.MAX_IMAGE_PIXELS = MAX_IMAGE_PIXELS
 
 
-def preparar_imagem_segura(file_bytes: bytes) -> bytes:
-    """
-    Sanitiza completamente um JPEG.
+# def preparar_imagem_segura(file_bytes: bytes) -> bytes:
+#     """
+#     Sanitiza completamente um JPEG.
 
-    - verifica estrutura
-    - remove EXIF
-    - corrige rotação
-    - converte para RGB
-    - regrava completamente o JPEG
-    """
+#     - verifica estrutura
+#     - remove EXIF
+#     - corrige rotação
+#     - converte para RGB
+#     - regrava completamente o JPEG
+#     """
 
+#     try:
+#         #
+#         # Primeiro verifica a estrutura do JPEG
+#         #
+#         with Image.open(io.BytesIO(file_bytes)) as teste:
+#             teste.verify()
+
+#         #
+#         # Reabre para processamento
+#         #
+#         with Image.open(io.BytesIO(file_bytes)) as imagem:
+#             if imagem.format not in ('JPEG', 'JPG', 'MPO'):
+#                 raise ValueError('Apenas imagens JPEG são aceitas.')
+
+#             largura, altura = imagem.size
+
+#             if largura > MAX_IMAGE_WIDTH:
+#                 raise ValueError('Largura da imagem excede o limite permitido.')
+
+#             if altura > MAX_IMAGE_HEIGHT:
+#                 raise ValueError('Altura da imagem excede o limite permitido.')
+
+#             if largura * altura > MAX_IMAGE_PIXELS:
+#                 raise ValueError('Quantidade de pixels excede o limite permitido.')
+
+#             #
+#             # Corrige rotação de celulares
+#             #
+#             imagem = ImageOps.exif_transpose(imagem)
+
+#             #
+#             # JPEG deve ser RGB
+#             #
+#             if imagem.mode != 'RGB':
+#                 imagem = imagem.convert('RGB')
+
+#             saida = io.BytesIO()
+
+#             imagem.save(saida, format='JPEG', quality=85, optimize=True, progressive=True)
+
+#             return saida.getvalue()
+
+#     except Image.DecompressionBombError:
+#         logger.warning('Imagem rejeitada por decompression bomb.')
+#         raise ValueError('Imagem muito grande.')
+
+#     except UnidentifiedImageError:
+#         logger.warning('Arquivo não é uma imagem JPEG válida.')
+#         raise ValueError('Imagem inválida.')
+
+#     except Exception as e:
+#         logger.warning('Imagem rejeitada: %s', e)
+#         raise ValueError(str(e))
+
+
+
+
+def preparar_imagem_segura(file_bytes: bytes, eh_qrcode: bool = False) -> bytes:
+    """
+    Sanitiza completamente uma imagem (JPEG ou PNG se for QR Code).
+    """
     try:
-        #
-        # Primeiro verifica a estrutura do JPEG
-        #
+        # Verifica a estrutura inicial da imagem
         with Image.open(io.BytesIO(file_bytes)) as teste:
             teste.verify()
 
-        #
         # Reabre para processamento
-        #
         with Image.open(io.BytesIO(file_bytes)) as imagem:
-            if imagem.format not in ('JPEG', 'JPG', 'MPO'):
+            formatos_validos = ('PNG',) if eh_qrcode else ('JPEG', 'JPG', 'MPO')
+            
+            if imagem.format not in formatos_validos:
+                if eh_qrcode:
+                    raise ValueError('Para QR Code, apenas imagens PNG são aceitas.')
                 raise ValueError('Apenas imagens JPEG são aceitas.')
 
             largura, altura = imagem.size
 
-            if largura > MAX_IMAGE_WIDTH:
-                raise ValueError('Largura da imagem excede o limite permitido.')
-
-            if altura > MAX_IMAGE_HEIGHT:
-                raise ValueError('Altura da imagem excede o limite permitido.')
+            if largura > MAX_IMAGE_WIDTH or altura > MAX_IMAGE_HEIGHT:
+                raise ValueError('Dimensões da imagem excedem o limite permitido.')
 
             if largura * altura > MAX_IMAGE_PIXELS:
                 raise ValueError('Quantidade de pixels excede o limite permitido.')
 
-            #
-            # Corrige rotação de celulares
-            #
-            imagem = ImageOps.exif_transpose(imagem)
-
-            #
-            # JPEG deve ser RGB
-            #
-            if imagem.mode != 'RGB':
-                imagem = imagem.convert('RGB')
-
             saida = io.BytesIO()
 
-            imagem.save(saida, format='JPEG', quality=85, optimize=True, progressive=True)
+            if eh_qrcode:
+                # Processamento seguro para PNG (QR Code)
+                # Mantém RGBA/L/RGB conforme gerado pelo gerador de QR Code
+                imagem.save(saida, format='PNG', optimize=True)
+            else:
+                # Processamento seguro para JPEG comum
+                imagem = ImageOps.exif_transpose(imagem)
+                if imagem.mode != 'RGB':
+                    imagem = imagem.convert('RGB')
+                imagem.save(saida, format='JPEG', quality=85, optimize=True, progressive=True)
 
             return saida.getvalue()
 
     except Image.DecompressionBombError:
         logger.warning('Imagem rejeitada por decompression bomb.')
         raise ValueError('Imagem muito grande.')
-
     except UnidentifiedImageError:
-        logger.warning('Arquivo não é uma imagem JPEG válida.')
+        logger.warning('Arquivo não é uma imagem válida.')
         raise ValueError('Imagem inválida.')
-
     except Exception as e:
         logger.warning('Imagem rejeitada: %s', e)
         raise ValueError(str(e))
@@ -106,9 +160,48 @@ def _sincrono_upload(arquivo, folder, public_id):
     )
 
 
-async def upload_imagem_geral(file_bytes: bytes, identificador: str, pasta_alvo: str, prefixo_arquivo: str) -> str:
+# async def upload_imagem_geral(file_bytes: bytes, identificador: str, pasta_alvo: str, prefixo_arquivo: str) -> str:
 
-    imagem_segura = preparar_imagem_segura(file_bytes)
+#     imagem_segura = preparar_imagem_segura(file_bytes)
+
+#     public_id = f'{prefixo_arquivo}_{identificador}'
+
+#     loop = asyncio.get_running_loop()
+
+#     try:
+#         with io.BytesIO(imagem_segura) as arquivo:
+#             response = await asyncio.wait_for(
+#                 loop.run_in_executor(None, _sincrono_upload, arquivo, pasta_alvo, public_id),
+#                 timeout=UPLOAD_TIMEOUT_SECONDS,
+#             )
+
+#     except asyncio.TimeoutError:
+#         logger.error('Timeout ao subir imagem %s.', public_id)
+#         raise RuntimeError('Timeout durante upload da imagem.')
+
+#     except Exception as e:
+#         logger.error('Erro ao subir imagem %s: %s', public_id, e)
+#         raise
+
+#     secure_url = response.get('secure_url')
+
+#     if not secure_url:
+#         logger.error('Cloudinary não retornou secure_url. Resposta=%s', response)
+#         raise RuntimeError('Cloudinary não retornou uma URL válida.')
+
+#     return secure_url
+
+
+async def upload_imagem_geral(
+    file_bytes: bytes, 
+    identificador: str, 
+    pasta_alvo: str, 
+    prefixo_arquivo: str,
+    eh_qrcode: bool = False  # <-- Adicionado aqui com padrão False
+) -> str:
+
+    # Repassa a flag para validar como PNG se for True
+    imagem_segura = preparar_imagem_segura(file_bytes, eh_qrcode=eh_qrcode)
 
     public_id = f'{prefixo_arquivo}_{identificador}'
 
@@ -124,7 +217,6 @@ async def upload_imagem_geral(file_bytes: bytes, identificador: str, pasta_alvo:
     except asyncio.TimeoutError:
         logger.error('Timeout ao subir imagem %s.', public_id)
         raise RuntimeError('Timeout durante upload da imagem.')
-
     except Exception as e:
         logger.error('Erro ao subir imagem %s: %s', public_id, e)
         raise
@@ -136,6 +228,10 @@ async def upload_imagem_geral(file_bytes: bytes, identificador: str, pasta_alvo:
         raise RuntimeError('Cloudinary não retornou uma URL válida.')
 
     return secure_url
+
+
+
+
 
 
 async def _apagar_do_cloudinary(public_id: str) -> bool:

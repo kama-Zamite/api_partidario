@@ -309,7 +309,9 @@ class CardBase(BaseModel):
     numero_cartao: str
     nome_militante: str
     data_emissao: datetime
-    ativo: bool
+    image_url: str | None
+    url_qrcode: str
+    activo: bool
 
     model_config = ConfigDict(from_attributes=True)
 

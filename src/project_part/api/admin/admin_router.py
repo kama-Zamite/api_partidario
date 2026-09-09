@@ -24,6 +24,7 @@ from fastapi import (
     Response,
     Path,
     Request,
+    status,
 )
 from pydantic import TypeAdapter, ValidationError
 from redis.asyncio import Redis as AsyncRedis
@@ -3152,7 +3153,11 @@ async def militante_card(
 
         logger.info('Banco gravado com sucesso. Iniciando upload para o Cloudinary...')
         url_imagem_qrcode = await upload_imagem_geral(
-            file_bytes=qr_code_bytes, identificador=qr_code, pasta_alvo='sqcode', prefixo_arquivo='qr'
+            file_bytes=qr_code_bytes,
+            identificador=qr_code,
+            pasta_alvo='sqcode',
+            prefixo_arquivo='qr',
+            eh_qrcode=True
         )
 
         card_militante.url_qrcode = url_imagem_qrcode
@@ -3216,11 +3221,11 @@ async def rejeitar_militante_card(
             raise HTTPException(
                 status_code=HTTPStatus.FORBIDDEN, detail='Operação negada. Região geográfica diferente.'
             )
-    elif scope.municipio_id is not None:
-        if usuario_banco.municipio_id != scope.municipio_id:
-            raise HTTPException(
-                status_code=HTTPStatus.FORBIDDEN, detail='Operação negada. Região geográfica diferente.'
-            )
+    # elif scope.municipio_id is not None:
+    #     if usuario_banco.municipio_id != scope.municipio_id:
+    #         raise HTTPException(
+    #             status_code=HTTPStatus.FORBIDDEN, detail='Operação negada. Região geográfica diferente.'
+    #         )
 
     # 1. Atualiza o estado da solicitação existente para REJEITADO e grava o motivo
     solicitacao.status = StatusSolicitacao.REJEITADO
@@ -3709,6 +3714,61 @@ async def rejeitar_solicitacao_fundo(
         current_user.id,
     )
     return to_solicitacao_response(solicitacao)
+
+
+# @admin.post('/delete/simpatizante/{id_simpatizante}', status_code=HTTPStatus.OK)
+# async def eliminar_simpatizante(
+#     request: Request,
+#     response: Response,
+#     session: Session,
+#     caches: Redis,
+#     current_user: Get_current_user,
+#     id_simpatizante: uuid.UUID,
+#     scope: ScopeValid
+# ):
+#     """
+#         Executa o Hard Delete de forma dinâmica e segura.
+#         Descobre os privilégios buscando o nome da Role no banco, eliminando IDs fixos.
+#     """
+#     logger.info('Buscando Usuario no Banco de dados...')
+
+#     query = (
+#         select(User)
+#         .where(
+#             User.id == id_simpatizante
+#             )
+#     )
+
+#     user_banco = await session.scalar(query)
+
+#     if user_banco and not user_banco.ativo:
+#         logger.warning('Tentativa de eliminar uma conta desativada: %s', user_banco.email)
+#         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail='Conta do usuario ja esta desativada')
+    
+#     if not user_banco:
+#         raise HTTPException(
+#             status_code=HTTPStatus.NOT_FOUND,
+#             detail='Usuario nao encontrado'
+#         )
+
+#     if user_banco.role_id != settings.ROLE_SIMPATIZANTE_ID:
+#         raise HTTPException(
+#             status_code=status.HTTP_400_BAD_REQUEST,
+#             detail='Usuario precisa ser um simpatizante'
+#         )
+    
+#     if scope.provincia_id:
+#         query = query.where(
+#             User.provincia_id == scope.provincia_id
+#         )
+#     # if scope.provincia_id and m.provincia_id != scope.provincia_id:
+#     #     raise HTTPException(HTTPStatus.FORBIDDEN, detail='Acesso negado.')
+
+
+    
+
+#     deletado_em = = datetime.now(timezone.utc)
+#     logger.info("Usuário %s executou exclusão da conta.", current_user.id)
 
 
 # @admin.post('/solicitacao/militancia/aprovado', status_code=HTTPStatus.OK)
