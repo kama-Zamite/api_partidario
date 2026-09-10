@@ -1038,6 +1038,7 @@ async def perfil(request: Request, schemas: UpgradeUser, caches: Redis, session:
             detail='Não foi possível processar a atualização dos dados.'
         )
 
+
 @user.get('/perfil', status_code=HTTPStatus.OK, response_model=ListarUserBase)
 async def obter_meu_perfil(
     session: Session, 

@@ -3453,8 +3453,8 @@ async def aprovar_quota(
 
     notificacao_user = Notification(
         user_id = pag.militante.id,
-        titulo="Pagamento de Quota Rejeitada",
-        mensagem=f"Ola {pag.militante.nome_completo if pag.militante else 'militante'}! Seu pagamento de quota com referência {pag.referencia} no valor de {pag.quantia} AOA foi rejeitada.",
+        titulo="Pagamento de Quota Aprovada",
+        mensagem=f"Ola {pag.militante.nome_completo if pag.militante else 'militante'}! Seu pagamento de quota com referência {pag.referencia} no valor de {pag.quantia} AOA foi aprovada.",
         # destinatario="ADMIN",
         motivo=f"",
         categoria=RoleCategoriaNotificacao.QUOTA
@@ -3716,59 +3716,152 @@ async def rejeitar_solicitacao_fundo(
     return to_solicitacao_response(solicitacao)
 
 
-# @admin.post('/delete/simpatizante/{id_simpatizante}', status_code=HTTPStatus.OK)
-# async def eliminar_simpatizante(
-#     request: Request,
-#     response: Response,
-#     session: Session,
-#     caches: Redis,
-#     current_user: Get_current_user,
-#     id_simpatizante: uuid.UUID,
-#     scope: ScopeValid
-# ):
-#     """
-#         Executa o Hard Delete de forma dinâmica e segura.
-#         Descobre os privilégios buscando o nome da Role no banco, eliminando IDs fixos.
-#     """
-#     logger.info('Buscando Usuario no Banco de dados...')
+@admin.post('/delete/simpatizante/{id_simpatizante}', status_code=HTTPStatus.OK)
+async def eliminar_simpatizante(
+    request: Request,
+    response: Response,
+    session: Session,
+    caches: Redis,
+    current_user: Get_current_user,
+    id_simpatizante: uuid.UUID,
+    scope: ScopeValid
+):
+    """
+    Executa a validação de escopo e elimina o simpatizante via Soft Delete de forma segura.
+    Superadmin pode deletar qualquer um. Admin Provincial apenas da sua província.
+    """
+    logger.info('Buscando Usuario no Banco de dados...')
 
-#     query = (
-#         select(User)
-#         .where(
-#             User.id == id_simpatizante
-#             )
-#     )
+    query = select(User).where(User.id == id_simpatizante)
+    user_banco = await session.scalar(query)
 
-#     user_banco = await session.scalar(query)
+    # 1. Verifica se o usuário existe
+    if not user_banco:
+        raise HTTPException(
+            status_code=HTTPStatus.NOT_FOUND,
+            detail='Usuario nao encontrado'
+        )
 
-#     if user_banco and not user_banco.ativo:
-#         logger.warning('Tentativa de eliminar uma conta desativada: %s', user_banco.email)
-#         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail='Conta do usuario ja esta desativada')
+    # 2. Verifica se a conta já está desativada
+    if not user_banco.ativo:
+        logger.warning('Tentativa de eliminar uma conta desativada: %s', user_banco.email)
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, 
+            detail='Conta do usuario ja esta desativada'
+        )
+
+    # 3. Garante que o alvo é realmente um Simpatizante
+    if user_banco.role_id != settings.ROLE_SIMPATIZANTE_ID:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail='Usuario precisa ser um simpatizante'
+        )
     
-#     if not user_banco:
-#         raise HTTPException(
-#             status_code=HTTPStatus.NOT_FOUND,
-#             detail='Usuario nao encontrado'
-#         )
+    # 4. REGRA DE ESCOPO: Admin Provincial apenas remove usuários da sua própria província
+    if scope.provincia_id and user_banco.provincia_id != scope.provincia_id:
+        logger.warning(
+            'Admin %s tentou eliminar usuário %s de outra província.', 
+            current_user.id, user_banco.id
+        )
+        raise HTTPException(
+            status_code=HTTPStatus.FORBIDDEN,
+            detail='Acesso negado. Voce apenas pode eliminar usuarios da sua provincia.'
+        )
 
-#     if user_banco.role_id != settings.ROLE_SIMPATIZANTE_ID:
-#         raise HTTPException(
-#             status_code=status.HTTP_400_BAD_REQUEST,
-#             detail='Usuario precisa ser um simpatizante'
-#         )
+    # 5. Executa a lógica de Soft Delete
+    user_banco.deletado_em = datetime.now(timezone.utc)
+    user_banco.ativo = False
     
-#     if scope.provincia_id:
-#         query = query.where(
-#             User.provincia_id == scope.provincia_id
-#         )
-#     # if scope.provincia_id and m.provincia_id != scope.provincia_id:
-#     #     raise HTTPException(HTTPStatus.FORBIDDEN, detail='Acesso negado.')
+    session.add(user_banco)  # Garante que o estado modificado está na sessão
 
-
+    try:
+        await session.commit()
+    except Exception as e:
+        await session.rollback()
+        logger.error("Erro crítico ao persistir soft delete no banco: %s", e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Erro interno ao processar a exclusão da conta."
+        )
     
+    logger.info("Usuário %s executou exclusão da conta com sucesso.", current_user.id)
+    return {"detail": "Simpatizante eliminado com sucesso"}
 
-#     deletado_em = = datetime.now(timezone.utc)
-#     logger.info("Usuário %s executou exclusão da conta.", current_user.id)
+
+
+
+
+@admin.post('/delete/militante/{id_militante}', status_code=HTTPStatus.OK)
+async def eliminar_militante(
+    request: Request,
+    response: Response,
+    session: Session,
+    caches: Redis,
+    current_user: Get_current_user,
+    id_militante: uuid.UUID,
+    scope: ScopeValid
+):
+    """
+    Executa a validação de escopo e elimina o militante via Soft Delete de forma segura.
+    Superadmin pode deletar qualquer um. Admin Provincial apenas da sua província.
+    """
+    logger.info('Buscando Usuario no Banco de dados...')
+
+    query = select(User).where(User.id == id_militante)
+    user_banco = await session.scalar(query)
+
+    # 1. Verifica se o usuário existe
+    if not user_banco:
+        raise HTTPException(
+            status_code=HTTPStatus.NOT_FOUND,
+            detail='Usuario nao encontrado'
+        )
+
+    # 2. Verifica se a conta já está desativada
+    if not user_banco.ativo:
+        logger.warning('Tentativa de eliminar uma conta desativada: %s', user_banco.email)
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, 
+            detail='Conta do usuario ja esta desativada'
+        )
+
+    # 3. Garante que o alvo é realmente um militante
+    if user_banco.role_id != settings.ROLE_MILITANTE_ID:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail='Usuario precisa ser um militante'
+        )
+    
+    # 4. REGRA DE ESCOPO: Admin Provincial apenas remove usuários da sua própria província
+    if scope.provincia_id and user_banco.provincia_id != scope.provincia_id:
+        logger.warning(
+            'Admin %s tentou eliminar usuário %s de outra província.', 
+            current_user.id, user_banco.id
+        )
+        raise HTTPException(
+            status_code=HTTPStatus.FORBIDDEN,
+            detail='Acesso negado. Voce apenas pode eliminar usuarios da sua provincia.'
+        )
+
+    # 5. Executa a lógica de Soft Delete
+    user_banco.deletado_em = datetime.now(timezone.utc)
+    user_banco.ativo = False
+    
+    session.add(user_banco)  # Garante que o estado modificado está na sessão
+
+    try:
+        await session.commit()
+    except Exception as e:
+        await session.rollback()
+        logger.error("Erro crítico ao persistir soft delete no banco: %s", e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Erro interno ao processar a exclusão da conta."
+        )
+    
+    logger.info("Usuário %s executou exclusão da conta com sucesso.", current_user.id)
+    return {"detail": "Militante eliminado com sucesso"}
+
 
 
 # @admin.post('/solicitacao/militancia/aprovado', status_code=HTTPStatus.OK)

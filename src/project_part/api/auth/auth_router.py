@@ -110,7 +110,7 @@ async def login(
     session: Session,
     token: Access_token,
     backgroundTasks: BackgroundTasks,
-    _captcha: Claudflare_turnfile
+    # _captcha: Claudflare_turnfile
     ):
     """Endpoint para autenticação de usuário."""
 

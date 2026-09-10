@@ -5,7 +5,7 @@ from decimal import Decimal
 from typing import Any, Optional, Annotated
 import logging
 from fastapi import APIRouter, Request, Query, HTTPException, Depends
-
+from dateutil.relativedelta import relativedelta  # Garante manipulação exata de meses
 from sqlalchemy import select, func
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -133,9 +133,8 @@ async def criar_doacao(
     }
 
 
-
 @finance.post('/quota', status_code=HTTPStatus.CREATED)
-# @limiter.limit('10/minute')
+# @limiter.limit('5/minute')
 async def criar_pagamento_quota(
     request: Request,
     quantia: Decimal,
@@ -151,70 +150,100 @@ async def criar_pagamento_quota(
         raise HTTPException(
             HTTPStatus.FORBIDDEN,
             detail='Apenas militantes pagam quota.'
-            )
+        )
 
+    if meses_pagar < 1:
+        raise HTTPException(
+            HTTPStatus.BAD_REQUEST,
+            detail='A quantidade de meses a pagar deve ser de pelo menos 1 mês.'
+        )
+
+    get_referencia = referencia if referencia else current_user.telefone
 
     try:
         logger.info("Criando pagamento de quota para o usuário %s", current_user.id)
         body = QuotaCreate(
             quantia=quantia,
             metodo_pagamento=metodo_pagamento,
-            referencia=referencia,
+            referencia=get_referencia,
             id_transacao=id_transacao,
             meses_pagar=meses_pagar,
             observacao=observacao,
         )
     except ValueError as e:
         logger.error("Erro de validação ao criar pagamento de quota: %s", str(e))
-        raise HTTPException(
-            status_code=HTTPStatus.BAD_REQUEST,
-            detail=str(e)
-        )
+        raise HTTPException(status_code=HTTPStatus.BAD_REQUEST, detail=str(e))
 
-    
-    query_quota = (
+    # 1. Bloqueia se houver algum pagamento PENDING
+    query_pendente = (
         select(PagamentoQuota)
         .where(
             PagamentoQuota.user_id == current_user.id,
             PagamentoQuota.status == QuotaStatusEnum.PENDING
         )
     )
-
-    pagamento_pendente = await session.scalar(query_quota)
-    if pagamento_pendente:
+    if await session.scalar(query_pendente):
         logger.warning("Usuário %s já possui um pagamento de quota pendente.", current_user.id)
         raise HTTPException(
             status_code=HTTPStatus.CONFLICT,
             detail='Você já possui um pagamento de quota pendente.'
         )
 
-    quota_periodo = query_quota.where(PagamentoQuota.periodo == current_user.id)
+    # 2. Descobre o ponto inicial com base na última quota APPROVED
+    query_ultima_quota = (
+        select(PagamentoQuota)
+        .where(
+            PagamentoQuota.user_id == current_user.id,
+            PagamentoQuota.status == QuotaStatusEnum.APPROVED
+        )
+        .order_by(PagamentoQuota.periodo.desc(), PagamentoQuota.id.desc())
+        .limit(1)
+    )
+    ultima_quota = await session.scalar(query_ultima_quota)
 
-    logger.info("Calculando o valor total da quota para o usuário %s", current_user.id)
-    periodo_atual = datetime.now(timezone.utc).strftime('%Y-%m')
+    if ultima_quota and ultima_quota.periodo:
+        try:
+            # Pega o mês inicial da última quota
+            data_referencia = datetime.strptime(ultima_quota.periodo, "%Y-%m").date()
+            # O próximo pagamento deve começar no mês seguinte ao FIM do período anterior
+            # Fim do período anterior = periodo_inicio + meses_pagar
+            meses_a_adicionar = ultima_quota.meses_pagar if ultima_quota.meses_pagar else 1
+            data_inicio = data_referencia + relativedelta(months=meses_a_adicionar)
+        except Exception:
+            data_inicio = datetime.now(timezone.utc).date()
+    else:
+        # Se for o primeiro pagamento da história do utilizador
+        data_inicio = datetime.now(timezone.utc).date()
+
+    # Formata como "YYYY-MM" (Respeita o String(7) da sua coluna)
+    periodo_inicial_str = data_inicio.strftime('%Y-%m')
+
+    # 3. Calcula o valor total proporcional aos meses desejados
     valor_total_quota = body.quantia * body.meses_pagar
+
     pagamento = PagamentoQuota(
         user_id=current_user.id,
         quantia=valor_total_quota,
         moeda='AOA',
-        periodo=periodo_atual,
+        meses_pagar=body.meses_pagar,  # Preenche a sua coluna da tabela
+        periodo=periodo_inicial_str,    # Salva apenas o mês de largada da cobrança
         metodo_pagamento=body.metodo_pagamento,
         referencia=body.referencia.strip() if body.referencia else None,
         id_transacao=body.id_transacao.strip() if body.id_transacao else None,
         observacao=body.observacao,
         status=QuotaStatusEnum.PENDING,
     )
+
     try:
         logger.info("Adicionando pagamento de quota à sessão para o usuário %s", current_user.id)
         session.add(pagamento)
         await session.flush()
     except Exception as e:
         await session.rollback()
-        raise HTTPException(
-            status_code=HTTPStatus.BAD_REQUEST,
-            detail='Erro ao armazenar o pagamento de quota'
-        )
+        logger.error("Erro no flush: %s", e)
+        raise HTTPException(status_code=HTTPStatus.BAD_REQUEST, detail='Erro ao armazenar o pagamento de quota')
 
+    # Registo de histórico de movimentos
     await registar_movimento(
         session,
         tipo=TipoMovimentoEnum.QUOTA,
@@ -225,26 +254,20 @@ async def criar_pagamento_quota(
         acao=AcaoMovimentoEnum.CRIADA,
         status_novo=QuotaStatusEnum.PENDING.value,
         ator_id=current_user.id,
-        detalhe={'periodo': pagamento.periodo, 'metodo': pagamento.metodo_pagamento.value},
+        detalhe={'periodo_inicial': pagamento.periodo, 'meses_pagar': pagamento.meses_pagar},
     )
 
-    # try:
-    #     await session.commit()
-    # except Exception as e:
-    #     await session.rollback()
-    #     logger.error("Erro ao salvar solicitação e notificação: %s", str(e))
-    #     raise HTTPException(status_code=HTTPStatus.INTERNAL_SERVER_ERROR, detail="Erro ao salvar dados no banco.")
-    
+    # 4. Envio de Notificação para Administradores
     query_admin_regional = (
-            select(User)
-            .join(AdminScope, AdminScope.user_id == User.id)
-            .where(
-                User.role_id == settings.ADMIN_ROLE_ID,
-                (AdminScope.municipio_id == current_user.municipio_id) | 
-                (AdminScope.provincia_id == current_user.provincia_id)
-            )
-            .limit(1)
+        select(User)
+        .join(AdminScope, AdminScope.user_id == User.id)
+        .where(
+            User.role_id == settings.ADMIN_ROLE_ID,
+            (AdminScope.municipio_id == current_user.municipio_id) | 
+            (AdminScope.provincia_id == current_user.provincia_id)
         )
+        .limit(1)
+    )
     admin_alvo = await session.scalar(query_admin_regional)
     
     if not admin_alvo:
@@ -254,12 +277,15 @@ async def criar_pagamento_quota(
 
     notificacao_admin = Notification(
         admin_id=admin_alvo.id,
-        user_id = current_user.id,
-        titulo="Pagamento de Quota",
-        mensagem=f"O militante {current_user.nome_completo} (Nº {current_user.militante_numero or 'Pendente'}) fez um pagamento de quota.",
-        destinatario="ADMIN",
-        categoria=RoleCategoriaNotificacao.QUOTA
-        )
+        user_id=current_user.id,
+        titulo='Pagamento de Quota',
+        mensagem=(
+            f'O militante {current_user.nome_completo} solicitou pagamento de '
+            f'{body.meses_pagar} meses a partir de {periodo_inicial_str}.'
+        ),
+        destinatario='ADMIN',
+        categoria=RoleCategoriaNotificacao.QUOTA,
+    )
     
     session.add(notificacao_admin)
     try:
@@ -269,11 +295,9 @@ async def criar_pagamento_quota(
         await session.rollback()
         raise HTTPException(HTTPStatus.CONFLICT, detail='Referência ou ID de transação já existe.')
 
-
     return {
         "msg": "Pagamento de quota enviado com sucesso, aguarde a aprovação do admin.",
     }
-
 
 
 

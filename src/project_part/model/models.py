@@ -807,7 +807,7 @@ class PagamentoQuota(Base):
     periodo: Mapped[str] = mapped_column(String(7), nullable=False, index=True)
     metodo_pagamento: Mapped[MetodoPagamentoEnum] = mapped_column(nullable=False)
     referencia: Mapped[Optional[str]] = mapped_column(
-        String(100), unique=True, index=True, nullable=True
+        String(100), nullable=True
     )
     id_transacao: Mapped[Optional[str]] = mapped_column(
         String(100), unique=True, index=True, nullable=True

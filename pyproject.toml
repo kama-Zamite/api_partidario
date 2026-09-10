@@ -30,7 +30,8 @@ dependencies = [
     "filetype (>=1.2.0,<2.0.0)",
     "pyotp (>=2.10.0,<3.0.0)",
     "user-agents (>=2.2.0,<3.0.0)",
-    "resend (>=2.42.0,<3.0.0)"
+    "resend (>=2.42.0,<3.0.0)",
+    "python-dateutil (>=2.9.0.post0,<3.0.0)"
 ]
 
 [tool.poetry]
