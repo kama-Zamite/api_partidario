@@ -442,7 +442,7 @@ async def create_user(
     notification = Notification(
         user_id=novo_usuario.id,
         titulo="Bem-vindo à UNITA PGM",
-        mensagem=f"Olá {novo_usuario.nome_completo}, seja bem-vindo à UNITA PGM! O seu cadastro como {tipo} foi realizado com sucesso.",
+        mensagem=f"Olá {tipo} {novo_usuario.nome_completo}, seja bem-vindo à UNITA PGM! O seu cadastro foi realizado com sucesso. Aceda à secção Financeira para efetuar o pagamento da sua quota inicial.",
         categoria=RoleCategoriaNotificacao.BEM_VINDO,
         criado_as=datetime.now(timezone.utc),
         destinatario=destinatario_tipo

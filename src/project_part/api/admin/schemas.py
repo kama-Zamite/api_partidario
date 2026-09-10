@@ -122,7 +122,7 @@ class NotificationResponse(BaseModel):
     criado_as: datetime
     motivo: str | None
     lido_as: datetime | None
-    categoria: RoleCategoriaNotificacao | None = None
+    # categoria: RoleCategoriaNotificacao | None = None
 
     # Aqui acontece a magia: injetamos o schema do utilizador dentro da resposta
     solicitante: UsuarioNotificacaoSchema | None 

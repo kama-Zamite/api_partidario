@@ -10,6 +10,7 @@ from datetime import (
     timedelta,
     date
 )
+from dateutil.relativedelta import relativedelta
 from decimal import Decimal
 from http import HTTPStatus
 from typing import Annotated, List, Optional
@@ -2787,7 +2788,7 @@ async def marcar_como_lida(
     )
 
 
-    filtros = [Notification.user_id == current_user.id, Notification.id == id_notificacao]
+    filtros = [Notification.admin_id == current_user.id, Notification.id == id_notificacao, Notification.destinatario == 'ADMIN']
 
     query = (
             select(Notification)
@@ -3407,8 +3408,76 @@ async def rejeitar_doacao(
 
 
 
+# @admin.post('/quotas/{quota_id}/aprovar', status_code=HTTPStatus.OK)
+# # @limiter.limit('20/minute')
+# async def aprovar_quota(
+#     request: Request,
+#     quota_id: uuid.UUID,
+#     session: Session,
+#     current_user: Get_current_user,
+#     scope: ScopeValid,
+# ):
+#     pag = await session.scalar(
+#         select(PagamentoQuota)
+#         .where(PagamentoQuota.id == quota_id)
+#         .options(selectinload(PagamentoQuota.militante))
+#     )
+#     if not pag:
+#         raise HTTPException(HTTPStatus.NOT_FOUND, detail='Pagamento de quota não encontrado.')
+#     if pag.status != QuotaStatusEnum.PENDING:
+#         raise HTTPException(HTTPStatus.CONFLICT, detail=f'Status atual: {pag.status}')
+
+#     m = pag.militante
+#     if scope.municipio_id and m.municipio_id != scope.municipio_id:
+#         raise HTTPException(HTTPStatus.FORBIDDEN, detail='Acesso negado.')
+#     if scope.provincia_id and m.provincia_id != scope.provincia_id:
+#         raise HTTPException(HTTPStatus.FORBIDDEN, detail='Acesso negado.')
+
+#     anterior = pag.status.value
+#     pag.status = QuotaStatusEnum.APPROVED
+#     pag.aprovado_por = current_user.id
+#     pag.aprovado_em = datetime.now(timezone.utc)
+
+#     await registar_movimento(
+#         session,
+#         tipo=TipoMovimentoEnum.QUOTA,
+#         origem_id=pag.id,
+#         user_id=pag.user_id,
+#         quantia=pag.quantia,
+#         moeda=pag.moeda,
+#         acao=AcaoMovimentoEnum.APROVADA,
+#         status_anterior=anterior,
+#         status_novo=QuotaStatusEnum.APPROVED.value,
+#         ator_id=current_user.id,
+#         detalhe={'periodo': pag.periodo},
+#     )
+
+#     notificacao_user = Notification(
+#         user_id = pag.militante.id,
+#         titulo="Pagamento de Quota Aprovada",
+#         mensagem=f"Ola {pag.militante.nome_completo if pag.militante else 'militante'}! Seu pagamento de quota com referência {pag.referencia} no valor de {pag.quantia} AOA foi aprovada.",
+#         # destinatario="ADMIN",
+#         motivo=f"",
+#         categoria=RoleCategoriaNotificacao.QUOTA
+#     )
+
+#     session.add(notificacao_user)
+#     try:
+#         await session.commit()
+#         await session.refresh(pag)
+#     except Exception as e:
+#         await session.rollback()
+#         raise HTTPException(
+#             status_code=HTTPStatus.BAD_REQUEST,
+#             detail='Erro, ao registrar quota'
+#         )
+#     return {
+#         "msg": f"Pagamento de quota aprovado com sucesso. Pelo admin {current_user.nome_completo}.\n Email: {current_user.email}"
+#     }
+
+
+
 @admin.post('/quotas/{quota_id}/aprovar', status_code=HTTPStatus.OK)
-# @limiter.limit('20/minute')
 async def aprovar_quota(
     request: Request,
     quota_id: uuid.UUID,
@@ -3427,16 +3496,41 @@ async def aprovar_quota(
         raise HTTPException(HTTPStatus.CONFLICT, detail=f'Status atual: {pag.status}')
 
     m = pag.militante
+    if not m:
+        raise HTTPException(HTTPStatus.NOT_FOUND, detail='Militante associado a esta quota não foi encontrado.')
+
+    # Validação de escopo regional
     if scope.municipio_id and m.municipio_id != scope.municipio_id:
         raise HTTPException(HTTPStatus.FORBIDDEN, detail='Acesso negado.')
     if scope.provincia_id and m.provincia_id != scope.provincia_id:
         raise HTTPException(HTTPStatus.FORBIDDEN, detail='Acesso negado.')
 
+    # Atualiza o status da transação
     anterior = pag.status.value
     pag.status = QuotaStatusEnum.APPROVED
     pag.aprovado_por = current_user.id
     pag.aprovado_em = datetime.now(timezone.utc)
 
+    # ATUALIZAÇÃO DA DATA DE EXPIRAÇÃO NO PERFIL DO USER
+    # Garantimos a quantidade de meses (padrão 1 caso seja nulo)
+    meses_adicionar = pag.meses_pagar if pag.meses_pagar else 1
+    data_atual = datetime.now(timezone.utc).date()
+
+    if m.data_expiracao_quota:
+        if m.data_expiracao_quota >= data_atual:
+            # Se o utilizador já estava em dia, acumula a partir da data futura existente
+            m.data_expiracao_quota = m.data_expiracao_quota + relativedelta(months=meses_adicionar)
+        else:
+            # Se ele estava com a quota expirada/atrasada, o cálculo baseia-se no período inicial 
+            # que foi reservado para esta transação específica
+            data_base = datetime.strptime(pag.periodo, "%Y-%m").date()
+            m.data_expiracao_quota = data_base + relativedelta(months=meses_adicionar - 1)
+    else:
+        # Se for a primeiríssima quota do militante
+        data_base = datetime.strptime(pag.periodo, "%Y-%m").date()
+        m.data_expiracao_quota = data_base + relativedelta(months=meses_adicionar - 1)
+
+    # Regista a movimentação financeira
     await registar_movimento(
         session,
         tipo=TipoMovimentoEnum.QUOTA,
@@ -3448,28 +3542,32 @@ async def aprovar_quota(
         status_anterior=anterior,
         status_novo=QuotaStatusEnum.APPROVED.value,
         ator_id=current_user.id,
-        detalhe={'periodo': pag.periodo},
+        detalhe={'periodo': pag.periodo, 'novos_meses': meses_adicionar},
     )
 
+    # Cria notificação para o militante
     notificacao_user = Notification(
-        user_id = pag.militante.id,
+        user_id=pag.militante.id,
         titulo="Pagamento de Quota Aprovada",
-        mensagem=f"Ola {pag.militante.nome_completo if pag.militante else 'militante'}! Seu pagamento de quota com referência {pag.referencia} no valor de {pag.quantia} AOA foi aprovada.",
-        # destinatario="ADMIN",
-        motivo=f"",
+        mensagem=f"Olá {pag.militante.nome_completo}! Seu pagamento de quota com referência {pag.referencia} no valor de {pag.quantia} AOA foi aprovada. Sua validade foi estendida para {m.data_expiracao_quota.strftime('%m/%Y')}.",
+        motivo="",
         categoria=RoleCategoriaNotificacao.QUOTA
     )
 
     session.add(notificacao_user)
+    session.add(m)  # Adiciona explicitamente o objeto do militante modificado à sessão
+
     try:
         await session.commit()
         await session.refresh(pag)
     except Exception as e:
         await session.rollback()
+        logger.error("Erro crítico ao aprovar quota no banco: %s", e)
         raise HTTPException(
             status_code=HTTPStatus.BAD_REQUEST,
-            detail='Erro, ao registrar quota'
+            detail='Erro ao registrar aprovação da quota'
         )
+        
     return {
         "msg": f"Pagamento de quota aprovado com sucesso. Pelo admin {current_user.nome_completo}.\n Email: {current_user.email}"
     }
