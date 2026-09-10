@@ -800,7 +800,15 @@ class PagamentoQuota(Base):
         nullable=False,
         index=True,
     )
+
+
+    
     data_expiracao_quota: Mapped[Optional[date]] = mapped_column(Date, nullable=True, default=None)
+    # última vez que foi notificado por quota em atraso (job mensal)
+    notificado_quota_atraso_em: Mapped[date | None] = mapped_column(Date, nullable=True, default=None)
+
+
+
     quantia: Mapped[Decimal] = mapped_column(Numeric(15, 2), nullable=False)
     moeda: Mapped[str] = mapped_column(String(3), default='AOA', nullable=False)
     meses_pagar: Mapped[int] = mapped_column(Integer, nullable=True)

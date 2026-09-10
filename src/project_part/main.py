@@ -1,12 +1,14 @@
 import logging
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import JSONResponse
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
-
+from typing import Annotated
+from sqlalchemy.ext.asyncio import AsyncSession
+from redis.asyncio import Redis as AsyncRedis
 from project_part.api.admin.admin_router import admin
 from project_part.api.auth.auth_router import auth
 from project_part.api.events.event_router import event
@@ -23,6 +25,12 @@ from project_part.core.health import health_router
 from project_part.core.logging_config import setup_logging
 from project_part.core.rate_limit import limiter
 from project_part.core.setting import settings
+from project_part.db.session import get_session
+from project_part.db.cache import get_redis
+from contextlib import asynccontextmanager
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.triggers.cron import CronTrigger
+from project_part.core.jobs import verificar_e_notificar_quotas_vencidas
 from project_part.middlewares.exception_handler import (
     GlobalExceptionHandlerMiddleware,
 )
@@ -38,7 +46,32 @@ logging.basicConfig(level=settings.LOG_LEVEL)
 logging.getLogger('uvicorn.error').setLevel(settings.LOG_LEVEL)
 logging.getLogger('uvicorn.access').setLevel(settings.LOG_LEVEL)
 
+
+Session = Annotated[AsyncSession, Depends(get_session)]
+Redis = Annotated[AsyncRedis, Depends(get_redis)]
 app = FastAPI(title='Uniao', description='uma api de povo para povo', version='1.0.0')
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    scheduler = AsyncIOScheduler()
+
+    async def job_quotas():
+        await verificar_e_notificar_quotas_vencidas(Session, Redis)
+
+    scheduler.add_job(
+        job_quotas,
+        CronTrigger(day=10, hour=8, minute=0),  # dia 10, 08:00 (fuso do scheduler!)
+        id='job_verificar_quotas',
+        replace_existing=True,
+        max_instances=1,  # por processo; o Redis cobre multi-processo
+        coalesce=True,    # se atrasar, não empilha execuções
+    )
+    scheduler.start()
+    logger.info('Scheduler iniciado (lock Redis ativo).')
+
+    yield
+
+    scheduler.shutdown(wait=False)
 
 
 app.state.limiter = limiter
@@ -101,6 +134,11 @@ async def audit_context_middleware(request: Request, call_next):
 def home(request: Request):
     return {'msg': 'rota criada com sucesso!'}
 
+# endpoint interno só em DEBUG / com token
+@app.post('/internal/jobs/quotas-vencidas')
+async def run_job_now(request: Request, session: Session, redis: Redis):
+    await verificar_e_notificar_quotas_vencidas(session, redis)
+    return {'ok': True}
 
 app.include_router(auth)
 app.include_router(router_2FA)

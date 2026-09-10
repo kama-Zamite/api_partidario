@@ -9,8 +9,19 @@ from project_part.model.models import MetodoPagamentoEnum, DonationStatusEnum
 class DoacaoCreate(BaseModel):
     quantia: Decimal = Field(..., gt=0, decimal_places=2)
     metodo_pagamento: MetodoPagamentoEnum
-    referencia: str | None = None
-    id_transacao: str | None = None
+    referencia: str | None = Field(
+        default=None,
+        min_length=9,
+        max_length=9,
+        pattern=r"^\d+$",
+        description="Referência numérica obrigatória com exatamente 9 dígitos"
+    )
+    id_transacao: str | None = Field(
+        default=None, 
+        min_length=8, 
+        max_length=8, 
+        description="Identificador alfanumérico da transação (máx 8 caracteres)"
+    )
     observacao: str | None = None
 
 
@@ -21,8 +32,19 @@ class DoacaoRejeitar(BaseModel):
 class QuotaCreate(BaseModel):
     quantia: Decimal = Field(..., ge=200, decimal_places=2, description='Valor mínimo de 200 AOA')
     metodo_pagamento: MetodoPagamentoEnum
-    referencia: str | None = None
-    id_transacao: str | None = None
+    referencia: str | None = Field(
+        default=None,
+        min_length=9,
+        max_length=9,
+        pattern=r"^\d+$",
+        description="Referência numérica obrigatória com exatamente 9 dígitos"
+    )
+    id_transacao: str | None = Field(
+        default=None, 
+        min_length=8, 
+        max_length=8, 
+        description="Identificador alfanumérico da transação (máx 8 caracteres)"
+    )
     meses_pagar: int = Field(..., gt=0, le=24, description='Número de meses a pagar (deve ser maior que 0)')
     observacao: str | None = None  
 

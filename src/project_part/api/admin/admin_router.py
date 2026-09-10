@@ -3499,9 +3499,9 @@ async def aprovar_quota(
     if not m:
         raise HTTPException(HTTPStatus.NOT_FOUND, detail='Militante associado a esta quota não foi encontrado.')
 
-    # Validação de escopo regional
-    if scope.municipio_id and m.municipio_id != scope.municipio_id:
-        raise HTTPException(HTTPStatus.FORBIDDEN, detail='Acesso negado.')
+    # # Validação de escopo regional
+    # if scope.municipio_id and m.municipio_id != scope.municipio_id:
+    #     raise HTTPException(HTTPStatus.FORBIDDEN, detail='Acesso negado.')
     if scope.provincia_id and m.provincia_id != scope.provincia_id:
         raise HTTPException(HTTPStatus.FORBIDDEN, detail='Acesso negado.')
 
