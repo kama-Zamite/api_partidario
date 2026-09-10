@@ -20,7 +20,8 @@ class DoacaoCreate(BaseModel):
         default=None, 
         min_length=8, 
         max_length=8, 
-        description="Identificador alfanumérico da transação (máx 8 caracteres)"
+        pattern=r"^\d+$",
+        description="Identificador da transação (máx 8 dígitos)"
     )
     observacao: str | None = None
 
@@ -43,7 +44,8 @@ class QuotaCreate(BaseModel):
         default=None, 
         min_length=8, 
         max_length=8, 
-        description="Identificador alfanumérico da transação (máx 8 caracteres)"
+        pattern=r"^\d+$",
+        description="Identificador da transação (máx 8 dígitos)"
     )
     meses_pagar: int = Field(..., gt=0, le=24, description='Número de meses a pagar (deve ser maior que 0)')
     observacao: str | None = None  

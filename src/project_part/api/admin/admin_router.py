@@ -128,13 +128,18 @@ admin = APIRouter(prefix='/admin', tags=['Admin Management'])
 
 @admin.post('/set-scope', status_code=HTTPStatus.CREATED)
 async def criar_scope(
-    schema: CreateAdminScope, session: Session, redis: Redis,
-    #   current_user: Get_current_user, scope: ScopeValid
+    schema: CreateAdminScope,
+    session: Session, 
+    redis: Redis,
+    current_user: Get_current_user,
+    scope: ScopeValid
 ):
     """
     Define ou atualiza o escopo geográfico de atuação de um administrador.
-    Apenas administradores de nível superior podem delegar permissões regionais.
+    Apenas um único Superadmin global e apenas um admin por província são permitidos.
     """
+    logger.info("Verificar os scope...")
+    verificar_permissao_global_pais(scope, current_user)
     provincia_banco = None
     municipio_banco = None
 
@@ -165,18 +170,6 @@ async def criar_scope(
                 detail=f'O município "{schema.nome_municipio}" não pertence à província "{schema.nome_provincia}"',
             )
 
-    # if scope.municipio_id is not None:
-    #     logger.info('Admins municipais não podem delegar novos escopos.')
-    #     raise HTTPException(
-    #         status_code=HTTPStatus.FORBIDDEN, detail='Admins municipais não podem delegar novos escopos.'
-    #     )
-    # if scope.provincia_id is not None:
-    #     if provincia_banco and provincia_banco.id != scope.provincia_id:
-    #         logger.info('Você só pode delegar escopos dentro da sua província.')
-    #         raise HTTPException(
-    #             status_code=HTTPStatus.FORBIDDEN, detail='Você só pode delegar escopos dentro da sua província.'
-    #         )
-
     logger.info('Buscar usuario: "%s" no banco de dados..', schema.email)
     user_base = await session.scalar(select(User).where(User.email == schema.email))
 
@@ -190,10 +183,42 @@ async def criar_scope(
             detail="O usuário alvo precisa ser um 'admin' antes de receber um escopo.",
         )
 
-    scopo_existente = await session.scalar(select(AdminScope).where(AdminScope.user_id == user_base.id))
-
     id_provincia_final = provincia_banco.id if provincia_banco else None
     id_municipio_final = municipio_banco.id if municipio_banco else None
+
+    # ── Nova Regra 1: Validação de Superadmin Único (Escopo Nacional) ──
+    if id_provincia_final is None and id_municipio_final is None:
+        logger.info('A validar unicidade de Superadmin Global.')
+        superadmin_existente = await session.scalar(
+            select(AdminScope.user_id).where(
+                AdminScope.provincia_id.is_(None),
+                AdminScope.municipio_id.is_(None),
+                AdminScope.user_id != user_base.id  # Permite se for o próprio utilizador a atualizar
+            ).limit(1)
+        )
+        if superadmin_existente:
+            raise HTTPException(
+                status_code=HTTPStatus.CONFLICT,
+                detail="Operação negada: Já existe um Superadmin nacional ativo no sistema."
+            )
+
+    # ── Nova Regra 2: Validação de Um Admin por Província ──
+    if id_provincia_final is not None and id_municipio_final is None:
+        logger.info('A validar limite de um único Administrador para a província ID: %s.', id_provincia_final)
+        admin_provincial_existente = await session.scalar(
+            select(AdminScope.user_id).where(
+                AdminScope.provincia_id == id_provincia_final,
+                AdminScope.municipio_id.is_(None),
+                AdminScope.user_id != user_base.id  # Permite se for o próprio utilizador a atualizar
+            ).limit(1)
+        )
+        if admin_provincial_existente:
+            raise HTTPException(
+                status_code=HTTPStatus.CONFLICT,
+                detail=f"Operação negada: A província '{schema.nome_provincia}' já possui um administrador titular ativo."
+            )
+
+    scopo_existente = await session.scalar(select(AdminScope).where(AdminScope.user_id == user_base.id))
 
     if scopo_existente:
         logger.info('Atualizar o scope do usuario %s', schema.email)

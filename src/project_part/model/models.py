@@ -328,6 +328,13 @@ class User(Base):
         DateTime(timezone=True), server_default=func.now(), nullable=True, default=None
     )
 
+
+        
+    data_expiracao_quota: Mapped[Optional[date]] = mapped_column(Date, nullable=True, default=None)
+    # última vez que foi notificado por quota em atraso (job mensal)
+    notificado_quota_atraso_em: Mapped[date | None] = mapped_column(Date, nullable=True, default=None)
+
+
     # Segurança e Bloqueios
     estado_civil: Mapped[EstadoCivil] = mapped_column(nullable=True, default=EstadoCivil.SOLTEIRO)
     ativo: Mapped[bool] = mapped_column(Boolean, default=True)
@@ -801,11 +808,10 @@ class PagamentoQuota(Base):
         index=True,
     )
 
-
     
-    data_expiracao_quota: Mapped[Optional[date]] = mapped_column(Date, nullable=True, default=None)
-    # última vez que foi notificado por quota em atraso (job mensal)
-    notificado_quota_atraso_em: Mapped[date | None] = mapped_column(Date, nullable=True, default=None)
+    # data_expiracao_quota: Mapped[Optional[date]] = mapped_column(Date, nullable=True, default=None)
+    # # última vez que foi notificado por quota em atraso (job mensal)
+    # notificado_quota_atraso_em: Mapped[date | None] = mapped_column(Date, nullable=True, default=None)
 
 
 

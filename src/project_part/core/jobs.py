@@ -3,7 +3,7 @@
 import logging
 from datetime import datetime, timezone, timedelta, date
 
-from sqlalchemy import select, and_, or_
+from sqlalchemy import select, and_, or_, Date 
 
 from project_part.core.distributed_lock import with_distributed_lock
 from project_part.model.models import (
@@ -78,7 +78,7 @@ async def _verificar_e_notificar_quotas_impl(session_factory):
                     or_(
                         User.notificado_quota_atraso_em.is_(None),
                         # reutiliza a flag: só 1 aviso de “ative a quota”
-                        User.notificado_quota_atraso_em < User.criado_em.cast(type_=None),  # evite se complicar
+                        User.notificado_quota_atraso_em < User.criado_em.cast(Date),  # evite se complicar
                     ),
                 )
             )
@@ -122,6 +122,8 @@ async def _verificar_e_notificar_quotas_impl(session_factory):
             logger.info('Notificação novo sem quota → %s', user.email)
 
         try:
+            from project_part.db.audit_helper import processar_auditoria_sessao
+            await processar_auditoria_sessao(session)
             await session.commit()
             logger.info(
                 'Job quotas concluído: %s em atraso, processados novos',

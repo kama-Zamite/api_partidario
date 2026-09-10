@@ -25,8 +25,8 @@ from project_part.core.health import health_router
 from project_part.core.logging_config import setup_logging
 from project_part.core.rate_limit import limiter
 from project_part.core.setting import settings
-from project_part.db.session import get_session
-from project_part.db.cache import get_redis
+from project_part.db.session import get_session, async_session
+from project_part.db.cache import get_redis, redis_client
 from contextlib import asynccontextmanager
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -56,7 +56,8 @@ async def lifespan(app: FastAPI):
     scheduler = AsyncIOScheduler()
 
     async def job_quotas():
-        await verificar_e_notificar_quotas_vencidas(Session, Redis)
+
+        await verificar_e_notificar_quotas_vencidas(async_session, redis_client)
 
     scheduler.add_job(
         job_quotas,
@@ -136,8 +137,8 @@ def home(request: Request):
 
 # endpoint interno só em DEBUG / com token
 @app.post('/internal/jobs/quotas-vencidas')
-async def run_job_now(request: Request, session: Session, redis: Redis):
-    await verificar_e_notificar_quotas_vencidas(session, redis)
+async def run_job_now(request: Request, redis: Redis):
+    await verificar_e_notificar_quotas_vencidas(async_session, redis)
     return {'ok': True}
 
 app.include_router(auth)
