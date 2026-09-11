@@ -2333,11 +2333,14 @@ async def listar_doacoes(
     total = await session.scalar(count_q) or 0
 
     result = await session.execute(
-        base.options(selectinload(Doacao.doador))
+    base.options(
+        selectinload(Doacao.doador).selectinload(User.provincia)
+        )
         .order_by(Doacao.data_doacao.desc())
         .limit(limit)
         .offset(offset)
     )
+
     doacoes = result.scalars().all()
 
     results = [to_doacao_response(d) for d in doacoes]

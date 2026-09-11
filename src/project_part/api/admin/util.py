@@ -4,6 +4,8 @@ from project_part.model.models import Doacao, PagamentoQuota, SolicitacaoFundo
 def to_doacao_response(doacao: Doacao) -> DoacaoResponse:
     return DoacaoResponse(
         id=doacao.id,
+        # provincia = pag.militante.provincia_id if pag.militante and pag.militante.provincia_id else None,
+        provincia= doacao.doador.provincia.nome_provincia if doacao.doador and doacao.doador.provincia.nome_provincia else None,
         user_id=doacao.user_id,
         quantia=doacao.quantia,
         moeda=doacao.moeda,
@@ -22,24 +24,25 @@ def to_doacao_response(doacao: Doacao) -> DoacaoResponse:
     )
 
 
-def to_quota_response(pag: PagamentoQuota) -> QuotaResponse:
-    return QuotaResponse(
-        id=pag.id,
-        user_id=pag.user_id,
-        quantia=pag.quantia,
-        moeda=pag.moeda,
-        periodo=pag.periodo,
-        metodo_pagamento=pag.metodo_pagamento,
-        referencia=pag.referencia,
-        id_transacao=pag.id_transacao,
-        status=pag.status,
-        observacao=pag.observacao,
-        data_pagamento=pag.data_pagamento,
-        aprovado_por=pag.aprovado_por,
-        aprovado_em=pag.aprovado_em,
-        atualizado_em=pag.atualizado_em,
-        nome_militante=pag.militante.nome_completo if pag.militante else None,
-    )
+# def to_quota_response(pag: PagamentoQuota) -> QuotaResponse:
+#     return QuotaResponse(
+#         id=pag.id,
+#         user_id=pag.user_id,
+#         quantia=pag.quantia,
+#         moeda=pag.moeda,
+#         periodo=pag.periodo,
+#         metodo_pagamento=pag.metodo_pagamento,
+#         referencia=pag.referencia,
+#         provincia = pag.provincia.nome_provincia if pag.provincia else None,
+#         id_transacao=pag.id_transacao,
+#         status=pag.status,
+#         observacao=pag.observacao,
+#         data_pagamento=pag.data_pagamento,
+#         aprovado_por=pag.aprovado_por,
+#         aprovado_em=pag.aprovado_em,
+#         atualizado_em=pag.atualizado_em,
+#         nome_militante=pag.militante.nome_completo if pag.militante else None,
+#     )
 
 
 

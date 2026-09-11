@@ -110,8 +110,8 @@ async def login(
     response: Response,
     session: Session,
     token: Access_token,
-    backgroundTasks: BackgroundTasks,
-    _captcha: Claudflare_turnfile
+    # backgroundTasks: BackgroundTasks,
+    # _captcha: Claudflare_turnfile
     ):
     """Endpoint para autenticação de usuário."""
 
@@ -251,18 +251,18 @@ async def login(
     #enviar email
 
     user_agent_parsed = parse(user_agent)
-    try:
-        backgroundTasks.add_task(
-            email_sucesso_login_async, 
-            nome_completo=user.nome_completo, 
-            ip_address=ip_address, 
-            email_destino=user.email,
-            navegador=user_agent_parsed.browser.family, 
-            sistema_operacional=user_agent_parsed.os.family, 
-            )
-        logger.info("E-mail de login enviado com sucesso para %s", user.email)
-    except Exception as e:
-        logger.error("Falha ao enviar e-mail de login para %s: %s", user.email, str(e))
+    # try:
+    #     backgroundTasks.add_task(
+    #         email_sucesso_login_async, 
+    #         nome_completo=user.nome_completo, 
+    #         ip_address=ip_address, 
+    #         email_destino=user.email,
+    #         navegador=user_agent_parsed.browser.family, 
+    #         sistema_operacional=user_agent_parsed.os.family, 
+    #         )
+    #     logger.info("E-mail de login enviado com sucesso para %s", user.email)
+    # except Exception as e:
+    #     logger.error("Falha ao enviar e-mail de login para %s: %s", user.email, str(e))
 
 
     set_auth_cookies(

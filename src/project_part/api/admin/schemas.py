@@ -293,7 +293,20 @@ class DoacaoResponse(BaseModel):
     atualizado_em: datetime
     nome_doador: str | None = None
 
-    model_config = ConfigDict(from_attributes=True)
+    provincia: str
+
+
+    model_config = ConfigDict(from_attributes=True, ser_json_circular_logic='ignore')
+
+    @field_validator('provincia', mode='before')
+    @classmethod
+    def extrair_nome_provincia(cls, v: Any) -> Optional[str]:
+        if v and hasattr(v, 'nome_provincia'):
+            return getattr(v, 'nome_provincia')
+
+        if isinstance(v, str):
+            return v
+        raise ValueError('Província inválida ou ausente')
 
 
 class DoacaoList(BaseModel):
