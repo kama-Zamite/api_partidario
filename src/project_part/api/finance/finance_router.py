@@ -10,6 +10,9 @@ from sqlalchemy import select, func
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.exc import IntegrityError
+from project_part.core.rate_limit import limiter
+from project_part.services.claudflare_turnfile import verificar_turnstile
+
 
 # from project_part.model.finance import (
 #     DonationStatusEnum,
@@ -43,6 +46,9 @@ from .schemas import (
     QuotaCreate,
 
 ) 
+
+Claudflare_turnfile = Annotated[bool, Depends(verificar_turnstile)]
+
 
 Session = Annotated[AsyncSession, Depends(get_session)]
 
@@ -133,6 +139,106 @@ async def criar_doacao(
     }
 
 
+
+
+
+
+@finance.post('/doacao/anonimo', status_code=HTTPStatus.CREATED)
+@limiter.limit('5/minute')
+async def criar_doacao_anonimo(
+    request: Request,
+    body: DoacaoCreate,
+    session: Session,
+    _captcha: Claudflare_turnfile
+
+):
+    """Doação sem conta. Notifica apenas superadmin."""
+    doacao = Doacao(
+        user_id=None,
+        quantia=body.quantia,
+        moeda='AOA',
+        metodo_pagamento=body.metodo_pagamento,
+        referencia=body.referencia.strip() if body.referencia else None,
+        id_transacao=body.id_transacao.strip() if body.id_transacao else None,
+        observacao=body.observacao,
+        status=DonationStatusEnum.PENDING,
+    )
+    session.add(doacao)
+    await session.flush()
+
+    await registar_movimento(
+        session,
+        tipo=TipoMovimentoEnum.DOACAO,
+        origem_id=doacao.id,
+        user_id=None,
+        quantia=doacao.quantia,
+        moeda=doacao.moeda,
+        acao=AcaoMovimentoEnum.CRIADA,
+        status_anterior=None,
+        status_novo=DonationStatusEnum.PENDING.value,
+        ator_id=None,
+        detalhe={
+            'metodo_pagamento': doacao.metodo_pagamento.value,
+            'referencia': doacao.referencia,
+            'anonimo': True,
+        },
+    )
+
+    # Só superadmin (sem território)
+    superadmin_ids = (
+        await session.scalars(
+            select(User.id)
+            .join(AdminScope, AdminScope.user_id == User.id)
+            .where(
+                User.role_id == settings.ADMIN_ROLE_ID,
+                User.ativo.is_(True),
+                AdminScope.provincia_id.is_(None),
+                AdminScope.municipio_id.is_(None),
+            )
+        )
+    ).all()
+
+    if not superadmin_ids:
+        logger.warning(
+            'Doação anónima %s criada sem superadmin para notificar',
+            doacao.id,
+        )
+    else:
+        for admin_id in superadmin_ids:
+            session.add(
+                Notification(
+                    admin_id=admin_id,
+                    user_id=None,
+                    titulo='Doação anónima',
+                    mensagem=(
+                        f'Recebida doação anónima de {doacao.quantia} AOA '
+                        f'via {doacao.metodo_pagamento.value}'
+                        + (
+                            f' (ref: {doacao.referencia}).'
+                            if doacao.referencia
+                            else '.'
+                        )
+                        + ' Aguarda aprovação.'
+                    ),
+                    destinatario='ADMIN',
+                    categoria=RoleCategoriaNotificacao.DOACAO,
+                )
+            )
+
+    try:
+        await session.commit()
+    except IntegrityError:
+        await session.rollback()
+        raise HTTPException(
+            HTTPStatus.CONFLICT,
+            detail='Referência ou ID de transação já existe.',
+        )
+
+    logger.info('Doação anónima %s criada (PENDING)', doacao.id)
+    return {
+        'msg': 'Doação enviada com sucesso, aguarde a aprovação do admin.',
+        'doacao_id': str(doacao.id),
+    }
 # @finance.post('/quota', status_code=HTTPStatus.CREATED)
 # # @limiter.limit('5/minute')
 # async def criar_pagamento_quota(
