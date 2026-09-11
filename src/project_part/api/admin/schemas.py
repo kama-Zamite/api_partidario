@@ -408,3 +408,11 @@ class MovimentacoesList(BaseModel):
     limit: int
     offset: int
     results: list[MovimentacaoItem]
+
+
+
+class ReativarUserResponse(BaseModel):
+    msg: str
+    user_id: uuid.UUID
+    email: str
+    ativo: bool

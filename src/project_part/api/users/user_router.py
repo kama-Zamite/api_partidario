@@ -2386,7 +2386,7 @@ async def obter_usuario_por_id(
 
 
 @user.delete('/delete/', status_code=HTTPStatus.OK)
-@limiter.limit("2/minute; 100/day")
+@limiter.limit('2/minute; 100/day')
 async def delete_user(
     request: Request,
     response: Response,
@@ -2395,68 +2395,109 @@ async def delete_user(
     current_user: Get_current_user,
     codigo: DeleteUser,
 ) -> Dict[str, str]:
-    """
-    Executa o Soft Delete de forma dinâmica e segura.
-    Descobre os privilégios buscando o nome da Role no banco, eliminando IDs fixos.
-    """
-    user_to_delete = None
     if codigo.valid != 'ELIMINAR':
-        logger.warning("Erro, na confirmacao de delete da conta do usuario")
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Erro, na confirmacao de delete da conta do usuario")
+        logger.warning('Confirmação de delete inválida para user %s', current_user.id)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail='Erro na confirmação de delete da conta do utilizador',
+        )
 
+    logger.info('Utilizador %s executou auto-exclusão da conta.', current_user.id)
 
+    current_user.deletado_em = datetime.now(timezone.utc)
+    current_user.ativo = False
+    session.add(current_user)
 
+    # ── Admins a notificar ───────────────────────────────────────
+       # ── Admins a notificar: só superadmin + provincial da sua província ──
+    admin_ids: set[uuid.UUID] = set()
 
-    logger.info("Usuário %s executou auto-exclusão da conta.", current_user.id)
-    user_to_delete = current_user
-       
-    user_to_delete.deletado_em = datetime.now(timezone.utc)
-    user_to_delete.ativo = False
+    # 1) Admin provincial da mesma província (não municipal)
+    if current_user.provincia_id is not None:
+        result_prov = await session.scalars(
+            select(User.id)
+            .join(AdminScope, AdminScope.user_id == User.id)
+            .where(
+                User.role_id == settings.ADMIN_ROLE_ID,
+                User.ativo.is_(True),
+                User.deletado_em.is_(None),  # se usares soft delete
+                AdminScope.provincia_id == current_user.provincia_id,
+                AdminScope.municipio_id.is_(None),
+            )
+        )
+        admin_ids.update(result_prov.all())
 
+    # 2) Superadmin (sem território)
+    result_geral = await session.scalars(
+        select(User.id)
+        .join(AdminScope, AdminScope.user_id == User.id)
+        .where(
+            User.role_id == settings.ADMIN_ROLE_ID,
+            User.ativo.is_(True),
+            User.deletado_em.is_(None),
+            AdminScope.provincia_id.is_(None),
+            AdminScope.municipio_id.is_(None),
+        )
+    )
+    admin_ids.update(result_geral.all())
+
+    # Sem fallback para "qualquer admin"
+    if not admin_ids:
+        logger.warning(
+            'Nenhum superadmin/provincial encontrado para notificar delete do user %s',
+            current_user.id,
+        )
+    else:
+        for admin_id in admin_ids:
+            session.add(
+                Notification(
+                    admin_id=admin_id,
+                    user_id=current_user.id,
+                    titulo='Delete de Conta',
+                    mensagem=(
+                        f'O militante {current_user.nome_completo} eliminou a sua conta.'
+                    ),
+                    destinatario='ADMIN',
+                    categoria=RoleCategoriaNotificacao.DELETE_CONTA,
+                )
+            )
+        logger.info(
+            'Notificações de delete enviadas a %s admin(s) para user %s',
+            len(admin_ids),
+            current_user.id,
+        )
     try:
-        session.add(user_to_delete)
-        await caches.incr("v1:usuarios:lista:versao")
+        await caches.incr('v1:usuarios:lista:versao')
         await session.commit()
-
-        
-        logger.info("Usuário %s desativado com sucesso. Versão do cache incrementada.", current_user.email)
-
+        logger.info('Utilizador %s desativado com sucesso.', current_user.email)
     except Exception as e:
         await session.rollback()
-        logger.error("Erro crítico durante commit de exclusão: do usuario %s,  %s ", current_user.email, str(e))
+        logger.error(
+            'Erro no commit de exclusão do user %s: %s',
+            current_user.email,
+            e,
+        )
         raise HTTPException(
             status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
-            detail="Erro interno ao processar a desativação da conta."
+            detail='Erro interno ao processar a desativação da conta.',
         )
-    # await apagar_foto_perfil_cloudinary(str(user_to_delete.id))
 
-    refresh_token = request.cookies.get(
-            # "__Host-refresh_token"
-            "refresh_token"
-        )
-    
+    # ── Revogar refresh token + limpar cookies (como já tinhas) ──
+    refresh_token = request.cookies.get('refresh_token')
     try:
-    
         if refresh_token:
-
             try:
-    
                 payload = decode(
                     refresh_token,
                     settings.SECRET_KEY,
                     algorithms=[settings.ALGORITHM],
                 )
-    
-                token_jti = payload.get("jti")
-    
+                token_jti = payload.get('jti')
             except PyJWTError:
-    
                 token_jti = None
-    
+
             if token_jti:
-    
                 agora = datetime.now(timezone.utc)
-    
                 result = await session.execute(
                     select(UserRefreshToken)
                     .where(
@@ -2465,79 +2506,48 @@ async def delete_user(
                     )
                     .with_for_update()
                 )
-    
-                db_token = (
-                    result.scalar_one_or_none()
-                )
-    
+                db_token = result.scalar_one_or_none()
                 if db_token:
-    
                     db_token.revogado = True
                     db_token.revogado_em = agora
-    
                     await session.commit()
-    
-            # =====================================================
-            # Apagar cookies
-            # =====================================================
-    
+
         response.delete_cookie(
-             # key="__Host-access_token",
-            key="access_token",
-            path="/",
+            key='access_token',
+            path='/',
             httponly=True,
             samesite=settings.SAMESITE_COOKIE,
-            secure=settings.SECURE_COOKIES
+            secure=settings.SECURE_COOKIES,
         )
-    
         response.delete_cookie(
-                # key="__Host-refresh_token",
-            key="refresh_token",
-            path="/",
+            key='refresh_token',
+            path='/',
             httponly=True,
             samesite=settings.SAMESITE_COOKIE,
-            secure=settings.SECURE_COOKIES
+            secure=settings.SECURE_COOKIES,
         )
-    
-        response.headers["Cache-Control"] = "no-store"
-    
-        return {"msg": "Usuário deletado com sucesso!"}
-    
-    except Exception:
-    
-        await session.rollback()
-    
-        logger.exception(
-            "Erro durante logout."
-        )
-    
-            # Mesmo em caso de erro interno,
-            # remove as credenciais do navegador.
-    
-        response.delete_cookie(
-            # key="__Host-access_token",
-            key="access_token",
-            path="/",
-            httponly=True,
-            samesite=settings.SAMESITE_COOKIE,
-            secure=settings.SECURE_COOKIES
-            )
-    
-        response.delete_cookie(
-            # key="__Host-refresh_token",
-            key="refresh_token",
-            path="/",
-            httponly=True,
-            samesite=settings.SAMESITE_COOKIE,
-            secure=settings.SECURE_COOKIES
-        )
-        response.status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
-    
+        response.headers['Cache-Control'] = 'no-store'
         return {'msg': 'Usuário deletado com sucesso!'}
 
-
-
-
+    except Exception:
+        await session.rollback()
+        logger.exception('Erro durante logout após delete.')
+        response.delete_cookie(
+            key='access_token',
+            path='/',
+            httponly=True,
+            samesite=settings.SAMESITE_COOKIE,
+            secure=settings.SECURE_COOKIES,
+        )
+        response.delete_cookie(
+            key='refresh_token',
+            path='/',
+            httponly=True,
+            samesite=settings.SAMESITE_COOKIE,
+            secure=settings.SECURE_COOKIES,
+        )
+        response.status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
+        return {'msg': 'Usuário deletado com sucesso!'}
 
 
 

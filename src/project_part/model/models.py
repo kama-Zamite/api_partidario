@@ -131,6 +131,9 @@ class RoleCategoriaNotificacao(str, Enum):
     BEM_VINDO = 'BEM_VINDO'
     EVENTOS = 'EVENTOS'
     NOTICIAS = 'NOTICIAS'
+    DELETE_CONTA = 'DELETE_CONTA'
+    REATIVACAO_CONTA = 'REATIVACAO_CONTA'
+    FUNDO = 'FUNDO'
     QUOTA = 'QUOTA'
     DOACAO = 'DOACAO'
 

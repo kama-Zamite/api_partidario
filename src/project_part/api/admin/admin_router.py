@@ -113,6 +113,7 @@ from .schemas import (
     MovimentacaoItem,
     TipoMovimentacaoUI,
     RegistrosFinanceirosResponse,
+    ReativarUserResponse,
     )
 from .util import (
     to_doacao_response,
@@ -997,6 +998,130 @@ async def registros_militantes_recentes(
     }
 
 
+@admin.get(
+    '/deletados-recentes',
+    status_code=HTTPStatus.OK,
+    response_model=RegistrosRecentes,
+)
+# @limiter.limit('30/minute')
+async def militantes_deletados_recentes(
+    request: Request,
+    session: Session,
+    current_user: Get_current_user,
+    scope: ScopeValid,
+    nome_provincia: str | None = Query(None, description='Filtrar por nome da província (só Superadmin)'),
+    nome_municipio: str | None = Query(None, description='Filtrar por nome do município'),
+    email: str | None = Query(None, description='Filtrar por email exato'),
+    nif: str | None = Query(None, description='Filtrar por NIF exato'),
+    limit: int = Query(default=10, ge=1, le=50),
+    offset: int = Query(default=0, ge=0),
+):
+    """
+    Lista militantes soft-deleted (deletado_em preenchido).
+
+    - Superadmin: todas as províncias (+ filtros)
+    - Admin Provincial: só a sua província
+    - Admin Municipal: acesso negado
+    """
+    logger.info(
+        'Usuário %s listando militantes deletados (provincia=%s, municipio=%s, email=%s, nif=%s)',
+        current_user.id,
+        nome_provincia,
+        nome_municipio,
+        email,
+        nif,
+    )
+
+    if scope.municipio_id is not None:
+        raise HTTPException(
+            status_code=HTTPStatus.FORBIDDEN,
+            detail='Acesso negado: Você não tem permissão para acessar estes registros.',
+        )
+
+    if scope.provincia_id is not None and nome_provincia is not None:
+        raise HTTPException(
+            status_code=HTTPStatus.FORBIDDEN,
+            detail='Acesso negado: Admin provincial não pode filtrar por outra província.',
+        )
+
+    # ---- Província ----
+    provincia_id_filtro = None
+    if nome_provincia:
+        nome_provincia = nome_provincia.strip().title()
+        provincia_banco = await session.scalar(
+            select(Provincia).where(Provincia.nome_provincia == nome_provincia)
+        )
+        if not provincia_banco:
+            raise HTTPException(status_code=HTTPStatus.NOT_FOUND, detail='Província não encontrada')
+        provincia_id_filtro = provincia_banco.id
+
+    # ---- Município ----
+    municipio_id_filtro = None
+    if nome_municipio:
+        nome_municipio = nome_municipio.strip().title()
+        query_municipio = select(Municipio).where(Municipio.nome_municipio == nome_municipio)
+
+        if provincia_id_filtro is not None:
+            query_municipio = query_municipio.where(Municipio.id_provincia == provincia_id_filtro)
+
+        if scope.provincia_id is not None:
+            query_municipio = query_municipio.where(Municipio.id_provincia == scope.provincia_id)
+
+        municipio_banco = await session.scalar(query_municipio)
+        if not municipio_banco:
+            raise HTTPException(
+                status_code=HTTPStatus.NOT_FOUND,
+                detail=f'Município "{nome_municipio}" não encontrado ou não pertence à província informada.',
+            )
+        municipio_id_filtro = municipio_banco.id
+
+    # ---- Filtros: SÓ DELETADOS ----
+    filtros = [
+        User.cadastrar_militante == CadastrarComo.MILITANTE,
+        User.deletado_em.isnot(None),  # soft-deleted
+        # opcional: User.ativo.is_(False),  # se no delete também pões ativo=False
+    ]
+
+    if scope.provincia_id is not None:
+        filtros.append(User.provincia_id == scope.provincia_id)
+
+    if provincia_id_filtro is not None:
+        filtros.append(User.provincia_id == provincia_id_filtro)
+
+    if municipio_id_filtro is not None:
+        filtros.append(User.municipio_id == municipio_id_filtro)
+
+    if email:
+        filtros.append(User.email == email.lower().strip())
+
+    if nif:
+        filtros.append(User.nif == nif.upper().strip())
+
+    total = await session.scalar(select(func.count(User.id)).where(*filtros)) or 0
+
+    query = (
+        select(User)
+        .where(*filtros)
+        .options(
+            selectinload(User.provincia),
+            selectinload(User.municipio),
+            selectinload(User.role),
+        )
+        .order_by(User.deletado_em.desc())  # mais recentemente apagados primeiro
+        .limit(limit)
+        .offset(offset)
+    )
+
+    result = await session.execute(query)
+    registros = result.scalars().all()
+
+    return {
+        'total': total,
+        'results': registros,
+    }
+
+
+
 
 
 @admin.get(
@@ -1131,6 +1256,127 @@ async def registros_simpatizantes_recentes(
 
 
 
+@admin.get(
+    '/deletados-recentes/simpatizante',
+    status_code=HTTPStatus.OK,
+    response_model=RegistrosRecentes,
+)
+# @limiter.limit('30/minute')
+async def simpatizante_deletados_recentes(
+    request: Request,
+    session: Session,
+    current_user: Get_current_user,
+    scope: ScopeValid,
+    nome_provincia: str | None = Query(None, description='Filtrar por nome da província (só Superadmin)'),
+    nome_municipio: str | None = Query(None, description='Filtrar por nome do município'),
+    email: str | None = Query(None, description='Filtrar por email exato'),
+    nif: str | None = Query(None, description='Filtrar por NIF exato'),
+    limit: int = Query(default=10, ge=1, le=50),
+    offset: int = Query(default=0, ge=0),
+):
+    """
+    Lista simpatizante soft-deleted (deletado_em preenchido).
+
+    - Superadmin: todas as províncias (+ filtros)
+    - Admin Provincial: só a sua província
+    - Admin Municipal: acesso negado
+    """
+    logger.info(
+        'Usuário %s listando simpatizante deletados (provincia=%s, municipio=%s, email=%s, nif=%s)',
+        current_user.id,
+        nome_provincia,
+        nome_municipio,
+        email,
+        nif,
+    )
+
+    if scope.municipio_id is not None:
+        raise HTTPException(
+            status_code=HTTPStatus.FORBIDDEN,
+            detail='Acesso negado: Você não tem permissão para acessar estes registros.',
+        )
+
+    if scope.provincia_id is not None and nome_provincia is not None:
+        raise HTTPException(
+            status_code=HTTPStatus.FORBIDDEN,
+            detail='Acesso negado: Admin provincial não pode filtrar por outra província.',
+        )
+
+    # ---- Província ----
+    provincia_id_filtro = None
+    if nome_provincia:
+        nome_provincia = nome_provincia.strip().title()
+        provincia_banco = await session.scalar(
+            select(Provincia).where(Provincia.nome_provincia == nome_provincia)
+        )
+        if not provincia_banco:
+            raise HTTPException(status_code=HTTPStatus.NOT_FOUND, detail='Província não encontrada')
+        provincia_id_filtro = provincia_banco.id
+
+    # ---- Município ----
+    municipio_id_filtro = None
+    if nome_municipio:
+        nome_municipio = nome_municipio.strip().title()
+        query_municipio = select(Municipio).where(Municipio.nome_municipio == nome_municipio)
+
+        if provincia_id_filtro is not None:
+            query_municipio = query_municipio.where(Municipio.id_provincia == provincia_id_filtro)
+
+        if scope.provincia_id is not None:
+            query_municipio = query_municipio.where(Municipio.id_provincia == scope.provincia_id)
+
+        municipio_banco = await session.scalar(query_municipio)
+        if not municipio_banco:
+            raise HTTPException(
+                status_code=HTTPStatus.NOT_FOUND,
+                detail=f'Município "{nome_municipio}" não encontrado ou não pertence à província informada.',
+            )
+        municipio_id_filtro = municipio_banco.id
+
+    # ---- Filtros: SÓ DELETADOS ----
+    filtros = [
+        User.cadastrar_militante == CadastrarComo.SIMPATIZANTE,
+        User.deletado_em.isnot(None),  # soft-deleted
+        # opcional: User.ativo.is_(False),  # se no delete também pões ativo=False
+    ]
+
+    if scope.provincia_id is not None:
+        filtros.append(User.provincia_id == scope.provincia_id)
+
+    if provincia_id_filtro is not None:
+        filtros.append(User.provincia_id == provincia_id_filtro)
+
+    if municipio_id_filtro is not None:
+        filtros.append(User.municipio_id == municipio_id_filtro)
+
+    if email:
+        filtros.append(User.email == email.lower().strip())
+
+    if nif:
+        filtros.append(User.nif == nif.upper().strip())
+
+    total = await session.scalar(select(func.count(User.id)).where(*filtros)) or 0
+
+    query = (
+        select(User)
+        .where(*filtros)
+        .options(
+            selectinload(User.provincia),
+            selectinload(User.municipio),
+            selectinload(User.role),
+        )
+        .order_by(User.deletado_em.desc())  # mais recentemente apagados primeiro
+        .limit(limit)
+        .offset(offset)
+    )
+
+    result = await session.execute(query)
+    registros = result.scalars().all()
+
+    return {
+        'total': total,
+        'results': registros,
+    }
 
 
 # @admin.get(
@@ -2185,7 +2431,8 @@ def _apenas_superadmin(scope: ScopeValid) -> None:
         )
 
 
-# ─── Provincial cria ────────────────────────────────────────────
+
+
 @admin.post(
     '/fundos/solicitacoes',
     status_code=HTTPStatus.CREATED,
@@ -2212,7 +2459,7 @@ async def criar_solicitacao_fundo(
         )
 
     solicitacao = SolicitacaoFundo(
-        provincia_id=scope.provincia_id,  # sempre a do scope
+        provincia_id=scope.provincia_id,
         municipio_id=None,
         finalidade=body.finalidade,
         descricao=body.descricao.strip(),
@@ -2229,7 +2476,7 @@ async def criar_solicitacao_fundo(
         session,
         tipo=TipoMovimentoEnum.DESPESA,
         origem_id=solicitacao.id,
-        user_id=None,  # não é por militante
+        user_id=None,
         quantia=solicitacao.quantia,
         moeda=solicitacao.moeda,
         acao=AcaoMovimentoEnum.CRIADA,
@@ -2243,8 +2490,77 @@ async def criar_solicitacao_fundo(
         },
     )
 
-    await session.commit()
+    # ── Superadmins (sem restrição de território) ───────────────
+    superadmin_ids = (
+        await session.scalars(
+            select(User.id)
+            .join(AdminScope, AdminScope.user_id == User.id)
+            .where(
+                User.role_id == settings.ADMIN_ROLE_ID,
+                User.ativo.is_(True),
+                AdminScope.provincia_id.is_(None),
+                AdminScope.municipio_id.is_(None),
+            )
+        )
+    ).all()
 
+    # Fallback: qualquer admin se não houver scope de superadmin
+    if not superadmin_ids:
+        superadmin_ids = (
+            await session.scalars(
+                select(User.id).where(
+                    User.role_id == settings.ADMIN_ROLE_ID,
+                    User.ativo.is_(True),
+                ).limit(5)
+            )
+        ).all()
+
+    nome_provincia = None
+    prov = await session.scalar(
+        select(Provincia).where(Provincia.id == scope.provincia_id)
+    )
+    if prov:
+        nome_provincia = prov.nome_provincia
+
+    for admin_id in superadmin_ids:
+        session.add(
+            Notification(
+                admin_id=admin_id,
+                user_id=current_user.id,
+                titulo='Nova solicitação de fundo',
+                mensagem=(
+                    f'O admin provincial {current_user.nome_completo} '
+                    f'({nome_provincia or f"província {scope.provincia_id}"}) '
+                    f'solicitou {solicitacao.quantia} AOA para '
+                    f'{solicitacao.finalidade.value}: {solicitacao.descricao}.'
+                ),
+                destinatario='ADMIN',
+                categoria=RoleCategoriaNotificacao.FUNDO,
+            )
+        )
+
+    if not superadmin_ids:
+        logger.warning(
+            'Solicitação %s criada sem superadmin para notificar',
+            solicitacao.id,
+        )
+
+    try:
+        await session.commit()
+        logger.info(
+            'Solicitação de fundo %s criada pela província %s (user %s)',
+            solicitacao.id,
+            solicitacao.provincia_id,
+            current_user.id,
+        )
+    except Exception as e:
+        logger.error('Falha ao criar solicitação de fundo: %s', e)
+        await session.rollback()
+        raise HTTPException(
+            status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+            detail='Falha ao criar solicitação de fundo.',
+        )
+    
     result = await session.scalar(
         select(SolicitacaoFundo)
         .where(SolicitacaoFundo.id == solicitacao.id)
@@ -2257,6 +2573,10 @@ async def criar_solicitacao_fundo(
         current_user.id,
     )
     return to_solicitacao_response(result)
+
+
+
+
 
 
 # ─── Listar ─────────────────────────────────────────────────────
@@ -3819,6 +4139,21 @@ async def aprovar_solicitacao_fundo(
         },
     )
 
+    notificacao = Notification(
+        admin_id=solicitacao.solicitado_por,
+        user_id=current_user.id,
+        titulo='Solicitação de Fundo Aprovada',
+        mensagem=(
+            f'Prezado(a) {solicitacao.solicitado_por}, '
+            'informamos que a sua solicitação de fundo foi analisada '
+            'e aprovada com sucesso.'
+        ),
+        destinatario='ADMIN',
+        categoria=RoleCategoriaNotificacao.FUNDO,
+    )
+    
+    session.add(notificacao)
+
     try:
         await session.commit()
         await session.refresh(solicitacao)
@@ -3894,8 +4229,33 @@ async def rejeitar_solicitacao_fundo(
         },
     )
 
-    await session.commit()
-    await session.refresh(solicitacao)
+    notificacao = Notification(
+        admin_id=solicitacao.solicitado_por,
+        user_id=current_user.id,
+        titulo='Solicitação de Fundo Rejeitada',
+        mensagem=(
+            f'Prezado(a) {solicitacao.solicitado_por}, '
+            'informamos que a sua solicitação de fundo foi analisada '
+            'e rejeitada.'
+        ),
+        motivo = body.motivo,
+        destinatario='ADMIN',
+        categoria=RoleCategoriaNotificacao.FUNDO,
+    )
+
+    session.add(notificacao)
+
+    try:
+        logger.info('Superadmin %s rejeitando solicitação %s', current_user.id, solicitacao.id)
+        await session.commit()
+        await session.refresh(solicitacao)
+    except Exception as e:
+        await session.rollback()
+        logger.error('Erro crítico ao rejeitar solicitação %s: %s', solicitacao.id, str(e))
+        raise HTTPException(
+            status_code=HTTPStatus.BAD_REQUEST,
+            detail='Erro no processo de rejeição do pagamento de quota'
+        )
 
     logger.info(
         'Solicitação %s REJEITADA por superadmin %s',
@@ -3905,151 +4265,237 @@ async def rejeitar_solicitacao_fundo(
     return to_solicitacao_response(solicitacao)
 
 
-@admin.post('/delete/simpatizante/{id_simpatizante}', status_code=HTTPStatus.OK)
-async def eliminar_simpatizante(
+
+
+@admin.post(
+    '/users/{user_id}/reativar',
+    status_code=HTTPStatus.OK,
+    response_model=ReativarUserResponse,
+)
+# @limiter.limit('10/minute')
+async def reativar_user(
     request: Request,
-    response: Response,
+    user_id: uuid.UUID,
     session: Session,
     caches: Redis,
     current_user: Get_current_user,
-    id_simpatizante: uuid.UUID,
-    scope: ScopeValid
+    scope: ScopeValid,
 ):
     """
-    Executa a validação de escopo e elimina o simpatizante via Soft Delete de forma segura.
-    Superadmin pode deletar qualquer um. Admin Provincial apenas da sua província.
+    Reativa um utilizador com soft delete.
+    Apenas Superadmin (sem provincia_id / municipio_id no scope).
     """
-    logger.info('Buscando Usuario no Banco de dados...')
+    verificar_permissao_global_pais(scope, current_user)
 
-    query = select(User).where(User.id == id_simpatizante)
-    user_banco = await session.scalar(query)
-
-    # 1. Verifica se o usuário existe
-    if not user_banco:
+    user = await session.scalar(select(User).where(User.id == user_id))
+    if not user:
         raise HTTPException(
             status_code=HTTPStatus.NOT_FOUND,
-            detail='Usuario nao encontrado'
+            detail='Utilizador não encontrado.',
         )
 
-    # 2. Verifica se a conta já está desativada
-    if not user_banco.ativo:
-        logger.warning('Tentativa de eliminar uma conta desativada: %s', user_banco.email)
+    if user.ativo and user.deletado_em is None:
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED, 
-            detail='Conta do usuario ja esta desativada'
+            status_code=HTTPStatus.CONFLICT,
+            detail='Esta conta já está ativa.',
         )
 
-    # 3. Garante que o alvo é realmente um Simpatizante
-    if user_banco.role_id != settings.ROLE_SIMPATIZANTE_ID:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail='Usuario precisa ser um simpatizante'
-        )
-    
-    # 4. REGRA DE ESCOPO: Admin Provincial apenas remove usuários da sua própria província
-    if scope.provincia_id and user_banco.provincia_id != scope.provincia_id:
-        logger.warning(
-            'Admin %s tentou eliminar usuário %s de outra província.', 
-            current_user.id, user_banco.id
-        )
-        raise HTTPException(
-            status_code=HTTPStatus.FORBIDDEN,
-            detail='Acesso negado. Voce apenas pode eliminar usuarios da sua provincia.'
-        )
+    user.ativo = True
+    user.deletado_em = None
+    session.add(user)
 
-    # 5. Executa a lógica de Soft Delete
-    user_banco.deletado_em = datetime.now(timezone.utc)
-    user_banco.ativo = False
-    
-    session.add(user_banco)  # Garante que o estado modificado está na sessão
+    tipo_user = None
+
+    if user.cadastrar_militante == CadastrarComo.MILITANTE:
+        tipo_user = 'MILITANTE'
+    else:
+        tipo_user = 'SIMPATIZANTE'
+
+    # Notifica o próprio utilizador (opcional)
+    session.add(
+        Notification(
+            user_id=user.id,
+            admin_id=None,
+            titulo='Conta reativada',
+            mensagem=(
+                f'Olá {user.nome_completo}, a sua conta foi reativada '
+                f'por um administrador. Já pode voltar a iniciar sessão.'
+            ),
+            destinatario=tipo_user,
+            categoria=RoleCategoriaNotificacao.REATIVACAO_CONTA,  # ou REATIVACAO se existir
+        )
+    )
 
     try:
+        await caches.incr('v1:usuarios:lista:versao')
         await session.commit()
     except Exception as e:
         await session.rollback()
-        logger.error("Erro crítico ao persistir soft delete no banco: %s", e)
+        logger.error('Erro ao reativar user %s: %s', user_id, e)
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Erro interno ao processar a exclusão da conta."
+            status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+            detail='Erro ao reativar a conta.',
         )
+
+    logger.info(
+        'User %s reativado por superadmin %s',
+        user.email,
+        current_user.id,
+    )
+
+    return ReativarUserResponse(
+        msg='Conta reativada com sucesso.',
+        user_id=user.id,
+        email=user.email,
+        ativo=True,
+    )
+
+
+
+
+
+# @admin.post('/delete/simpatizante/{id_simpatizante}', status_code=HTTPStatus.OK)
+# async def eliminar_simpatizante(
+#     request: Request,
+#     response: Response,
+#     session: Session,
+#     caches: Redis,
+#     current_user: Get_current_user,
+#     id_simpatizante: uuid.UUID,
+#     scope: ScopeValid
+# ):
+#     """
+#     Executa a validação de escopo e elimina o simpatizante via Soft Delete de forma segura.
+#     Superadmin pode deletar qualquer um. Admin Provincial apenas da sua província.
+#     """
+#     logger.info('Buscando Usuario no Banco de dados...')
+
+#     query = select(User).where(User.id == id_simpatizante)
+#     user_banco = await session.scalar(query)
+
+#     # 1. Verifica se o usuário existe
+#     if not user_banco:
+#         raise HTTPException(
+#             status_code=HTTPStatus.NOT_FOUND,
+#             detail='Usuario nao encontrado'
+#         )
+
+#     # 2. Verifica se a conta já está desativada
+#     if not user_banco.ativo:
+#         logger.warning('Tentativa de eliminar uma conta desativada: %s', user_banco.email)
+#         raise HTTPException(
+#             status_code=status.HTTP_401_UNAUTHORIZED, 
+#             detail='Conta do usuario ja esta desativada'
+#         )
+
+#     # 3. Garante que o alvo é realmente um Simpatizante
+#     if user_banco.role_id != settings.ROLE_SIMPATIZANTE_ID:
+#         raise HTTPException(
+#             status_code=status.HTTP_400_BAD_REQUEST,
+#             detail='Usuario precisa ser um simpatizante'
+#         )
     
-    logger.info("Usuário %s executou exclusão da conta com sucesso.", current_user.id)
-    return {"detail": "Simpatizante eliminado com sucesso"}
+#     # 4. REGRA DE ESCOPO: Admin Provincial apenas remove usuários da sua própria província
+#     if scope.provincia_id and user_banco.provincia_id != scope.provincia_id:
+#         logger.warning(
+#             'Admin %s tentou eliminar usuário %s de outra província.', 
+#             current_user.id, user_banco.id
+#         )
+#         raise HTTPException(
+#             status_code=HTTPStatus.FORBIDDEN,
+#             detail='Acesso negado. Voce apenas pode eliminar usuarios da sua provincia.'
+#         )
 
-
-
-
-
-@admin.post('/delete/militante/{id_militante}', status_code=HTTPStatus.OK)
-async def eliminar_militante(
-    request: Request,
-    response: Response,
-    session: Session,
-    caches: Redis,
-    current_user: Get_current_user,
-    id_militante: uuid.UUID,
-    scope: ScopeValid
-):
-    """
-    Executa a validação de escopo e elimina o militante via Soft Delete de forma segura.
-    Superadmin pode deletar qualquer um. Admin Provincial apenas da sua província.
-    """
-    logger.info('Buscando Usuario no Banco de dados...')
-
-    query = select(User).where(User.id == id_militante)
-    user_banco = await session.scalar(query)
-
-    # 1. Verifica se o usuário existe
-    if not user_banco:
-        raise HTTPException(
-            status_code=HTTPStatus.NOT_FOUND,
-            detail='Usuario nao encontrado'
-        )
-
-    # 2. Verifica se a conta já está desativada
-    if not user_banco.ativo:
-        logger.warning('Tentativa de eliminar uma conta desativada: %s', user_banco.email)
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED, 
-            detail='Conta do usuario ja esta desativada'
-        )
-
-    # 3. Garante que o alvo é realmente um militante
-    if user_banco.role_id != settings.ROLE_MILITANTE_ID:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail='Usuario precisa ser um militante'
-        )
+#     # 5. Executa a lógica de Soft Delete
+#     user_banco.deletado_em = datetime.now(timezone.utc)
+#     user_banco.ativo = False
     
-    # 4. REGRA DE ESCOPO: Admin Provincial apenas remove usuários da sua própria província
-    if scope.provincia_id and user_banco.provincia_id != scope.provincia_id:
-        logger.warning(
-            'Admin %s tentou eliminar usuário %s de outra província.', 
-            current_user.id, user_banco.id
-        )
-        raise HTTPException(
-            status_code=HTTPStatus.FORBIDDEN,
-            detail='Acesso negado. Voce apenas pode eliminar usuarios da sua provincia.'
-        )
+#     session.add(user_banco)  # Garante que o estado modificado está na sessão
 
-    # 5. Executa a lógica de Soft Delete
-    user_banco.deletado_em = datetime.now(timezone.utc)
-    user_banco.ativo = False
+#     try:
+#         await session.commit()
+#     except Exception as e:
+#         await session.rollback()
+#         logger.error("Erro crítico ao persistir soft delete no banco: %s", e)
+#         raise HTTPException(
+#             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+#             detail="Erro interno ao processar a exclusão da conta."
+#         )
     
-    session.add(user_banco)  # Garante que o estado modificado está na sessão
+#     logger.info("Usuário %s executou exclusão da conta com sucesso.", current_user.id)
+#     return {"detail": "Simpatizante eliminado com sucesso"}
 
-    try:
-        await session.commit()
-    except Exception as e:
-        await session.rollback()
-        logger.error("Erro crítico ao persistir soft delete no banco: %s", e)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Erro interno ao processar a exclusão da conta."
-        )
+
+# @admin.post('/delete/militante/{id_militante}', status_code=HTTPStatus.OK)
+# async def eliminar_militante(
+#     request: Request,
+#     response: Response,
+#     session: Session,
+#     caches: Redis,
+#     current_user: Get_current_user,
+#     id_militante: uuid.UUID,
+#     scope: ScopeValid
+# ):
+#     """
+#     Executa a validação de escopo e elimina o militante via Soft Delete de forma segura.
+#     Superadmin pode deletar qualquer um. Admin Provincial apenas da sua província.
+#     """
+#     logger.info('Buscando Usuario no Banco de dados...')
+
+#     query = select(User).where(User.id == id_militante)
+#     user_banco = await session.scalar(query)
+
+#     # 1. Verifica se o usuário existe
+#     if not user_banco:
+#         raise HTTPException(
+#             status_code=HTTPStatus.NOT_FOUND,
+#             detail='Usuario nao encontrado'
+#         )
+
+#     # 2. Verifica se a conta já está desativada
+#     if not user_banco.ativo:
+#         logger.warning('Tentativa de eliminar uma conta desativada: %s', user_banco.email)
+#         raise HTTPException(
+#             status_code=status.HTTP_401_UNAUTHORIZED, 
+#             detail='Conta do usuario ja esta desativada'
+#         )
+
+#     # 3. Garante que o alvo é realmente um militante
+#     if user_banco.role_id != settings.ROLE_MILITANTE_ID:
+#         raise HTTPException(
+#             status_code=status.HTTP_400_BAD_REQUEST,
+#             detail='Usuario precisa ser um militante'
+#         )
     
-    logger.info("Usuário %s executou exclusão da conta com sucesso.", current_user.id)
-    return {"detail": "Militante eliminado com sucesso"}
+#     # 4. REGRA DE ESCOPO: Admin Provincial apenas remove usuários da sua própria província
+#     if scope.provincia_id and user_banco.provincia_id != scope.provincia_id:
+#         logger.warning(
+#             'Admin %s tentou eliminar usuário %s de outra província.', 
+#             current_user.id, user_banco.id
+#         )
+#         raise HTTPException(
+#             status_code=HTTPStatus.FORBIDDEN,
+#             detail='Acesso negado. Voce apenas pode eliminar usuarios da sua provincia.'
+#         )
+
+#     # 5. Executa a lógica de Soft Delete
+#     user_banco.deletado_em = datetime.now(timezone.utc)
+#     user_banco.ativo = False
+    
+#     session.add(user_banco)  # Garante que o estado modificado está na sessão
+
+#     try:
+#         await session.commit()
+#     except Exception as e:
+#         await session.rollback()
+#         logger.error("Erro crítico ao persistir soft delete no banco: %s", e)
+#         raise HTTPException(
+#             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+#             detail="Erro interno ao processar a exclusão da conta."
+#         )
+    
+#     logger.info("Usuário %s executou exclusão da conta com sucesso.", current_user.id)
+#     return {"detail": "Militante eliminado com sucesso"}
 
 
 

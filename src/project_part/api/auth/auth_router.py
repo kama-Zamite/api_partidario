@@ -104,6 +104,7 @@ router_auth = APIRouter(prefix="/auth", tags=["Autenticação"])
 
 
 @auth.post('/login', status_code=HTTPStatus.OK, summary='Autenticação de Usuário')
+
 async def login(
     request: Request, 
     response: Response,
