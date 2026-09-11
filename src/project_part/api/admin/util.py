@@ -41,6 +41,28 @@ def to_quota_response(pag: PagamentoQuota) -> QuotaResponse:
         nome_militante=pag.militante.nome_completo if pag.militante else None,
     )
 
+
+
+def to_quota_response(pag: PagamentoQuota) -> QuotaResponse:
+    return QuotaResponse(
+        id=pag.id,
+        militante_numero= pag.militante.militante_numero if pag.militante and pag.militante.militante_numero else None,
+        user_id=pag.user_id,
+        quantia=pag.quantia,
+        moeda=pag.moeda,
+        periodo=pag.periodo,
+        metodo_pagamento=pag.metodo_pagamento,
+        referencia=pag.referencia,
+        id_transacao=pag.id_transacao,
+        status=pag.status,
+        observacao=pag.observacao,
+        data_pagamento=pag.data_pagamento,
+        aprovado_por=pag.aprovado_por,
+        aprovado_em=pag.aprovado_em,
+        atualizado_em=pag.atualizado_em,
+        nome_militante=pag.militante.nome_completo if pag.militante else None,
+    )
+    
 def to_solicitacao_response(s: SolicitacaoFundo) -> SolicitacaoFundoResponse:
     return SolicitacaoFundoResponse(
         id=s.id,

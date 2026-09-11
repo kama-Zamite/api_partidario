@@ -2412,6 +2412,15 @@ async def listar_quotas(
     )
     pagamentos = result.scalars().all()
 
+    if not pagamentos:
+        logger.info('Nenhum pagamento de quota encontrado para os filtros aplicados.')
+        return QuotaList(
+            total=0,
+            limit=limit,
+            offset=offset,
+            results=[]
+            )
+
     results = [to_quota_response(p) for p in pagamentos]
 
     return QuotaList(

@@ -312,6 +312,7 @@ class QuotaResponse(BaseModel):
     user_id: uuid.UUID
     quantia: Decimal
     moeda: str
+    militante_numero: str | None
     periodo: str
     metodo_pagamento: MetodoPagamentoEnum
     referencia: str | None
