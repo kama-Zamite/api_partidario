@@ -257,6 +257,10 @@ class DistribuicaoGenero(BaseModel):
     percentual_feminino: float
 
 
+class RegistrosFinanceirosResponse(BaseModel):
+    total_registros: int  # soma dos três
+
+
 class MilitantesTerritorioItem(BaseModel):
     id: int
     nome: str

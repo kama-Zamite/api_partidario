@@ -112,6 +112,7 @@ from .schemas import (
     MovimentacoesList,
     MovimentacaoItem,
     TipoMovimentacaoUI,
+    RegistrosFinanceirosResponse,
     )
 from .util import (
     to_doacao_response,
@@ -550,6 +551,71 @@ async def ultimos_militantes_resgistrados(
     return {
         'total': total or 0
     }
+
+
+
+@admin.get(
+    '/registros-financeiros',
+    status_code=HTTPStatus.OK,
+    response_model=RegistrosFinanceirosResponse,
+)
+# @limiter.limit('30/minute')
+async def registros_financeiros(
+    request: Request,
+    session: Session,
+    current_user: Get_current_user,
+    scope: ScopeValid,
+):
+    """
+    Total de registos financeiros aprovados (quantidade, não quantia).
+    Ex.: 2 doações + 1 quota + 1 despesa → total_registros = 4
+    """
+    if scope.municipio_id is not None:
+        raise HTTPException(
+            status_code=HTTPStatus.FORBIDDEN,
+            detail='Acesso negado.',
+        )
+
+    # Doações APPROVED
+    q_doacoes = select(func.count(Doacao.id)).where(
+        Doacao.status == DonationStatusEnum.APPROVED
+    )
+    if scope.provincia_id is not None:
+        q_doacoes = (
+            q_doacoes.join(User, User.id == Doacao.user_id).where(
+                User.provincia_id == scope.provincia_id
+            )
+        )
+
+    # Quotas APPROVED
+    q_quotas = select(func.count(PagamentoQuota.id)).where(
+        PagamentoQuota.status == QuotaStatusEnum.APPROVED
+    )
+    if scope.provincia_id is not None:
+        q_quotas = (
+            q_quotas.join(User, User.id == PagamentoQuota.user_id).where(
+                User.provincia_id == scope.provincia_id
+            )
+        )
+
+    # Despesas = solicitações de fundo APPROVED
+    q_despesas = select(func.count(SolicitacaoFundo.id)).where(
+        SolicitacaoFundo.status == DespesaStatusEnum.APPROVED
+    )
+    if scope.provincia_id is not None:
+        q_despesas = q_despesas.where(
+            SolicitacaoFundo.provincia_id == scope.provincia_id
+        )
+
+    total_doacoes = int(await session.scalar(q_doacoes) or 0)
+    total_quotas = int(await session.scalar(q_quotas) or 0)
+    total_despesas = int(await session.scalar(q_despesas) or 0)
+
+    get_registros_total = total_doacoes + total_quotas + total_despesas
+    return RegistrosFinanceirosResponse(
+        total_registros=get_registros_total
+    )
+
 
 
 @admin.get("/militantes-provincia", status_code=HTTPStatus.OK)
