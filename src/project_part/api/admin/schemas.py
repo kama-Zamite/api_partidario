@@ -413,6 +413,8 @@ class MovimentacaoItem(BaseModel):
     tipo: TipoMovimentacaoUI
     descricao: str
     provincia: str | None
+    responsavel: str
+    status: str
     data: datetime
     valor: Decimal  # positivo = receita; o front pode mostrar despesa a vermelho
 

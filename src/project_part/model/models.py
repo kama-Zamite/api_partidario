@@ -311,6 +311,9 @@ class User(Base):
     doacoes: Mapped[List['Doacao']] = relationship(
         'Doacao', foreign_keys='Doacao.user_id', back_populates='doador'
     )
+    solicitador_fundo: Mapped[List['SolicitacaoFundo']] = relationship(
+        'SolicitacaoFundo', foreign_keys='SolicitacaoFundo.solicitado_por', back_populates='user'
+    )
     pagamentos_quota: Mapped[List['PagamentoQuota']] = relationship(
         'PagamentoQuota', foreign_keys='PagamentoQuota.user_id', back_populates='militante'
     )
@@ -948,6 +951,9 @@ class SolicitacaoFundo(Base):
         nullable=False,
     )
 
+    user: Mapped[User | None] = relationship(
+                'User', foreign_keys=[solicitado_por], back_populates='solicitador_fundo', lazy="joined"
+    )
     provincia: Mapped['Provincia'] = relationship()
     municipio: Mapped['Municipio | None'] = relationship()
 

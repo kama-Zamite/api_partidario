@@ -2798,7 +2798,9 @@ async def ultimas_movimentacoes(
         items.append(
             MovimentacaoItem(
                 tipo=TipoMovimentacaoUI.RECEITA,
-                descricao=doacao.observacao or f'Doação — {nome}',
+                descricao=doacao.observacao or f'Doação',
+                responsavel= f'{nome}',
+                status = doacao.status,
                 provincia=prov.nome_provincia if prov else None,
                 data=doacao.aprovado_em or doacao.data_doacao,
                 valor=doacao.quantia,
@@ -2816,10 +2818,13 @@ async def ultimas_movimentacoes(
         q_quotas = q_quotas.where(User.provincia_id == provincia_filter)
 
     for pag, user, prov in (await session.execute(q_quotas)).all():
+        nome = (user.nome_completo if user else None) or 'Doação'
         items.append(
             MovimentacaoItem(
                 tipo=TipoMovimentacaoUI.RECEITA,
-                descricao=f'Quota #{pag.periodo}',
+                descricao=f'Quota',
+                responsavel= f'{nome}',
+                status=pag.status,
                 provincia=prov.nome_provincia if prov else None,
                 data=pag.aprovado_em or pag.data_pagamento,
                 valor=pag.quantia,
@@ -2829,7 +2834,10 @@ async def ultimas_movimentacoes(
     # ── DESPESAS: solicitações APPROVED ──────────────────────────
     q_fundos = (
         select(SolicitacaoFundo)
-        .options(selectinload(SolicitacaoFundo.provincia))
+        .options(
+            selectinload(SolicitacaoFundo.provincia),
+            selectinload(SolicitacaoFundo.user)
+                 )
         .where(SolicitacaoFundo.status == DespesaStatusEnum.APPROVED)
     )
     if provincia_filter is not None:
@@ -2839,11 +2847,14 @@ async def ultimas_movimentacoes(
         # Ex.: "SF-2026-0006 — motivo teste ui"
         ref = f'SF-{s.data_solicitacao.year}-{str(s.id)[:4].upper()}'
         desc = f'{ref} — {s.descricao}'
+        nome =  (s.user.nome_completo if s.user else None) or 'Doação'
         items.append(
             MovimentacaoItem(
                 tipo=TipoMovimentacaoUI.DESPESA,
                 descricao=desc,
                 provincia=s.provincia.nome_provincia if s.provincia else None,
+                status = s.status,
+                responsavel= f'{nome}',
                 data=s.aprovado_em or s.data_solicitacao,
                 valor=s.quantia,  # front mostra como negativo
             )
