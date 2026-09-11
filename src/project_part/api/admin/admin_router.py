@@ -4073,7 +4073,7 @@ async def aprovar_solicitacao_fundo(
     current_user: Get_current_user,
     scope: ScopeValid,
 ):
-    _apenas_superadmin(scope)
+    # _apenas_superadmin(scope)
     logger.info('Superadmin %s tentando aprovar solicitação %s', current_user.id, solicitacao_id)
     verificar_permissao_global_pais(scope, current_user)
 
@@ -4138,13 +4138,19 @@ async def aprovar_solicitacao_fundo(
             'finalidade': solicitacao.finalidade.value,
         },
     )
-
+    user_banco = await session.scalar(select(User).where(User.id == solicitacao.solicitado_por))
+    if not user_banco:
+        logger.error('Nenhum usuário com id: [%s] ativo foi encontrado para notificação!', solicitacao.solicitado_por)
+        raise HTTPException(
+                status_code=HTTPStatus.NOT_FOUND,
+                detail=f'Nenhum usuário com id: [{solicitacao.solicitado_por}] ativo foi encontrado!'
+            )
     notificacao = Notification(
         admin_id=solicitacao.solicitado_por,
         user_id=current_user.id,
         titulo='Solicitação de Fundo Aprovada',
         mensagem=(
-            f'Prezado(a) {solicitacao.solicitado_por}, '
+            f'Prezado(a) {user_banco.nome_completo}, '
             'informamos que a sua solicitação de fundo foi analisada '
             'e aprovada com sucesso.'
         ),
@@ -4190,7 +4196,7 @@ async def rejeitar_solicitacao_fundo(
     current_user: Get_current_user,
     scope: ScopeValid,
 ):
-    _apenas_superadmin(scope)
+    verificar_permissao_global_pais(scope, current_user)
 
     solicitacao = await session.scalar(
         select(SolicitacaoFundo)
@@ -4229,16 +4235,23 @@ async def rejeitar_solicitacao_fundo(
         },
     )
 
+    user_banco = await session.scalar(select(User).where(User.id == solicitacao.solicitado_por))
+    if not user_banco:
+        logger.error('Nenhum usuário com id: [%s] ativo foi encontrado para notificação!', solicitacao.solicitado_por)
+        raise HTTPException(
+            status_code=HTTPStatus.NOT_FOUND,
+            detail=f'Nenhum usuário com id: [{solicitacao.solicitado_por}] ativo foi encontrado!'
+        )
     notificacao = Notification(
         admin_id=solicitacao.solicitado_por,
         user_id=current_user.id,
         titulo='Solicitação de Fundo Rejeitada',
         mensagem=(
-            f'Prezado(a) {solicitacao.solicitado_por}, '
+            f'Prezado(a) {user_banco.nome_completo}, '
             'informamos que a sua solicitação de fundo foi analisada '
             'e rejeitada.'
         ),
-        motivo = body.motivo,
+        motivo = body.observacao,
         destinatario='ADMIN',
         categoria=RoleCategoriaNotificacao.FUNDO,
     )

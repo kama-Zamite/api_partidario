@@ -562,6 +562,7 @@ async def get_token_recuperar_senha_from_cookie(
 @auth.post('/recuperar-senha', status_code=HTTPStatus.OK)
 @limiter.limit('5/minute')
 async def solicitar_recuperacao(
+    request: Request,
     payload: PedidoRecuperacao,
     session: Session,
     background_tasks: BackgroundTasks,
@@ -611,6 +612,7 @@ async def solicitar_recuperacao(
 @auth.post('/redefinir-senha', status_code=HTTPStatus.OK)
 @limiter.limit('5/minute')
 async def redefinir_senha(
+    request: Request,
     payload: RedefinirSenhaSchema,
     session: Session):
     """Endpoint para redefinir a senha do usuário. Recebe o token de recuperação e a nova senha, verifica a validade do token e atualiza a senha no banco de dados.
@@ -1020,7 +1022,10 @@ async def logout(
 @auth.post('/permissoes/create', status_code=HTTPStatus.CREATED)
 @limiter.limit('5/minute')
 async def criar_permissao(
-    schema: CreatePermissao, session: Session, redis: Redis, 
+    request: Request,
+    schema: CreatePermissao,
+    session: Session,
+    redis: Redis, 
     # current_user: Get_current_user, scope: ScopeValid
 ):
     # if not current_user.scope:
@@ -1069,7 +1074,12 @@ async def criar_permissao(
 )
 @limiter.limit('5/minute')
 async def listar_permissoes(
-    response: Response, session: Session, redis: Redis, current_user: Get_current_user, scope: ScopeValid
+    request: Request,
+    response: Response,
+    session: Session,
+    redis: Redis,
+    current_user: Get_current_user,
+    scope: ScopeValid
 ):
 
     if scope.provincia_id is not None:
@@ -1118,7 +1128,9 @@ async def listar_permissoes(
 
 
 @auth.post('/role/create', status_code=HTTPStatus.CREATED)
+@limiter.limit('5/minute')
 async def criar_role(
+    request: Request,
     schemas: CreateRole, session: Session, redis: Redis, 
     # current_user: Get_current_user, scope: ScopeValid
 ):
@@ -1173,6 +1185,7 @@ async def criar_role(
 @auth.get('/role/list', status_code=HTTPStatus.OK, response_model=List[ResponseRole])
 @limiter.limit('5/minute')
 async def listar_role(
+    request: Request,
     response: Response, session: Session, redis: Redis, current_user: Get_current_user, scope: ScopeValid
 ):
 
@@ -1221,6 +1234,7 @@ async def listar_role(
 @auth.put('/permissoes/upgrade/{id_permissao}', status_code=HTTPStatus.OK)
 @limiter.limit('5/minute')
 async def atualizar_permissao(
+    request: Request,
     id_permissao: int,
     schemas: UpgradePermissao,
     session: Session,
@@ -1276,6 +1290,7 @@ async def atualizar_permissao(
 @auth.delete('/permissoes/delete/{id_permissao}', status_code=HTTPStatus.OK)
 @limiter.limit('5/minute')
 async def eliminar_permissao(
+    request: Request,
     id_permissao: int, session: Session, redis: Redis, current_user: Get_current_user, scope: ScopeValid
 ):
     if scope.provincia_id is not None:
@@ -1324,6 +1339,7 @@ async def eliminar_permissao(
 @auth.put('/role/upgrade/{id_role}', status_code=HTTPStatus.OK)
 @limiter.limit('5/minute')
 async def atualizar_role(
+    request: Request,
     schemas: UpgradeRole,
     id_role: int,
     session: Session,
@@ -1377,6 +1393,7 @@ async def atualizar_role(
 @auth.delete('/role/delete/{id_role}', status_code=HTTPStatus.OK)
 @limiter.limit('5/minute')
 async def eliminar_role(
+    request: Request,
     id_role: int, session: Session, redis: Redis, current_user: Get_current_user, scope: ScopeValid
 ):
     if scope.provincia_id is not None:
