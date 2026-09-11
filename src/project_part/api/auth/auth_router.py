@@ -26,7 +26,7 @@ from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
-
+from project_part.core.rate_limit import limiter
 from project_part.core.secury import (
     Get_current_user,
     check_refresh_token,
@@ -104,7 +104,7 @@ router_auth = APIRouter(prefix="/auth", tags=["Autenticação"])
 
 
 @auth.post('/login', status_code=HTTPStatus.OK, summary='Autenticação de Usuário')
-
+@limiter.limit('10/minute')
 async def login(
     request: Request, 
     response: Response,
@@ -283,6 +283,7 @@ async def login(
 
 
 @auth.post('/login/2fa-verify', status_code=HTTPStatus.OK, summary='Verificação de 2FA')
+@limiter.limit('7/minute')
 async def verify_2fa(
     response: Response,
     request: Request,
@@ -559,6 +560,7 @@ async def get_token_recuperar_senha_from_cookie(
 
 
 @auth.post('/recuperar-senha', status_code=HTTPStatus.OK)
+@limiter.limit('5/minute')
 async def solicitar_recuperacao(
     payload: PedidoRecuperacao,
     session: Session,
@@ -607,6 +609,7 @@ async def solicitar_recuperacao(
 
 
 @auth.post('/redefinir-senha', status_code=HTTPStatus.OK)
+@limiter.limit('5/minute')
 async def redefinir_senha(
     payload: RedefinirSenhaSchema,
     session: Session):
@@ -899,6 +902,7 @@ async def refresh_token(
     "/logout",
     status_code=status.HTTP_204_NO_CONTENT,
 )
+@limiter.limit('10/minute')
 async def logout(
     request: Request,
     response: Response,
@@ -1014,6 +1018,7 @@ async def logout(
 
 
 @auth.post('/permissoes/create', status_code=HTTPStatus.CREATED)
+@limiter.limit('5/minute')
 async def criar_permissao(
     schema: CreatePermissao, session: Session, redis: Redis, 
     # current_user: Get_current_user, scope: ScopeValid
@@ -1062,6 +1067,7 @@ async def criar_permissao(
     status_code=HTTPStatus.OK,
     response_model=List[ResponsePermissao],
 )
+@limiter.limit('5/minute')
 async def listar_permissoes(
     response: Response, session: Session, redis: Redis, current_user: Get_current_user, scope: ScopeValid
 ):
@@ -1165,6 +1171,7 @@ async def criar_role(
 
 
 @auth.get('/role/list', status_code=HTTPStatus.OK, response_model=List[ResponseRole])
+@limiter.limit('5/minute')
 async def listar_role(
     response: Response, session: Session, redis: Redis, current_user: Get_current_user, scope: ScopeValid
 ):
@@ -1212,6 +1219,7 @@ async def listar_role(
 
 
 @auth.put('/permissoes/upgrade/{id_permissao}', status_code=HTTPStatus.OK)
+@limiter.limit('5/minute')
 async def atualizar_permissao(
     id_permissao: int,
     schemas: UpgradePermissao,
@@ -1266,6 +1274,7 @@ async def atualizar_permissao(
 
 
 @auth.delete('/permissoes/delete/{id_permissao}', status_code=HTTPStatus.OK)
+@limiter.limit('5/minute')
 async def eliminar_permissao(
     id_permissao: int, session: Session, redis: Redis, current_user: Get_current_user, scope: ScopeValid
 ):
@@ -1313,6 +1322,7 @@ async def eliminar_permissao(
 
 
 @auth.put('/role/upgrade/{id_role}', status_code=HTTPStatus.OK)
+@limiter.limit('5/minute')
 async def atualizar_role(
     schemas: UpgradeRole,
     id_role: int,
@@ -1365,6 +1375,7 @@ async def atualizar_role(
 
 
 @auth.delete('/role/delete/{id_role}', status_code=HTTPStatus.OK)
+@limiter.limit('5/minute')
 async def eliminar_role(
     id_role: int, session: Session, redis: Redis, current_user: Get_current_user, scope: ScopeValid
 ):
