@@ -29,6 +29,7 @@ from fastapi import (
     Cookie,
 
 )
+from decimal import Decimal
 import secrets
 import uuid
 from datetime import datetime, timezone, date
@@ -39,7 +40,7 @@ from datetime import datetime, timezone, date
 # from slowapi.errors import RateLimitExceeded
 from pydantic import TypeAdapter, model_validator, ValidationError
 from redis.asyncio import Redis as AsyncRedis
-from sqlalchemy import func, or_, select, case
+from sqlalchemy import func, or_, select, case, extract
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload, joinedload
@@ -89,7 +90,8 @@ from project_part.model.models import (
     Doacao,
     MetodoPagamentoEnum,
     DonationStatusEnum,
-
+    QuotaStatusEnum,
+    PagamentoQuota,
 )
 
 from .schemas import (
@@ -106,6 +108,10 @@ from .schemas import (
     DeleteUser,
     DoacaoList,
     DoacaoResponse,
+    ContribuicoesIndividuoResponse,
+    ContribuicaoItem,
+    TipoContribuicao,
+
 )
 
 logger = logging.getLogger(__name__)
@@ -2332,56 +2338,174 @@ async def marcar_como_lida(
     return notificacao
 
 
-@user.get('/{user_id}', status_code=HTTPStatus.OK, response_model=ListarUserBase)
-async def obter_usuario_por_id(
-    user_id: uuid.UUID,
+# @user.get('/{user_id}', status_code=HTTPStatus.OK, response_model=ListarUserBase)
+# async def obter_usuario_por_id(
+#     user_id: uuid.UUID,
+#     session: Session,
+#     current_user: Get_current_user,
+#     scope: ScopeValid
+# ):
+#     """
+#     Retorna os detalhes completos de um usuário específico por ID.
+#     Administradores regionais só podem visualizar usuários de seu próprio escopo geográfico.
+#     """
+#     logger.info("Admin %s solicitou detalhes do usuário %s.", current_user.id, user_id)
+
+#     query = (
+#         select(User)
+#         .where(User.id == user_id, User.ativo.is_(True))
+#         .options(selectinload(User.scope),
+#                  selectinload(User.provincia),
+#                  selectinload(User.municipio),
+#                  selectinload(User.role)
+#         )
+#     )
+#     user_target = await session.scalar(query)
+
+#     if not user_target:
+#         logger.warning(f"Usuário {user_id} não foi encontrado ou está inativo.")
+#         raise HTTPException(
+#             status_code=HTTPStatus.NOT_FOUND,
+#             detail="Usuário não encontrado."
+#         )
+
+#     if scope.municipio_id is not None:
+#         if user_target.municipio_id != scope.municipio_id:
+#             logger.warning(f"Admin Municipal {current_user.id} tentou ler usuário {user_id} de outro município.")
+#             raise HTTPException(
+#                 status_code=HTTPStatus.FORBIDDEN,
+#                 detail="Operação negada. O usuário informado pertence a outra região geográfica."
+#             )
+            
+#     elif scope.provincia_id is not None:
+#         if user_target.provincia_id != scope.provincia_id:
+#             logger.warning(f"Admin Provincial {current_user.id} tentou ler usuário {user_id} de outra província.")
+#             raise HTTPException(
+#                 status_code=HTTPStatus.FORBIDDEN,
+#                 detail="Operação negada. O usuário informado pertence a outra região geográfica."
+#             )
+#     else:
+#         logger.info(f"Super Admin {current_user.id} visualizando usuário {user_id} com sucesso.")
+
+#     return user_target
+
+
+def _estado_ui(status: str) -> str:
+    mapa = {
+        'APPROVED': 'Pago',
+        'PENDING': 'Pendente',
+        'REJECTED': 'Rejeitado',
+        'CANCELLED': 'Cancelado',
+    }
+    return mapa.get(status, status)
+
+
+
+@user.get(
+    '/minhas-contribuicoes',
+    status_code=status.HTTP_200_OK,
+    response_model=ContribuicoesIndividuoResponse,
+)
+# @limiter.limit('20/minute')
+async def listar_minhas_contribuicoes(
+    request: Request,
     session: Session,
     current_user: Get_current_user,
-    scope: ScopeValid
+    ano: int | None = Query(None, description='Filtrar por ano (ex: 2026). Omitir = todos'),
+    limit: int = Query(10, ge=1, le=50),
+    offset: int = Query(0, ge=0),
 ):
     """
-    Retorna os detalhes completos de um usuário específico por ID.
-    Administradores regionais só podem visualizar usuários de seu próprio escopo geográfico.
+    Histórico de quotas + doações de um militante.
     """
-    logger.info("Admin %s solicitou detalhes do usuário %s.", current_user.id, user_id)
-
-    query = (
-        select(User)
-        .where(User.id == user_id, User.ativo.is_(True))
-        .options(selectinload(User.scope),
-                 selectinload(User.provincia),
-                 selectinload(User.municipio),
-                 selectinload(User.role)
-        )
+    logger.info(
+        'usuaio %s listando contribuições suas (ano=%s)',
+        current_user.id,
+        ano,
     )
-    user_target = await session.scalar(query)
 
-    if not user_target:
-        logger.warning(f"Usuário {user_id} não foi encontrado ou está inativo.")
-        raise HTTPException(
-            status_code=HTTPStatus.NOT_FOUND,
-            detail="Usuário não encontrado."
+    usuario = await session.scalar(select(User).where(User.id == current_user.id))
+    if not usuario:
+        raise HTTPException(status_code=HTTPStatus.NOT_FOUND, detail='Utilizador não encontrado.')
+
+    items: list[ContribuicaoItem] = []
+    total_pago = Decimal('0')
+
+    # ── Quotas ───────────────────────────────────────────────────
+    q_quota = select(PagamentoQuota).where(PagamentoQuota.user_id == current_user.id)
+    if ano is not None:
+        q_quota = q_quota.where(
+            extract('year', PagamentoQuota.data_pagamento) == ano
         )
 
-    if scope.municipio_id is not None:
-        if user_target.municipio_id != scope.municipio_id:
-            logger.warning(f"Admin Municipal {current_user.id} tentou ler usuário {user_id} de outro município.")
-            raise HTTPException(
-                status_code=HTTPStatus.FORBIDDEN,
-                detail="Operação negada. O usuário informado pertence a outra região geográfica."
+    quotas = (await session.execute(q_quota)).scalars().all()
+    for p in quotas:
+        data = p.aprovado_em or p.data_pagamento
+        if p.status == QuotaStatusEnum.APPROVED:
+            total_pago += p.quantia
+        items.append(
+            ContribuicaoItem(
+                id=p.id,
+                tipo=TipoContribuicao.QUOTA,
+                data=data,
+                referencia=p.referencia,
+                valor=p.quantia,
+                estado=_estado_ui(p.status.value if hasattr(p.status, 'value') else str(p.status)),
+                status=p.status.value if hasattr(p.status, 'value') else str(p.status),
+                periodo=p.periodo,
+                metodo_pagamento=(
+                    p.metodo_pagamento.value
+                    if hasattr(p.metodo_pagamento, 'value')
+                    else str(p.metodo_pagamento)
+                ),
             )
-            
-    elif scope.provincia_id is not None:
-        if user_target.provincia_id != scope.provincia_id:
-            logger.warning(f"Admin Provincial {current_user.id} tentou ler usuário {user_id} de outra província.")
-            raise HTTPException(
-                status_code=HTTPStatus.FORBIDDEN,
-                detail="Operação negada. O usuário informado pertence a outra região geográfica."
-            )
-    else:
-        logger.info(f"Super Admin {current_user.id} visualizando usuário {user_id} com sucesso.")
+        )
 
-    return user_target
+    # ── Doações ──────────────────────────────────────────────────
+    q_doacao = select(Doacao).where(Doacao.user_id == current_user.id)
+    if ano is not None:
+        q_doacao = q_doacao.where(extract('year', Doacao.data_doacao) == ano)
+
+    doacoes = (await session.execute(q_doacao)).scalars().all()
+    for d in doacoes:
+        data = d.aprovado_em or d.data_doacao
+        if d.status == DonationStatusEnum.APPROVED:
+            total_pago += d.quantia
+        items.append(
+            ContribuicaoItem(
+                id=d.id,
+                tipo=TipoContribuicao.DOACAO,
+                data=data,
+                referencia=d.referencia,
+                valor=d.quantia,
+                estado=_estado_ui(d.status.value if hasattr(d.status, 'value') else str(d.status)),
+                status=d.status.value if hasattr(d.status, 'value') else str(d.status),
+                periodo=None,
+                metodo_pagamento=(
+                    d.metodo_pagamento.value
+                    if hasattr(d.metodo_pagamento, 'value')
+                    else str(d.metodo_pagamento)
+                ),
+            )
+        )
+
+    # Ordenar por data desc e paginar
+    items.sort(key=lambda x: x.data, reverse=True)
+    total = len(items)
+    page = items[offset : offset + limit]
+
+    return ContribuicoesIndividuoResponse(
+        user_id=usuario.id,
+        nome=usuario.nome_completo,
+        total_pago=total_pago,
+        ano=ano,
+        total=total,
+        limit=limit,
+        offset=offset,
+        results=page,
+    )
+
+
 
 
 

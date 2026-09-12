@@ -1,5 +1,7 @@
 import re
 import uuid
+
+from enum import Enum
 from datetime import date, datetime
 from typing import Annotated, Any, List, Optional
 from decimal import Decimal
@@ -389,3 +391,42 @@ class DoacaoList(BaseModel):
     total: int
     results: list[DoacaoResponse]
 
+
+
+
+class ReativarUserResponse(BaseModel):
+    msg: str
+    user_id: uuid.UUID
+    email: str
+    ativo: bool
+
+
+
+class TipoContribuicao(str, Enum):
+    QUOTA = 'QUOTA'
+    DOACAO = 'DOACAO'
+
+
+class ContribuicaoItem(BaseModel):
+    id: uuid.UUID
+    tipo: TipoContribuicao
+    data: datetime
+    referencia: str | None
+    valor: Decimal
+    estado: str
+    status: str
+    periodo: str | None = None
+    metodo_pagamento: str | None = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class ContribuicoesIndividuoResponse(BaseModel):
+    user_id: uuid.UUID
+    nome: str
+    total_pago: Decimal
+    ano: int | None
+    total: int
+    limit: int
+    offset: int
+    results: list[ContribuicaoItem]

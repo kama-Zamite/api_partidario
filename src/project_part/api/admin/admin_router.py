@@ -114,6 +114,9 @@ from .schemas import (
     TipoMovimentacaoUI,
     RegistrosFinanceirosResponse,
     ReativarUserResponse,
+    ContribuicoesIndividuoResponse,
+    TipoContribuicao,
+    ContribuicaoItem,
     )
 from .util import (
     to_doacao_response,
@@ -3840,8 +3843,6 @@ async def rejeitar_doacao(
     }
 
 
-
-
 # @admin.post('/quotas/{quota_id}/aprovar', status_code=HTTPStatus.OK)
 # # @limiter.limit('20/minute')
 # async def aprovar_quota(
@@ -4388,6 +4389,136 @@ async def reativar_user(
 
 
 
+
+def _estado_ui(status: str) -> str:
+    mapa = {
+        'APPROVED': 'Pago',
+        'PENDING': 'Pendente',
+        'REJECTED': 'Rejeitado',
+        'CANCELLED': 'Cancelado',
+    }
+    return mapa.get(status, status)
+
+
+@admin.get(
+    '/contribuicoes/por-individuo/{user_id}',
+    status_code=status.HTTP_200_OK,
+    response_model=ContribuicoesIndividuoResponse,
+)
+# @limiter.limit('20/minute')
+async def listar_contribuicoes_por_individuo(
+    user_id: uuid.UUID,
+    request: Request,
+    session: Session,
+    current_user: Get_current_user,
+    scope: ScopeValid,
+    ano: int | None = Query(None, description='Filtrar por ano (ex: 2026). Omitir = todos'),
+    limit: int = Query(10, ge=1, le=50),
+    offset: int = Query(0, ge=0),
+):
+    """
+    Histórico de quotas + doações de um militante.
+    Admin provincial: só da sua província.
+    """
+    logger.info(
+        'Admin %s listando contribuições do user %s (ano=%s)',
+        current_user.id,
+        user_id,
+        ano,
+    )
+
+    usuario = await session.scalar(select(User).where(User.id == user_id))
+    if not usuario:
+        raise HTTPException(status_code=HTTPStatus.NOT_FOUND, detail='Utilizador não encontrado.')
+
+    if scope.municipio_id is not None:
+        if usuario.municipio_id != scope.municipio_id:
+            logger.warning('Admin %s tentou listar contribuições do user %s de outro município.', current_user.id, user_id)
+            raise HTTPException(status_code=HTTPStatus.FORBIDDEN, detail='Acesso negado.')
+    elif scope.provincia_id is not None:
+        logger.info('Admin %s com escopo provincial listando contribuições do user %s', current_user.id, user_id)
+        if usuario.provincia_id != scope.provincia_id:
+            logger.warning('Admin %s tentou listar contribuições do user %s de outra província.', current_user.id, user_id)
+            raise HTTPException(status_code=HTTPStatus.FORBIDDEN, detail='Acesso negado.')
+    else:
+        logger.info('Admin %s com escopo global listando contribuições do user %s', current_user.id, user_id)
+
+    items: list[ContribuicaoItem] = []
+    total_pago = Decimal('0')
+
+    # ── Quotas ───────────────────────────────────────────────────
+    q_quota = select(PagamentoQuota).where(PagamentoQuota.user_id == user_id)
+    if ano is not None:
+        q_quota = q_quota.where(
+            extract('year', PagamentoQuota.data_pagamento) == ano
+        )
+
+    quotas = (await session.execute(q_quota)).scalars().all()
+    for p in quotas:
+        data = p.aprovado_em or p.data_pagamento
+        if p.status == QuotaStatusEnum.APPROVED:
+            total_pago += p.quantia
+        items.append(
+            ContribuicaoItem(
+                id=p.id,
+                tipo=TipoContribuicao.QUOTA,
+                data=data,
+                referencia=p.referencia,
+                valor=p.quantia,
+                estado=_estado_ui(p.status.value if hasattr(p.status, 'value') else str(p.status)),
+                status=p.status.value if hasattr(p.status, 'value') else str(p.status),
+                periodo=p.periodo,
+                metodo_pagamento=(
+                    p.metodo_pagamento.value
+                    if hasattr(p.metodo_pagamento, 'value')
+                    else str(p.metodo_pagamento)
+                ),
+            )
+        )
+
+    # ── Doações ──────────────────────────────────────────────────
+    q_doacao = select(Doacao).where(Doacao.user_id == user_id)
+    if ano is not None:
+        q_doacao = q_doacao.where(extract('year', Doacao.data_doacao) == ano)
+
+    doacoes = (await session.execute(q_doacao)).scalars().all()
+    for d in doacoes:
+        data = d.aprovado_em or d.data_doacao
+        if d.status == DonationStatusEnum.APPROVED:
+            total_pago += d.quantia
+        items.append(
+            ContribuicaoItem(
+                id=d.id,
+                tipo=TipoContribuicao.DOACAO,
+                data=data,
+                referencia=d.referencia,
+                valor=d.quantia,
+                estado=_estado_ui(d.status.value if hasattr(d.status, 'value') else str(d.status)),
+                status=d.status.value if hasattr(d.status, 'value') else str(d.status),
+                periodo=None,
+                metodo_pagamento=(
+                    d.metodo_pagamento.value
+                    if hasattr(d.metodo_pagamento, 'value')
+                    else str(d.metodo_pagamento)
+                ),
+            )
+        )
+
+    # Ordenar por data desc e paginar
+    items.sort(key=lambda x: x.data, reverse=True)
+    total = len(items)
+    page = items[offset : offset + limit]
+
+    return ContribuicoesIndividuoResponse(
+        user_id=usuario.id,
+        nome=usuario.nome_completo,
+        total_pago=total_pago,
+        ano=ano,
+        total=total,
+        limit=limit,
+        offset=offset,
+        results=page,
+    )
 
 
 # @admin.post('/delete/simpatizante/{id_simpatizante}', status_code=HTTPStatus.OK)
