@@ -111,6 +111,7 @@ from .schemas import (
     ContribuicoesIndividuoResponse,
     ContribuicaoItem,
     TipoContribuicao,
+    UltimoPagamentoQuotaResponse,
 
 )
 
@@ -2504,6 +2505,45 @@ async def listar_minhas_contribuicoes(
         offset=offset,
         results=page,
     )
+
+
+
+
+@user.get('/ultimo-pagamento/quota', status_code=status.HTTP_200_OK, response_model=UltimoPagamentoQuotaResponse)
+async def obter_ultimo_pagamento_quota(
+    current_user: Get_current_user,
+    session: Session
+):
+    """
+    Retorna as informações da quota do usuário logado baseado na expiração.
+    """
+    logger.info('Usuário %s solicitando último pagamento de quota', current_user.id)
+
+    # Se o utilizador nunca pagou cotas (campo nulo no banco)
+    if not current_user.data_expiracao_quota:
+        return UltimoPagamentoQuotaResponse(
+            ultimo_pagamento=None,
+            proximo_pagamento=None,
+            dias_restantes=0
+        )
+
+    # data_expiracao_quota representa até quando a quota dele é válida (próximo pagamento)
+    proximo_pagamento = current_user.data_expiracao_quota
+    
+    # O último pagamento assume-se que foi feito 30 dias antes da data de expiração
+    ultimo_pagamento = proximo_pagamento - timedelta(days=30)
+    
+    hoje = datetime.now(timezone.utc).date()
+    # Calcula a diferença exata em dias (pode ser negativa se estiver em atraso)
+    dias_restantes = (proximo_pagamento - hoje).days
+
+    return UltimoPagamentoQuotaResponse(
+        ultimo_pagamento=ultimo_pagamento,
+        proximo_pagamento=proximo_pagamento,
+        dias_restantes=max(0, dias_restantes), # Retorna 0 se os dias forem negativos (ou remova o max() se quiser mostrar dias em atraso)
+    )
+
+
 
 
 

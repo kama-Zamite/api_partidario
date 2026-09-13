@@ -430,3 +430,13 @@ class ContribuicoesIndividuoResponse(BaseModel):
     limit: int
     offset: int
     results: list[ContribuicaoItem]
+
+
+
+class UltimoPagamentoQuotaResponse(BaseModel):
+    ultimo_pagamento: Optional[date] = None
+    proximo_pagamento: Optional[date] = None
+    dias_restantes: int = 0
+
+
+

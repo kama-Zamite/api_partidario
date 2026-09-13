@@ -961,3 +961,5 @@ class SolicitacaoFundo(Base):
         CheckConstraint('quantia > 0', name='ck_solicitacao_quantia_positiva'),
         Index('ix_solicitacao_prov_status', 'provincia_id', 'status'),
     )
+
+

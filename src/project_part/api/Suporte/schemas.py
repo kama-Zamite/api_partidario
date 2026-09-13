@@ -23,14 +23,13 @@ class MensagemSuporteCreate(BaseModel):
         max_length=3000,
         examples=["Descreva o seu problema ou pedido com o máximo de detalhe possível..."],
     )
+    
     # Opcional: se o utilizador estiver autenticado
     # email: Optional[EmailStr] = None
     # nome: Optional[str] = None
 
 
 class MensagemSuporteResponse(BaseModel):
-    id: uuid.UUID
     mensagem: str = "Mensagem enviada com sucesso. A nossa equipa responderá em breve."
-    user_id: Optional[uuid.UUID] = None
     model_config = ConfigDict(from_attributes=True)
 
