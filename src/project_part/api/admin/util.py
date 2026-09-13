@@ -1,11 +1,16 @@
 from .schemas import DoacaoResponse, QuotaResponse, SolicitacaoFundoResponse
 from project_part.model.models import Doacao, PagamentoQuota, SolicitacaoFundo
 
+
 def to_doacao_response(doacao: Doacao) -> DoacaoResponse:
+    # Acesso seguro: garante que doador E provincia existem antes de buscar o nome
+    provincia_nome = None
+    if doacao.doador and doacao.doador.provincia:
+        provincia_nome = doacao.doador.provincia.nome_provincia
+
     return DoacaoResponse(
         id=doacao.id,
-        # provincia = pag.militante.provincia_id if pag.militante and pag.militante.provincia_id else None,
-        provincia= doacao.doador.provincia.nome_provincia if doacao.doador and doacao.doador.provincia.nome_provincia else None,
+        provincia=provincia_nome,  # Passa uma string ou None com segurança
         user_id=doacao.user_id,
         quantia=doacao.quantia,
         moeda=doacao.moeda,

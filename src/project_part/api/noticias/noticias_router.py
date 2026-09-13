@@ -122,7 +122,6 @@ async def criar_categoria(
     try:
         session.add(nova_categoria)
         await session.commit()
-        await caches.delete(CACHE_KEY_CATEGORIAS)
         return {'msg': 'Categoria criada com sucesso!'}
     except IntegrityError as e:
         await session.rollback()
@@ -284,7 +283,7 @@ async def criar_noticia(
             if extensao not in {'jpg', 'jpeg'}:
                 raise HTTPException(
                     status_code=HTTPStatus.BAD_REQUEST,
-                    detail='Formato de imagem inválido. Use apenas PNG, JPG, JPEG ou WEBP.',
+                    detail='Formato de imagem inválido. Use apenas JPG, JPEG.',
                 )
 
             conteudo_byte = await image_news.read()

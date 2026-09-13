@@ -293,7 +293,7 @@ class DoacaoResponse(BaseModel):
     atualizado_em: datetime
     nome_doador: str | None = None
 
-    provincia: str
+    provincia: str | None = None
 
 
     model_config = ConfigDict(from_attributes=True, ser_json_circular_logic='ignore')
@@ -301,11 +301,18 @@ class DoacaoResponse(BaseModel):
     @field_validator('provincia', mode='before')
     @classmethod
     def extrair_nome_provincia(cls, v: Any) -> Optional[str]:
-        if v and hasattr(v, 'nome_provincia'):
-            return getattr(v, 'nome_provincia')
+        # Se for None (doação anónima ou sem província no utilizador), permite passar
+        if v is None:
+            return None
 
+        # Se já for a string direta extraída pelo mapeador
         if isinstance(v, str):
             return v
+
+        # Caso ainda receba o objeto de relacionamento por outros caminhos
+        if hasattr(v, 'nome_provincia'):
+            return getattr(v, 'nome_provincia')
+
         raise ValueError('Província inválida ou ausente')
 
 

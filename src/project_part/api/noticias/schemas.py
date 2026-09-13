@@ -37,7 +37,7 @@ class NoticiaResponse(BaseModel):
 
     provincia: Optional[str] = None
     municipio: Optional[str] = None
-    categoria_id: int
+    categoria: str
     model_config = ConfigDict(from_attributes=True)
 
     @field_validator('provincia', mode='before')
@@ -45,6 +45,15 @@ class NoticiaResponse(BaseModel):
     def extrair_nome_provincia(cls, v: Any) -> Optional[str]:
         if v and hasattr(v, 'nome_provincia'):
             return getattr(v, 'nome_provincia')
+        if isinstance(v, str):
+            return v
+        return None
+
+    @field_validator('categoria', mode='before')
+    @classmethod
+    def extrair_nome_categoria(cls, v: Any) -> Optional[str]:
+        if v and hasattr(v, 'name'):
+            return getattr(v, 'name')
         if isinstance(v, str):
             return v
         return None

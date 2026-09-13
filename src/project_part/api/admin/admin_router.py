@@ -3748,18 +3748,31 @@ async def aprovar_doacao(
     )
 
     
-    notificacao_user = Notification(
-        user_id = doacao.doador.id,
-        titulo="Doação Aprovada",
-        mensagem=f"Ola {doacao.doador.nome_completo if doacao.doador else 'militante'}! Sua doação com referência {doacao.referencia} no valor de {doacao.quantia} AOA foi aprovada.",
-        # destinatario="ADMIN",
-        categoria=RoleCategoriaNotificacao.DOACAO
-    )
+    # notificacao_user = Notification(
+    #     user_id = doacao.doador.id,
+    #     titulo="Doação Aprovada",
+    #     mensagem=f"Ola {doacao.doador.nome_completo if doacao.doador else 'militante'}! Sua doação com referência {doacao.referencia} no valor de {doacao.quantia} AOA foi aprovada.",
+    #     # destinatario="ADMIN",
+    #     categoria=RoleCategoriaNotificacao.DOACAO
+    # )
 
-    session.add(notificacao_user)
+    # session.add(notificacao_user)
+
+    # Cria e adiciona a notificação APENAS se o doador existir
+    if doacao.doador:
+        notificacao_user = Notification(
+            user_id=doacao.doador.id,
+            titulo="Doação Aprovada",
+            mensagem=f"Olá {doacao.doador.nome_completo}! Sua doação com referência {doacao.referencia} no valor de {doacao.quantia} AOA foi aprovada.",
+            categoria=RoleCategoriaNotificacao.DOACAO
+        )
+        session.add(notificacao_user)
+
 
     try:
         await session.commit()
+        if doacao.doador:  # Apenas faz refresh se for necessário rastrear o estado
+                await session.refresh(doacao)
         await session.refresh(doacao)
     except Exception as e:
         await session.rollback()
@@ -3818,20 +3831,25 @@ async def rejeitar_doacao(
         detalhe={'motivo': body.observacao},
     )
 
-    
-    notificacao_user = Notification(
-        user_id = doacao.doador.id,
-        titulo="Doação Rejeitada",
-        mensagem=f"Ola {doacao.doador.nome_completo if doacao.doador else 'militante'}! Sua doação com referência {doacao.referencia} no valor de {doacao.quantia} AOA foi rejeitada.",
-        # destinatario="ADMIN",
-        motivo=f"Motivo: {body.observacao}",
-        categoria=RoleCategoriaNotificacao.DOACAO
-    )
 
-    session.add(notificacao_user)
+    if doacao.doador:   
+        notificacao_user = Notification(
+            user_id = doacao.doador.id,
+            titulo="Doação Rejeitada",
+            mensagem=f"Ola {doacao.doador.nome_completo if doacao.doador else 'militante'}! Sua doação com referência {doacao.referencia} no valor de {doacao.quantia} AOA foi rejeitada.",
+            # destinatario="ADMIN",
+            motivo=f"Motivo: {body.observacao}",
+            categoria=RoleCategoriaNotificacao.DOACAO
+        )
+
+        session.add(notificacao_user)
+
+
 
     try:
         await session.commit()
+        if doacao.doador:  # Apenas faz refresh se for necessário rastrear o estado
+                await session.refresh(doacao)
         await session.refresh(doacao)
     except Exception as e:
         await session.rollback()
