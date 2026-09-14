@@ -27,6 +27,56 @@ CMD ["src.project_part.main:app", "--host", "0.0.0.0", "--port", "10000", "--pro
 
 
 
+
+
+
+
+
+
+
+
+
+
+# producao
+
+
+
+# FROM python:3.13
+
+# ENV POETRY_VIRTUALENVS_CREATE=false
+
+# WORKDIR /app
+
+# ENV PYTHONPATH=/app
+
+# COPY pyproject.toml ./
+
+# RUN apt-get update && apt-get install -y --no-install-recommends \
+#     build-essential \
+#     gcc \
+#     && rm -rf /var/lib/apt/lists/*
+
+# RUN pip install poetry
+
+# RUN poetry install --no-interaction --no-ansi --without dev --no-root --no-cache
+
+# COPY . .
+
+# EXPOSE 10000
+
+# ENTRYPOINT ["gunicorn"]
+
+# CMD ["src.project_part.main:app", "--workers", "3", "--worker-class", "uvicorn.workers.UvicornWorker", "--bind", "0.0.0.0:10000", "--forwarded-allow-ips=*"]
+
+
+
+
+
+
+
+
+
+
 # events {
 #     worker_connections 1024;
 # }

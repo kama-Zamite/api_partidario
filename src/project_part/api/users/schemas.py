@@ -306,39 +306,39 @@ class ListarUser(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+
+
 class CardBase(BaseModel):
-    id: uuid.UUID
-    numero_cartao: str
-    nome_militante: str
-    data_emissao: datetime
-    image_url: str | None
-    url_qrcode: str
-    activo: bool
+    id: uuid.UUID | None = None
+    numero_cartao: str | None = None
+    nome_militante: str | None = None
+    data_emissao: datetime | None = None 
+    image_url: str | None = None
+    url_qrcode: str | None = None
+    activo: bool | None = None
+    status: str  # Obrigatório para o front-end Next.js saber o que fazer com o botão
+    municipio: str | None = None
+    provincia: str | None = None
 
     model_config = ConfigDict(from_attributes=True)
-
-    estado_civil: EstadoCivil = Field(default=EstadoCivil.SOLTEIRO)
-    municipio: str
-    provincia: str
 
     @field_validator('provincia', mode='before')
     @classmethod
     def extrair_nome_provincia(cls, v: Any) -> Optional[str]:
         if v and hasattr(v, 'nome_provincia'):
             return getattr(v, 'nome_provincia')
-
-        if isinstance(v, str):
+        if isinstance(v, str) or v is None:
             return v
-        raise ValueError('Província inválida ou ausente')
+        raise ValueError('Província inválida')
 
     @field_validator('municipio', mode='before')
     @classmethod
     def extrair_nome_municipio(cls, v: Any) -> Optional[str]:
         if v and hasattr(v, 'nome_municipio'):
             return getattr(v, 'nome_municipio')
-        if isinstance(v, str):
+        if isinstance(v, str) or v is None:
             return v
-        raise ValueError('Município inválido ou ausente')
+        raise ValueError('Município inválido')
 
 
 class UsuarioNotificacaoSchema(BaseModel):

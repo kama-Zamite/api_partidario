@@ -40,7 +40,7 @@ from datetime import datetime, timezone, date
 # from slowapi.errors import RateLimitExceeded
 from pydantic import TypeAdapter, model_validator, ValidationError
 from redis.asyncio import Redis as AsyncRedis
-from sqlalchemy import func, or_, select, case, extract
+from sqlalchemy import func, or_, select, case, extract, desc, asc
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload, joinedload
@@ -1836,29 +1836,63 @@ async def solicitar_cartao(
 #     return cartao
 
 
+
+
+
 @user.get('/card', status_code=status.HTTP_200_OK, response_model=CardBase)
 async def obter_cartao(session: Session, current_user: Get_current_user):
     """
-    Retorna os detalhes do cartão do militante logado, se houver um cartão ativo.
+    Retorna os detalhes do cartão ativo do militante ou o status atual da sua última solicitação.
     """
-    # logger.info('Buscar por solicitação de cartão de militante do usuario %s', current_user.email)
-    # solicitacao_existente = await session.scalar(
-    #     select(SolicitacaoCartao).where(
-    #         SolicitacaoCartao.user_id == current_user.id, 
-    #         SolicitacaoCartao.status == StatusSolicitacao.APROVADO
-    #     )
-    # )
-    # if not solicitacao_existente:
-    #     raise HTTPException(status_code=HTTPStatus.BAD_REQUEST, detail="Você ainda não possui um cartão.")
-
+    logger.info('A buscar cartão/solicitação para o utilizador: %s', current_user.email)
     
+    # 1. Validação de permissão em primeiro lugar
     if current_user.cadastrar_militante != 'MILITANTE':
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="É necessário ser militante para visualizar o cartão."
         )
 
-    # 1. Correção do MissingGreenlet adicionando selectinload
+    # 2. Busca a ÚLTIMA solicitação para saber o estado real (Pendente, Rejeitado, etc.)
+    ultima_solicitacao = await session.scalar(
+        select(SolicitacaoCartao)
+        .where(SolicitacaoCartao.user_id == current_user.id)
+        .order_by(asc(SolicitacaoCartao.id)) # Assumindo ID sequencial ou use coluna de data se houver
+        .limit(1)
+    )
+
+    # Se nunca solicitou ou se foi REJEITADO, não tem cartão ativo.
+    # Retorna os campos nulos de forma segura com o status correto para o Next.js liberar o botão.
+    if not ultima_solicitacao or ultima_solicitacao.status == StatusSolicitacao.REJEITADO:
+        return {
+            "id": None,
+            "numero_cartao": None,
+            "nome_militante": None,
+            "data_emissao": None,
+            "image_url": None,
+            "url_qrcode": None,
+            "activo": False,
+            "provincia": None,
+            "municipio": None,
+            "status": ultima_solicitacao.status if ultima_solicitacao else "NENHUM"
+        }
+
+    # 3. Se a solicitação está PENDENTE, ele também não tem cartão emitido ainda
+    if ultima_solicitacao.status == StatusSolicitacao.PENDENTE:
+        return {
+            "id": None,
+            "numero_cartao": None,
+            "nome_militante": None,
+            "data_emissao": None,
+            "image_url": None,
+            "url_qrcode": None,
+            "activo": False,
+            "provincia": None,
+            "municipio": None,
+            "status": "PENDENTE"
+        }
+
+    # 4. Se chegou aqui, a solicitação está APROVADA. Vamos buscar o cartão ativo.
     cartao = await session.scalar(
         select(CartaoMilitante)
         .where(
@@ -1871,20 +1905,26 @@ async def obter_cartao(session: Session, current_user: Get_current_user):
         )
     )
     
+    # Caso de inconsistência: aprovado mas cartão não gerado por erro de sistema
     if not cartao:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Nenhum cartão ativo encontrado."
+            detail="Solicitação aprovada, mas nenhum cartão ativo foi gerado."
         )
 
-    # 2. Correção da validação: Injetar dinamicamente os dados esperados pelo CardBase
-    # que pertencem ao utilizador, mas que o Pydantic precisa ler no root do objeto
-    cartao.numero_cartao = current_user.militante_numero
-    cartao.nome_militante = current_user.nome_completo
-    
-    return cartao
-
-
+    # 5. Retorna o payload completo e válido mapeado para o CardBase
+    return {
+        "id": cartao.id,
+        "numero_cartao": current_user.militante_numero,
+        "nome_militante": current_user.nome_completo,
+        "data_emissao": cartao.data_emissao,
+        "image_url": cartao.image_url,
+        "url_qrcode": cartao.url_qrcode,
+        "activo": cartao.activo,
+        "provincia": cartao.provincia,
+        "municipio": cartao.municipio,
+        "status": "APROVADO"
+    }
 
 
 
