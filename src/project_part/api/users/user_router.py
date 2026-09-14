@@ -1505,9 +1505,14 @@ async def Listar(
 
     # 4. Aplicação dos Filtros de Escopo Geográfico (Aplica a AMBAS as queries)
     if scope.municipio_id:
-        logger.info(f'Filtrando usuários do município: {scope.municipio_id}')
-        query = query.where(User.municipio_id == scope.municipio_id)
-        count_query = count_query.where(User.municipio_id == scope.municipio_id)
+        logger.error(f'Acesso negado: Usuário {current_user.id} tentou listar usuários de um município específico ({scope.municipio_id}) sem permissão.')
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail='Acesso negado: não é permitido listar usuários de um município específico.'
+        )
+        # logger.info(f'Filtrando usuários do município: {scope.municipio_id}')
+        # query = query.where(User.municipio_id == scope.municipio_id)
+        # count_query = count_query.where(User.municipio_id == scope.municipio_id)
     elif scope.provincia_id:
         logger.info(f'Filtrando usuários da província: {scope.provincia_id}')
         query = query.where(User.provincia_id == scope.provincia_id)

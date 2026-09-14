@@ -190,7 +190,7 @@ class AdminScopeResponse(BaseModel):
 
 class ListarUserBaseAdmin(BaseModel):
     nome_completo: str = Field(max_length=50)
-    # id: uuid.UUID
+    id: uuid.UUID
     image_url: str | None = None
     email: EmailStr = Field(max_length=255)
     data_nascimento: date
