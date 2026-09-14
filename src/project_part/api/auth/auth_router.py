@@ -104,7 +104,7 @@ router_auth = APIRouter(prefix="/auth", tags=["Autenticação"])
 
 
 @auth.post('/login', status_code=HTTPStatus.OK, summary='Autenticação de Usuário')
-@limiter.limit('10/minute')
+@limiter.limit('3/minute')
 async def login(
     request: Request, 
     response: Response,

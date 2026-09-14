@@ -1559,7 +1559,7 @@ async def Listar(
 
 
 @user.post('/solicitar/militancia', status_code=HTTPStatus.CREATED)
-@limiter.limit("100/minute")
+@limiter.limit("3/minute")
 async def solicitar_militancia(request: Request, session: Session, current_user: Get_current_user):
     if current_user.cadastrar_militante != 'SIMPATIZANTE':
         raise HTTPException(status_code=HTTPStatus.BAD_REQUEST, detail=f'Usuario {current_user.email} precisar ser simpatizante')
@@ -1721,7 +1721,7 @@ async def solicitar_militancia(request: Request, session: Session, current_user:
 #     return {"detail": "Solicitação enviada com sucesso. Aguarde a aprovação do administrador."}
 
 @user.post('/card/solicitar', status_code=HTTPStatus.CREATED)
-@limiter.limit("1/day")
+@limiter.limit("2/minute,3/day")
 async def solicitar_cartao(
     request: Request, 
     session: Session,
