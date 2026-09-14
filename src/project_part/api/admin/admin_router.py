@@ -3621,87 +3621,181 @@ async def militante_card(
         )
 
 
+# @admin.post('/card/militante/{id_militante}/rejeitar', status_code=HTTPStatus.OK)
+# async def rejeitar_militante_card(
+#     session: Session,
+#     current_user: Get_current_user,
+#     scope: ScopeValid,
+#     id_militante: uuid.UUID,
+#     # backgroundTasks: BackgroundTasks,
+#     observacao: str = Form(
+#         ..., min_length=5, description='Descrever detalhadamente a irregularidade ou motivo da rejeição'
+#     ),
+# ):
+#     logger.info('A processar rejeição da solicitação para o utilizador: %s...', id_militante)
+
+#     query = select(User).where(User.id == id_militante)
+#     usuario_banco = await session.scalar(query)
+
+#     if not usuario_banco:
+#         raise HTTPException(
+#             status_code=HTTPStatus.NOT_FOUND, detail=f'Nenhum usuário com id: [{id_militante}] ativo foi encontrado!'
+#         )
+
+#     # Procura a solicitação pendente
+#     solicitacao = await session.scalar(
+#         select(SolicitacaoCartao).where(
+#             SolicitacaoCartao.user_id == id_militante, SolicitacaoCartao.status == StatusSolicitacao.PENDENTE
+#         )
+#     )
+#     if not solicitacao:
+#         raise HTTPException(
+#             status_code=HTTPStatus.BAD_REQUEST, detail='Nenhuma solicitação pendente encontrada para este usuário.'
+#         )
+
+#     # Validação de Escopo Regional (Garante que administradores regionais só rejeitam da sua área)
+#     if scope.provincia_id is not None:
+#         if usuario_banco.provincia_id != scope.provincia_id:
+#             raise HTTPException(
+#                 status_code=HTTPStatus.FORBIDDEN, detail='Operação negada. Região geográfica diferente.'
+#             )
+#     # elif scope.municipio_id is not None:
+#     #     if usuario_banco.municipio_id != scope.municipio_id:
+#     #         raise HTTPException(
+#     #             status_code=HTTPStatus.FORBIDDEN, detail='Operação negada. Região geográfica diferente.'
+#     #         )
+
+#     # 1. Atualiza o estado da solicitação existente para REJEITADO e grava o motivo
+#     solicitacao.status = StatusSolicitacao.REJEITADO
+#     solicitacao.observacao = observacao
+
+#     # 2. Cria a notificação de rejeição para a tabela interna
+#     nova_notificacao = Notification(
+#         user_id=usuario_banco.id,
+#         titulo='Solicitação de Cartão Rejeitada',
+#         mensagem=f'Olá {usuario_banco.nome_completo}, a sua solicitação de cartão foi recusada.',
+#         motivo = f'{observacao}',
+#         destinatario='MILITANTE',
+#     )
+
+#     session.add(solicitacao)
+#     session.add(nova_notificacao)
+
+#     try:
+#         await session.commit()
+
+#         # 3. Dispara o e-mail dinâmico. O Jinja2 vai ler "Rejeitado" e pintar a tabela de Vermelho automaticamente!
+#         # backgroundTasks.add_task(
+#         #     enviar_resposta_solicitacao_cartao_militante,
+#         #     email_destino=usuario_banco.email,
+#         #     nome_militante=usuario_banco.nome_completo,
+#         #     numero_militante=usuario_banco.militante_numero or "Não Atribuído",
+#         #     status_pedido="Rejeitado", # Passa o estado dinâmico correto para o template
+#         #     observacoes=observacao
+#         # )
+
+#         logger.info('Solicitação do utilizador %s rejeitada e e-mail agendado.', usuario_banco.id)
+#         return {'msg': 'Solicitação rejeitada com sucesso e utilizador notificado.'}
+
+#     except IntegrityError as e:
+#         await session.rollback()
+#         logger.error('Erro ao rejeitar solicitação do usuário %s: %s', id_militante, str(e))
+#         raise HTTPException(
+#             status_code=HTTPStatus.INTERNAL_SERVER_ERROR, detail='Erro interno ao processar a rejeição.'
+#         )
+
+
+
 @admin.post('/card/militante/{id_militante}/rejeitar', status_code=HTTPStatus.OK)
 async def rejeitar_militante_card(
     session: Session,
     current_user: Get_current_user,
     scope: ScopeValid,
     id_militante: uuid.UUID,
-    # backgroundTasks: BackgroundTasks,
     observacao: str = Form(
         ..., min_length=5, description='Descrever detalhadamente a irregularidade ou motivo da rejeição'
     ),
+    # background_tasks: BackgroundTasks,  # Descomente quando reativar e-mails
 ):
     logger.info('A processar rejeição da solicitação para o utilizador: %s...', id_militante)
 
+    # 1. Busca o usuário dono da solicitação
     query = select(User).where(User.id == id_militante)
     usuario_banco = await session.scalar(query)
 
     if not usuario_banco:
         raise HTTPException(
-            status_code=HTTPStatus.NOT_FOUND, detail=f'Nenhum usuário com id: [{id_militante}] ativo foi encontrado!'
+            status_code=HTTPStatus.NOT_FOUND, 
+            detail=f'Nenhum usuário com id: [{id_militante}] foi encontrado!'
         )
 
-    # Procura a solicitação pendente
+    # 2. Procura estritamente pela solicitação que está PENDENTE
     solicitacao = await session.scalar(
         select(SolicitacaoCartao).where(
-            SolicitacaoCartao.user_id == id_militante, SolicitacaoCartao.status == StatusSolicitacao.PENDENTE
-        )
+            SolicitacaoCartao.user_id == id_militante, 
+            SolicitacaoCartao.status == StatusSolicitacao.PENDENTE
+        ).limit(1)
     )
     if not solicitacao:
         raise HTTPException(
-            status_code=HTTPStatus.BAD_REQUEST, detail='Nenhuma solicitação pendente encontrada para este usuário.'
+            status_code=HTTPStatus.BAD_REQUEST, 
+            detail='Nenhuma solicitação pendente encontrada para este usuário.'
         )
 
-    # Validação de Escopo Regional (Garante que administradores regionais só rejeitam da sua área)
-    if scope.provincia_id is not None:
-        if usuario_banco.provincia_id != scope.provincia_id:
-            raise HTTPException(
-                status_code=HTTPStatus.FORBIDDEN, detail='Operação negada. Região geográfica diferente.'
-            )
-    # elif scope.municipio_id is not None:
-    #     if usuario_banco.municipio_id != scope.municipio_id:
-    #         raise HTTPException(
-    #             status_code=HTTPStatus.FORBIDDEN, detail='Operação negada. Região geográfica diferente.'
-    #         )
+    # 3. Validação Hierárquica de Escopo Regional (Corrigido de 'elif' para 'if' independentes)
+    if scope.provincia_id is not None and usuario_banco.provincia_id != scope.provincia_id:
+        raise HTTPException(
+            status_code=HTTPStatus.FORBIDDEN, 
+            detail='Operação negada. O usuário pertence a uma província diferente do seu escopo.'
+        )
+        
+    if scope.municipio_id is not None and usuario_banco.municipio_id != scope.municipio_id:
+        raise HTTPException(
+            status_code=HTTPStatus.FORBIDDEN, 
+            detail='Operação negada. O usuário pertence a um município diferente do seu escopo.'
+        )
 
-    # 1. Atualiza o estado da solicitação existente para REJEITADO e grava o motivo
+    # 4. Atualiza o estado da solicitação existente e insere a justificativa
     solicitacao.status = StatusSolicitacao.REJEITADO
     solicitacao.observacao = observacao
 
-    # 2. Cria a notificação de rejeição para a tabela interna
+    # 5. Cria o registro de notificação interna para o painel do Militante
     nova_notificacao = Notification(
         user_id=usuario_banco.id,
         titulo='Solicitação de Cartão Rejeitada',
-        mensagem=f'Olá {usuario_banco.nome_completo}, a sua solicitação de cartão foi recusada. Motivo: {observacao}',
+        mensagem=f'Olá {usuario_banco.nome_completo}, a sua solicitação de cartão foi recusada.',
+        motivo=f'{observacao}',
         destinatario='MILITANTE',
     )
 
     session.add(solicitacao)
     session.add(nova_notificacao)
 
+    # 6. Persistência atómica com rollback seguro
     try:
         await session.commit()
 
-        # 3. Dispara o e-mail dinâmico. O Jinja2 vai ler "Rejeitado" e pintar a tabela de Vermelho automaticamente!
-        # backgroundTasks.add_task(
+        # 7. Disparo de tarefas em segundo plano (Email)
+        # background_tasks.add_task(
         #     enviar_resposta_solicitacao_cartao_militante,
         #     email_destino=usuario_banco.email,
         #     nome_militante=usuario_banco.nome_completo,
         #     numero_militante=usuario_banco.militante_numero or "Não Atribuído",
-        #     status_pedido="Rejeitado", # Passa o estado dinâmico correto para o template
+        #     status_pedido="Rejeitado",
         #     observacoes=observacao
         # )
 
-        logger.info('Solicitação do utilizador %s rejeitada e e-mail agendado.', usuario_banco.id)
+        logger.info('Solicitação do utilizador %s rejeitada com sucesso.', usuario_banco.id)
         return {'msg': 'Solicitação rejeitada com sucesso e utilizador notificado.'}
 
     except IntegrityError as e:
         await session.rollback()
-        logger.error('Erro ao rejeitar solicitação do usuário %s: %s', id_militante, str(e))
+        logger.error('Erro de integridade ao rejeitar solicitação do usuário %s: %s', id_militante, str(e))
         raise HTTPException(
-            status_code=HTTPStatus.INTERNAL_SERVER_ERROR, detail='Erro interno ao processar a rejeição.'
+            status_code=HTTPStatus.INTERNAL_SERVER_ERROR, 
+            detail='Erro interno de banco de dados ao processar a rejeição.'
         )
+
 
 
 @admin.post('/doacoes/{doacao_id}/aprovar', status_code=HTTPStatus.OK)

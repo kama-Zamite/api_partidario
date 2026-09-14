@@ -1747,7 +1747,7 @@ async def solicitar_cartao(
     if cartao:
         raise HTTPException(status_code=HTTPStatus.BAD_REQUEST, detail="Você já possui um cartão ativo.")
 
-    # 2. Correção do Bug do NoneType e da Query de status
+
     solicitacao_impedimento = await session.scalar(
         select(SolicitacaoCartao).where(
             SolicitacaoCartao.user_id == current_user.id,

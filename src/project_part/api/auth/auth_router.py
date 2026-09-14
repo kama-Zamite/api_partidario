@@ -103,7 +103,8 @@ router_auth = APIRouter(prefix="/auth", tags=["Autenticação"])
 #     return {"message": "Autenticado com sucesso e protegido contra bots!"}
 
 
-@auth.post('/login', status_code=HTTPStatus.OK, summary='Autenticação de Usuário')
+
+@auth.post('/login', status_code=status.HTTP_200_OK, summary='Autenticação de Usuário')
 @limiter.limit('3/minute')
 async def login(
     request: Request, 
@@ -111,7 +112,7 @@ async def login(
     session: Session,
     token: Access_token,
     # backgroundTasks: BackgroundTasks,
-    _captcha: Claudflare_turnfile
+    # _captcha: Claudflare_turnfile
     ):
     """Endpoint para autenticação de usuário."""
 
