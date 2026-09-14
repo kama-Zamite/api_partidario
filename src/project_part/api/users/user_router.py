@@ -1227,6 +1227,7 @@ def _extrair_public_id_da_url(url: str) -> str | None:
         return None
 
 
+
 @user.patch("/upload-foto", status_code=status.HTTP_200_OK)
 @limiter.limit("3/minute; 100/day")
 async def atualizar_foto_perfil(
@@ -1236,42 +1237,41 @@ async def atualizar_foto_perfil(
     background_tasks: BackgroundTasks,
     arquivo: UploadFile = File(..., description="Selecione uma imagem JPG ou JPEG (max 5MB)"),
 ):
-
     """ 
     Atualiza a foto de perfil do usuário.
     - Valida o arquivo enviado (extensão, tamanho, conteúdo real).
     - Sanitiza a imagem removendo EXIF e reconstrói o JPEG.
     """
-
     logger.info("Usuário %s iniciou o upload de nova foto de perfil.", current_user.id)
-    query_checar_card = (
-        select(CartaoMilitante)
-        .where(CartaoMilitante.id_user == current_user.id, CartaoMilitante.ativo == True)
-    )
 
-    cartao_ativo = await session.scalar(query_checar_card)
-    if cartao_ativo:
-        logger.warning("Usuário %s tentou alterar a foto de perfil com cartão de militante ativo.", current_user.id)
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Não é permitido alterar a foto de perfil enquanto houver um cartão de militante ativo."
-        )
     if not arquivo.filename:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Nenhum arquivo enviado.")
 
+    # 1. Correção da Query (Valida Impedimentos: Solicitação Pendente OU Cartão já Ativo)
+    # Nota: Ajuste 'user_id' / 'id_user' conforme o mapeamento real do seu modelo
+    solicitacao_impedimento = await session.scalar(
+        select(SolicitacaoCartao).where(
+            SolicitacaoCartao.user_id == current_user.id,
+            SolicitacaoCartao.status.in_([StatusSolicitacao.PENDENTE, StatusSolicitacao.APROVADO])
+        ).limit(1)
+    )
 
+    if solicitacao_impedimento:
+        logger.warning("Usuário %s tentou alterar a foto de perfil com processo de cartão em andamento ou ativo.", current_user.id)
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Não é permitido alterar a foto de perfil enquanto houver um cartão ativo ou solicitação em análise."
+        )
+
+    # 2. Correção Lógica de Validação de Extensão (Mudança de 'and' para 'or')
     sufixo = Path(arquivo.filename).suffix.lower()
-
-    if (
-        sufixo not in ALLOWED_EXTENSIONS
-        and arquivo.content_type not in ALLOWED_CONTENT_TYPES
-    ):
+    if sufixo not in ALLOWED_EXTENSIONS or arquivo.content_type not in ALLOWED_CONTENT_TYPES:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Apenas imagens JPG ou JPEG são permitidas."
         )
 
-    # 2. Leitura com limite estrito de tamanho (64KB chunks para poupar RAM)
+    # 3. Leitura com limite estrito de tamanho
     async def _ler_arquivo_com_limite() -> bytes:
         buffer = bytearray()
         while True:
@@ -1299,22 +1299,20 @@ async def atualizar_foto_perfil(
     if len(conteudo_bruto) == 0:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Arquivo vazio.")
 
-    # 3. Validação de Magic Bytes
+    # 4. Validação de Magic Bytes
     kind = filetype.guess(conteudo_bruto)
     if kind is None or kind.mime not in ALLOWED_CONTENT_TYPES:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="O conteúdo real não é um JPEG válido.")
 
-    # 4. Processamento de imagem em Thread Pool
+    # 5. Processamento de imagem em Thread Pool
     try:
         conteudo_sanitizado = await asyncio.to_thread(_higienizar_e_reprocessar_jpeg, conteudo_bruto)
     except (UnidentifiedImageError, OSError, SyntaxError):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Imagem corrompida ou inválida.")
     except Image.DecompressionBombError:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Resolução abusiva detectada.")
-    except HTTPException:
-        raise
 
-    # 5. Geração Contratual dos IDs Isolados
+    # 6. Geração dos IDs
     identificador_unico = f"{PREFIXO_ARQUIVO}_{current_user.id}_{int(time.time())}"
     novo_public_id = f"{PASTA_ALVO}/{identificador_unico}"
     
@@ -1329,13 +1327,12 @@ async def atualizar_foto_perfil(
         logger.error("Falha ao enviar para o Cloudinary (user_id=%s): %s", current_user.id, e)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Falha no serviço de nuvem.")
 
-    # Captura o identificador antigo para limpeza posterior
-    # Estratégia de Fallback: Se não houver a coluna image_public_id no banco, extrai da URL antiga
+    # Captura o identificador antigo para limpeza
     foto_antiga_public_id = getattr(current_user, "image_public_id", None)
     if not foto_antiga_public_id and current_user.image_url:
         foto_antiga_public_id = _extrair_public_id_da_url(current_user.image_url)
 
-    # 6. Persistência Atómica no Banco de Dados
+    # 7. Persistência Atómica no Banco de Dados
     try:
         current_user.image_url = url_secure_cloudinary
         if hasattr(current_user, "image_public_id"):
@@ -1347,12 +1344,11 @@ async def atualizar_foto_perfil(
         await session.rollback()
         logger.critical("Erro no DB (user_id=%s). Iniciando Saga de compensação na nuvem.", current_user.id)
         
-        # SAGA REVERSÃO: Remove o arquivo isolado criado, pois a persistência falhou
+        # SAGA REVERSÃO: Remove a nova imagem se falhar o Commit
         background_tasks.add_task(deletar_imagem_cloudinary_por_public_id, novo_public_id)
-        
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Erro ao persistir dados.")
 
-    # 7. Limpeza Pós-Sucesso (Remove de vez a imagem antiga da nuvem)
+    # 8. Limpeza Pós-Sucesso
     if foto_antiga_public_id:
         background_tasks.add_task(deletar_imagem_cloudinary_por_public_id, foto_antiga_public_id)
 
@@ -1360,7 +1356,6 @@ async def atualizar_foto_perfil(
         "msg": "Foto de perfil substituída com sucesso!",
         "foto_url": url_secure_cloudinary
     }
-
 
 # @user.get(
 #     '/listar', status_code=HTTPStatus.OK, response_model=ListarUser
@@ -1725,15 +1720,24 @@ async def solicitar_militancia(request: Request, session: Session, current_user:
 #     backgroundTasks.add_task(enviar_email_solicitacao_cartao_militante, current_user, agora)
 #     return {"detail": "Solicitação enviada com sucesso. Aguarde a aprovação do administrador."}
 
-
 @user.post('/card/solicitar', status_code=HTTPStatus.CREATED)
 @limiter.limit("1/day")
-async def solicitar_cartao(request: Request, session: Session, current_user: Get_current_user):
+async def solicitar_cartao(
+    request: Request, 
+    session: Session,
+    current_user: Get_current_user
+):
 
+    # 1. Correção do Status Code (403 para falta de permissão)
     if current_user.cadastrar_militante != 'MILITANTE':
-        raise HTTPException(status_code=HTTPStatus.BAD_REQUEST, detail=f'Usuario {current_user.email} precisar ser militante')
+        raise HTTPException(
+            status_code=HTTPStatus.FORBIDDEN, 
+            detail=f'Usuário {current_user.email} precisa ser militante para solicitar um cartão.'
+        )
     
     agora = datetime.now(timezone.utc)
+    
+    # Verificar cartão ativo existente
     cartao = await session.scalar(
         select(CartaoMilitante).where(
             CartaoMilitante.user_id == current_user.id, 
@@ -1743,18 +1747,24 @@ async def solicitar_cartao(request: Request, session: Session, current_user: Get
     if cartao:
         raise HTTPException(status_code=HTTPStatus.BAD_REQUEST, detail="Você já possui um cartão ativo.")
 
-    solicitacao_existente = await session.scalar(
+    # 2. Correção do Bug do NoneType e da Query de status
+    solicitacao_impedimento = await session.scalar(
         select(SolicitacaoCartao).where(
-            SolicitacaoCartao.user_id == current_user.id, 
-            SolicitacaoCartao.status == StatusSolicitacao.PENDENTE
-        )
+            SolicitacaoCartao.user_id == current_user.id,
+            SolicitacaoCartao.status.in_([StatusSolicitacao.PENDENTE, StatusSolicitacao.APROVADO])
+        ).limit(1)
     )
-    if solicitacao_existente:
-        raise HTTPException(status_code=HTTPStatus.BAD_REQUEST, detail="Você já possui uma solicitação em análise.")
+    
+    if solicitacao_impedimento:
+        raise HTTPException(
+            status_code=HTTPStatus.BAD_REQUEST, 
+            detail="Você já possui uma solicitação em análise ou já aprovada."
+        )
 
     nova_solicitacao = SolicitacaoCartao(user_id=current_user.id, status=StatusSolicitacao.PENDENTE)
     session.add(nova_solicitacao)
 
+    # Buscar administrador regional
     query_admin_regional = (
         select(User)
         .join(AdminScope, AdminScope.user_id == User.id)
@@ -1781,33 +1791,22 @@ async def solicitar_cartao(request: Request, session: Session, current_user: Get
 
     notificacao_admin = Notification(
         admin_id=admin_alvo.id,
-        user_id = current_user.id,
+        user_id=current_user.id,
         titulo="Nova Solicitação de Cartão",
         mensagem=f"O militante {current_user.nome_completo} (Nº {current_user.militante_numero or 'Pendente'}) solicitou a emissão do cartão.",
         destinatario="ADMIN",
         categoria=RoleCategoriaNotificacao.SOLICITACAO_CARTAO
     )
-
     session.add(notificacao_admin)
 
     try:
         await session.commit()
     except Exception as e:
         await session.rollback()
-        logger.error("Erro ao salvar solicitação e notificação: %s", str(e))
+        logger.error("Erro ao salvar solicitação e notificação: %s", str(e), exc_info=True)
         raise HTTPException(status_code=HTTPStatus.INTERNAL_SERVER_ERROR, detail="Erro ao salvar dados no banco.")
 
-    # backgroundTasks.add_task(
-    #     enviar_email_solicitacao_cartao_militante, 
-    #     admin_alvo.email,
-    #     current_user.nome_completo,
-    #     current_user.militante_numero or "Pendente de Atribuição",
-    #     agora
-    # )
-
     return {"detail": "Solicitação enviada com sucesso. Aguarde a aprovação do administrador."}
-
-
 
 # @user.get('/card', status_code=HTTPStatus.OK, response_model=CardBase)
 # async def obter_cartao(session: Session, current_user: Get_current_user):
