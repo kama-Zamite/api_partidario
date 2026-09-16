@@ -1126,13 +1126,21 @@ async def registros_militantes_recentes(
         User.cadastrar_militante == CadastrarComo.MILITANTE,
         User.deletado_em.is_(None),
     ]
+    filtros_total = [
+        User.ativo.is_(True),
+        User.cadastrar_militante == CadastrarComo.MILITANTE,
+        User.deletado_em.is_(None)
+    ]
 
     if scope.provincia_id is not None:
         filtros.append(User.provincia_id == scope.provincia_id)
+        filtros_total.append(User.provincia_id == scope.provincia_id)
     if provincia_id_filtro is not None:
         filtros.append(User.provincia_id == provincia_id_filtro)
+        filtros_total.append(User.provincia_id == provincia_id_filtro)
     if municipio_id_filtro is not None:
         filtros.append(User.municipio_id == municipio_id_filtro)
+        filtros_total.append(User.municipio_id == municipio_id_filtro)
     if email:
         filtros.append(User.email == email.lower().strip())
     if nif:
@@ -1140,7 +1148,7 @@ async def registros_militantes_recentes(
     if numero_militante:
         filtros.append(User.militante_numero == numero_militante.strip().upper())
 
-    total = await session.scalar(select(func.count(User.id)).where(*filtros)) or 0
+    total = await session.scalar(select(func.count(User.id)).where(*filtros_total)) or 0
 
     query = (
         select(User)
@@ -1249,12 +1257,20 @@ async def militantes_deletados_recentes(
         User.deletado_em.isnot(None),
     ]
 
+    filtros_total = [
+            User.cadastrar_militante == CadastrarComo.MILITANTE,
+            User.deletado_em.isnot(None),
+        ]
+
     if scope.provincia_id is not None:
         filtros.append(User.provincia_id == scope.provincia_id)
+        filtros_total.append(User.provincia_id == scope.provincia_id)
     if provincia_id_filtro is not None:
         filtros.append(User.provincia_id == provincia_id_filtro)
+        filtros_total.append(User.provincia_id == provincia_id_filtro)
     if municipio_id_filtro is not None:
         filtros.append(User.municipio_id == municipio_id_filtro)
+        filtros_total.append(User.municipio_id == municipio_id_filtro)
     if email:
         filtros.append(User.email == email.lower().strip())
     if nif:
@@ -1262,7 +1278,7 @@ async def militantes_deletados_recentes(
     if numero_militante:
         filtros.append(User.militante_numero == numero_militante.strip().upper())
 
-    total = await session.scalar(select(func.count(User.id)).where(*filtros)) or 0
+    total = await session.scalar(select(func.count(User.id)).where(*filtros_total)) or 0
 
     query = (
         select(User)
@@ -1371,13 +1387,21 @@ async def registros_simpatizantes_recentes(
         User.cadastrar_militante == CadastrarComo.SIMPATIZANTE,
         User.deletado_em.is_(None),
     ]
+    filtros_total = [
+        User.ativo.is_(True),
+        User.cadastrar_militante == CadastrarComo.SIMPATIZANTE,
+        User.deletado_em.is_(None)
+    ]
 
     if scope.provincia_id is not None:
         filtros.append(User.provincia_id == scope.provincia_id)
+        filtros_total.append(User.provincia_id == scope.provincia_id)
     if provincia_id_filtro is not None:
         filtros.append(User.provincia_id == provincia_id_filtro)
+        filtros_total.append(User.provincia_id == provincia_id_filtro)
     if municipio_id_filtro is not None:
         filtros.append(User.municipio_id == municipio_id_filtro)
+        filtros_total.append(User.municipio_id == municipio_id_filtro)
     if email:
         filtros.append(User.email == email.lower().strip())
     if nif:
@@ -1385,7 +1409,7 @@ async def registros_simpatizantes_recentes(
     if numero_militante:
         filtros.append(User.militante_numero == numero_militante.strip().upper())
 
-    total = await session.scalar(select(func.count(User.id)).where(*filtros)) or 0
+    total = await session.scalar(select(func.count(User.id)).where(*filtros_total)) or 0
 
     query = (
         select(User)
@@ -1493,13 +1517,20 @@ async def simpatizante_deletados_recentes(
         User.cadastrar_militante == CadastrarComo.SIMPATIZANTE,
         User.deletado_em.isnot(None),
     ]
+    filtros_total = [
+        User.cadastrar_militante == CadastrarComo.SIMPATIZANTE,
+        User.deletado_em.isnot(None),
+    ]
 
     if scope.provincia_id is not None:
         filtros.append(User.provincia_id == scope.provincia_id)
+        filtros_total.append(User.provincia_id == scope.provincia_id)
     if provincia_id_filtro is not None:
         filtros.append(User.provincia_id == provincia_id_filtro)
+        filtros_total.append(User.provincia_id == provincia_id_filtro)
     if municipio_id_filtro is not None:
         filtros.append(User.municipio_id == municipio_id_filtro)
+        filtros_total.append(User.municipio_id == municipio_id_filtro)
     if email:
         filtros.append(User.email == email.lower().strip())
     if nif:
@@ -1507,7 +1538,7 @@ async def simpatizante_deletados_recentes(
     if numero_militante:
         filtros.append(User.militante_numero == numero_militante.strip().upper())
 
-    total = await session.scalar(select(func.count(User.id)).where(*filtros)) or 0
+    total = await session.scalar(select(func.count(User.id)).where(*filtros_total)) or 0
 
     query = (
         select(User)
