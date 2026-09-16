@@ -1,5 +1,5 @@
 import logging
-
+from zoneinfo import ZoneInfo
 from fastapi import FastAPI, Request, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
@@ -59,9 +59,10 @@ async def lifespan(app: FastAPI):
 
         await verificar_e_notificar_quotas_vencidas(async_session, redis_client)
 
+    fuso_horario = ZoneInfo('Africa/Luanda')
     scheduler.add_job(
         job_quotas,
-        CronTrigger(day=16, hour=12, minute=0),  # dia 15, 02:00 (fuso do scheduler!)
+        CronTrigger(day=16, hour=12, minute=30, timezone=fuso_horario),  # dia 15, 02:00 (fuso do scheduler!)
         id='job_verificar_quotas',
         replace_existing=True,
         max_instances=1,  # por processo; o Redis cobre multi-processo
