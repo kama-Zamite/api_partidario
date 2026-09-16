@@ -873,6 +873,168 @@ async def evolucao_simpatizante(
 
 
 
+# @admin.get(
+#     '/registros-recentes',
+#     status_code=HTTPStatus.OK,
+#     response_model=RegistrosRecentes,
+# )
+# # @limiter.limit('30/minute')
+# async def registros_militantes_recentes(
+#     session: Session,
+#     current_user: Get_current_user,
+#     scope: ScopeValid,
+#     nome_provincia: str | None = Query(None, description='Filtrar por nome da província (só Superadmin)'),
+#     nome_municipio: str | None = Query(None, description='Filtrar por nome do município'),
+#     email: str | None = Query(None, description='Filtrar por email exato'),
+#     nif: str | None = Query(None, description='Filtrar por NIF exato'),
+#     limit: int = Query(default=1, ge=1, le=50),
+#     offset: int = Query(default=0, ge=0),
+# ):
+#     """
+#     Lista militantes com filtros opcionais.
+
+#     - Superadmin: pode filtrar por província, município, email, nif
+#     - Admin Provincial: só município (da sua província), email, nif
+#     - Admin Municipal: acesso negado
+#     - Sem filtros: retorna todos (respeitando o escopo do admin)
+#     """
+#     logger.info(
+#         'Usuário %s listando militantes (provincia=%s, municipio=%s, email=%s, nif=%s)',
+#         current_user.id,
+#         nome_provincia,
+#         nome_municipio,
+#         email,
+#         nif,
+#     )
+
+#     # ---- Validações de Escopo ----
+#     if scope.municipio_id is not None:
+#         raise HTTPException(
+#             status_code=HTTPStatus.FORBIDDEN,
+#             detail='Acesso negado: Você não tem permissão para acessar estes registros.',
+#         )
+
+#     if scope.provincia_id is not None and nome_provincia is not None:
+#         raise HTTPException(
+#             status_code=HTTPStatus.FORBIDDEN,
+#             detail='Acesso negado: Admin provincial não pode filtrar por outra província.',
+#         )
+
+#     # ---- Província ----
+#     provincia_id_filtro = None
+#     if nome_provincia:
+#         nome_provincia = nome_provincia.strip().title()
+#         provincia_banco = await session.scalar(
+#             select(Provincia).where(Provincia.nome_provincia == nome_provincia)
+#         )
+#         if not provincia_banco:
+#             raise HTTPException(
+#                 status_code=HTTPStatus.NOT_FOUND,
+#                 detail='Província não encontrada',
+#             )
+#         provincia_id_filtro = provincia_banco.id
+
+#     # ---- Município ----
+#     municipio_id_filtro = None
+#     if nome_municipio:
+#         nome_municipio = nome_municipio.strip().title()
+
+#         # Superadmin filtrando por município deve informar a província
+#         # para evitar ambiguidade de nomes iguais em províncias diferentes
+#         if (
+#             scope.provincia_id is None
+#             and provincia_id_filtro is None
+#             and nome_municipio
+#         ):
+#             raise HTTPException(
+#                 status_code=HTTPStatus.BAD_REQUEST,
+#                 detail='Informe também a província ao filtrar por município.',
+#             )
+
+#         query_municipio = select(Municipio).where(
+#             Municipio.nome_municipio == nome_municipio
+#         )
+
+#         if provincia_id_filtro is not None:
+#             query_municipio = query_municipio.where(
+#                 Municipio.id_provincia == provincia_id_filtro
+#             )
+
+#         if scope.provincia_id is not None:
+#             query_municipio = query_municipio.where(
+#                 Municipio.id_provincia == scope.provincia_id
+#             )
+
+#         municipio_banco = await session.scalar(query_municipio)
+#         if not municipio_banco:
+#             raise HTTPException(
+#                 status_code=HTTPStatus.NOT_FOUND,
+#                 detail=(
+#                     f'Município "{nome_municipio}" não encontrado '
+#                     'ou não pertence à província informada.'
+#                 ),
+#             )
+#         municipio_id_filtro = municipio_banco.id
+
+#     # ---- Construção dos Filtros Base ----
+#     filtros = [
+#         User.ativo.is_(True),
+#         User.cadastrar_militante == CadastrarComo.MILITANTE,
+#         User.deletado_em.is_(None),
+#     ]
+
+#     if scope.provincia_id is not None:
+#         filtros.append(User.provincia_id == scope.provincia_id)
+
+#     if provincia_id_filtro is not None:
+#         filtros.append(User.provincia_id == provincia_id_filtro)
+
+#     if municipio_id_filtro is not None:
+#         filtros.append(User.municipio_id == municipio_id_filtro)
+
+#     if email:
+#         filtros.append(User.email == email.lower().strip())
+
+#     if nif:
+#         filtros.append(User.nif == nif.upper().strip())
+
+#     # Contagem total com base nos filtros aplicados
+#     total = await session.scalar(
+#         select(func.count(User.id)).where(*filtros)
+#     ) or 0
+
+#     # ---- Construção da Query de Dados ----
+#     query = (
+#         select(User)
+#         .where(*filtros)
+#         .options(
+#             selectinload(User.provincia),
+#             selectinload(User.municipio),
+#             selectinload(User.role),
+#         )
+#         .order_by(User.criado_em.desc())
+#     )
+
+#     # REGRA DE OURO:
+#     # Se NÃO estiver filtrando por campos únicos (email/NIF),
+#     # aplica paginação normalmente.
+#     # Se estiver filtrando por email ou NIF, ignora limit/offset
+#     # para trazer o registro de qualquer parte do banco.
+#     if not email and not nif:
+#         query = query.limit(limit).offset(offset)
+
+#     result = await session.execute(query)
+#     registros = result.scalars().all()
+
+#     return {
+#         'total': total,
+#         'results': registros,
+#     }
+
+
+
+
+
 @admin.get(
     '/registros-recentes',
     status_code=HTTPStatus.OK,
@@ -887,24 +1049,25 @@ async def registros_militantes_recentes(
     nome_municipio: str | None = Query(None, description='Filtrar por nome do município'),
     email: str | None = Query(None, description='Filtrar por email exato'),
     nif: str | None = Query(None, description='Filtrar por NIF exato'),
-    limit: int = Query(default=1, ge=1, le=50),
+    numero_militante: str | None = Query(None, description='Filtrar por número de militante exato'),
+    limit: int = Query(default=10, ge=1, le=50),
     offset: int = Query(default=0, ge=0),
 ):
     """
     Lista militantes com filtros opcionais.
 
-    - Superadmin: pode filtrar por província, município, email, nif
-    - Admin Provincial: só município (da sua província), email, nif
+    - Superadmin: pode filtrar por província, município, email, nif, numero_militante
+    - Admin Provincial: só município (da sua província), email, nif, numero_militante
     - Admin Municipal: acesso negado
-    - Sem filtros: retorna todos (respeitando o escopo do admin)
     """
     logger.info(
-        'Usuário %s listando militantes (provincia=%s, municipio=%s, email=%s, nif=%s)',
+        'Usuário %s listando militantes (provincia=%s, municipio=%s, email=%s, nif=%s, numero=%s)',
         current_user.id,
         nome_provincia,
         nome_municipio,
         email,
         nif,
+        numero_militante,
     )
 
     # ---- Validações de Escopo ----
@@ -928,10 +1091,7 @@ async def registros_militantes_recentes(
             select(Provincia).where(Provincia.nome_provincia == nome_provincia)
         )
         if not provincia_banco:
-            raise HTTPException(
-                status_code=HTTPStatus.NOT_FOUND,
-                detail='Província não encontrada',
-            )
+            raise HTTPException(status_code=HTTPStatus.NOT_FOUND, detail='Província não encontrada')
         provincia_id_filtro = provincia_banco.id
 
     # ---- Município ----
@@ -939,44 +1099,28 @@ async def registros_militantes_recentes(
     if nome_municipio:
         nome_municipio = nome_municipio.strip().title()
 
-        # Superadmin filtrando por município deve informar a província
-        # para evitar ambiguidade de nomes iguais em províncias diferentes
-        if (
-            scope.provincia_id is None
-            and provincia_id_filtro is None
-            and nome_municipio
-        ):
+        if scope.provincia_id is None and provincia_id_filtro is None:
             raise HTTPException(
                 status_code=HTTPStatus.BAD_REQUEST,
                 detail='Informe também a província ao filtrar por município.',
             )
 
-        query_municipio = select(Municipio).where(
-            Municipio.nome_municipio == nome_municipio
-        )
+        query_municipio = select(Municipio).where(Municipio.nome_municipio == nome_municipio)
 
         if provincia_id_filtro is not None:
-            query_municipio = query_municipio.where(
-                Municipio.id_provincia == provincia_id_filtro
-            )
-
+            query_municipio = query_municipio.where(Municipio.id_provincia == provincia_id_filtro)
         if scope.provincia_id is not None:
-            query_municipio = query_municipio.where(
-                Municipio.id_provincia == scope.provincia_id
-            )
+            query_municipio = query_municipio.where(Municipio.id_provincia == scope.provincia_id)
 
         municipio_banco = await session.scalar(query_municipio)
         if not municipio_banco:
             raise HTTPException(
                 status_code=HTTPStatus.NOT_FOUND,
-                detail=(
-                    f'Município "{nome_municipio}" não encontrado '
-                    'ou não pertence à província informada.'
-                ),
+                detail=f'Município "{nome_municipio}" não encontrado ou não pertence à província informada.',
             )
         municipio_id_filtro = municipio_banco.id
 
-    # ---- Construção dos Filtros Base ----
+    # ---- Filtros Base ----
     filtros = [
         User.ativo.is_(True),
         User.cadastrar_militante == CadastrarComo.MILITANTE,
@@ -985,25 +1129,19 @@ async def registros_militantes_recentes(
 
     if scope.provincia_id is not None:
         filtros.append(User.provincia_id == scope.provincia_id)
-
     if provincia_id_filtro is not None:
         filtros.append(User.provincia_id == provincia_id_filtro)
-
     if municipio_id_filtro is not None:
         filtros.append(User.municipio_id == municipio_id_filtro)
-
     if email:
         filtros.append(User.email == email.lower().strip())
-
     if nif:
         filtros.append(User.nif == nif.upper().strip())
+    if numero_militante:
+        filtros.append(User.militante_numero == numero_militante.strip().upper())
 
-    # Contagem total com base nos filtros aplicados
-    total = await session.scalar(
-        select(func.count(User.id)).where(*filtros)
-    ) or 0
+    total = await session.scalar(select(func.count(User.id)).where(*filtros)) or 0
 
-    # ---- Construção da Query de Dados ----
     query = (
         select(User)
         .where(*filtros)
@@ -1015,23 +1153,14 @@ async def registros_militantes_recentes(
         .order_by(User.criado_em.desc())
     )
 
-    # REGRA DE OURO:
-    # Se NÃO estiver filtrando por campos únicos (email/NIF),
-    # aplica paginação normalmente.
-    # Se estiver filtrando por email ou NIF, ignora limit/offset
-    # para trazer o registro de qualquer parte do banco.
-    if not email and not nif:
+    # REGRA DE OURO: se filtrar por campo único, ignora paginação
+    if not email and not nif and not numero_militante:
         query = query.limit(limit).offset(offset)
 
     result = await session.execute(query)
     registros = result.scalars().all()
 
-    return {
-        'total': total,
-        'results': registros,
-    }
-
-
+    return {'total': total, 'results': registros}
 
 
 @admin.get(
@@ -1041,7 +1170,6 @@ async def registros_militantes_recentes(
 )
 # @limiter.limit('30/minute')
 async def militantes_deletados_recentes(
-    request: Request,
     session: Session,
     current_user: Get_current_user,
     scope: ScopeValid,
@@ -1049,23 +1177,21 @@ async def militantes_deletados_recentes(
     nome_municipio: str | None = Query(None, description='Filtrar por nome do município'),
     email: str | None = Query(None, description='Filtrar por email exato'),
     nif: str | None = Query(None, description='Filtrar por NIF exato'),
+    numero_militante: str | None = Query(None, description='Filtrar por número de militante exato'),
     limit: int = Query(default=10, ge=1, le=50),
     offset: int = Query(default=0, ge=0),
 ):
     """
-    Lista militantes soft-deleted (deletado_em preenchido).
-
-    - Superadmin: todas as províncias (+ filtros)
-    - Admin Provincial: só a sua província
-    - Admin Municipal: acesso negado
+    Lista militantes soft-deleted.
     """
     logger.info(
-        'Usuário %s listando militantes deletados (provincia=%s, municipio=%s, email=%s, nif=%s)',
+        'Usuário %s listando militantes deletados (provincia=%s, municipio=%s, email=%s, nif=%s, numero=%s)',
         current_user.id,
         nome_provincia,
         nome_municipio,
         email,
         nif,
+        numero_militante,
     )
 
     if scope.municipio_id is not None:
@@ -1095,11 +1221,17 @@ async def militantes_deletados_recentes(
     municipio_id_filtro = None
     if nome_municipio:
         nome_municipio = nome_municipio.strip().title()
+
+        if scope.provincia_id is None and provincia_id_filtro is None:
+            raise HTTPException(
+                status_code=HTTPStatus.BAD_REQUEST,
+                detail='Informe também a província ao filtrar por município.',
+            )
+
         query_municipio = select(Municipio).where(Municipio.nome_municipio == nome_municipio)
 
         if provincia_id_filtro is not None:
             query_municipio = query_municipio.where(Municipio.id_provincia == provincia_id_filtro)
-
         if scope.provincia_id is not None:
             query_municipio = query_municipio.where(Municipio.id_provincia == scope.provincia_id)
 
@@ -1114,24 +1246,21 @@ async def militantes_deletados_recentes(
     # ---- Filtros: SÓ DELETADOS ----
     filtros = [
         User.cadastrar_militante == CadastrarComo.MILITANTE,
-        User.deletado_em.isnot(None),  # soft-deleted
-        # opcional: User.ativo.is_(False),  # se no delete também pões ativo=False
+        User.deletado_em.isnot(None),
     ]
 
     if scope.provincia_id is not None:
         filtros.append(User.provincia_id == scope.provincia_id)
-
     if provincia_id_filtro is not None:
         filtros.append(User.provincia_id == provincia_id_filtro)
-
     if municipio_id_filtro is not None:
         filtros.append(User.municipio_id == municipio_id_filtro)
-
     if email:
         filtros.append(User.email == email.lower().strip())
-
     if nif:
         filtros.append(User.nif == nif.upper().strip())
+    if numero_militante:
+        filtros.append(User.militante_numero == numero_militante.strip().upper())
 
     total = await session.scalar(select(func.count(User.id)).where(*filtros)) or 0
 
@@ -1143,21 +1272,17 @@ async def militantes_deletados_recentes(
             selectinload(User.municipio),
             selectinload(User.role),
         )
-        .order_by(User.deletado_em.desc())  # mais recentemente apagados primeiro
-        .limit(limit)
-        .offset(offset)
+        .order_by(User.deletado_em.desc())
     )
+
+    # REGRA DE OURO
+    if not email and not nif and not numero_militante:
+        query = query.limit(limit).offset(offset)
 
     result = await session.execute(query)
     registros = result.scalars().all()
 
-    return {
-        'total': total,
-        'results': registros,
-    }
-
-
-
+    return {'total': total, 'results': registros}
 
 
 @admin.get(
@@ -1174,156 +1299,21 @@ async def registros_simpatizantes_recentes(
     nome_municipio: str | None = Query(None, description='Filtrar por nome do município'),
     email: str | None = Query(None, description='Filtrar por email exato'),
     nif: str | None = Query(None, description='Filtrar por NIF exato'),
+    numero_militante: str | None = Query(None, description='Filtrar por número de militante exato'),
     limit: int = Query(default=10, ge=1, le=50),
     offset: int = Query(default=0, ge=0),
 ):
     """
     Lista simpatizantes com filtros opcionais.
-
-    - Superadmin: pode filtrar por província, município, email, nif
-    - Admin Provincial: só município (da sua província), email, nif
-    - Admin Municipal: acesso negado
-    - Sem filtros: retorna todos (respeitando o escopo do admin)
     """
     logger.info(
-        'Usuário %s listando simpatizantes (provincia=%s, municipio=%s, email=%s, nif=%s)',
+        'Usuário %s listando simpatizantes (provincia=%s, municipio=%s, email=%s, nif=%s, numero=%s)',
         current_user.id,
         nome_provincia,
         nome_municipio,
         email,
         nif,
-    )
-
-    # Admin municipal não pode
-    if scope.municipio_id is not None:
-        raise HTTPException(
-            status_code=HTTPStatus.FORBIDDEN,
-            detail='Acesso negado: Você não tem permissão para acessar estes registros.',
-        )
-
-    # Admin provincial não pode filtrar por província
-    if scope.provincia_id is not None and nome_provincia is not None:
-        raise HTTPException(
-            status_code=HTTPStatus.FORBIDDEN,
-            detail='Acesso negado: Admin provincial não pode filtrar por outra província.',
-        )
-
-    # ---- Resolve província (se informada) ----
-    provincia_id_filtro = None
-    if nome_provincia:
-        nome_provincia = nome_provincia.strip().title()
-        provincia_banco = await session.scalar(
-            select(Provincia).where(Provincia.nome_provincia == nome_provincia)
-        )
-        if not provincia_banco:
-            raise HTTPException(status_code=HTTPStatus.NOT_FOUND, detail='Província não encontrada')
-        provincia_id_filtro = provincia_banco.id
-
-    # ---- Resolve município (se informado) ----
-    municipio_id_filtro = None
-    if nome_municipio:
-        nome_municipio = nome_municipio.strip().title()
-        query_municipio = select(Municipio).where(Municipio.nome_municipio == nome_municipio)
-
-        # Se superadmin filtrou província, o município tem que pertencer a ela
-        if provincia_id_filtro is not None:
-            query_municipio = query_municipio.where(Municipio.id_provincia == provincia_id_filtro)
-
-        # Se for admin provincial, o município tem que ser da província dele
-        if scope.provincia_id is not None:
-            query_municipio = query_municipio.where(Municipio.id_provincia == scope.provincia_id)
-
-        municipio_banco = await session.scalar(query_municipio)
-        if not municipio_banco:
-            raise HTTPException(
-                status_code=HTTPStatus.NOT_FOUND,
-                detail=f'Município "{nome_municipio}" não encontrado ou não pertence à província informada.',
-            )
-        municipio_id_filtro = municipio_banco.id
-
-    # ---- Query base ----
-    filtros = [
-        User.ativo.is_(True),
-        User.cadastrar_militante == CadastrarComo.SIMPATIZANTE,  # confirme o valor do enum
-    ]
-
-    # Escopo automático do admin provincial
-    if scope.provincia_id is not None:
-        filtros.append(User.provincia_id == scope.provincia_id)
-
-    # Filtros opcionais
-    if provincia_id_filtro is not None:
-        filtros.append(User.provincia_id == provincia_id_filtro)
-
-    if municipio_id_filtro is not None:
-        filtros.append(User.municipio_id == municipio_id_filtro)
-
-    if email:
-        filtros.append(User.email == email.lower().strip())
-
-    if nif:
-        filtros.append(User.nif == nif.upper().strip())
-
-    # Contagem total
-    count_query = select(func.count(User.id)).where(*filtros)
-    total = await session.scalar(count_query) or 0
-
-    # Dados paginados
-    query = (
-        select(User)
-        .where(*filtros)
-        .options(
-            selectinload(User.provincia),
-            selectinload(User.municipio),
-            selectinload(User.role),
-        )
-        .order_by(User.criado_em.desc())
-        .limit(limit)
-        .offset(offset)
-    )
-
-    result = await session.execute(query)
-    registros = result.scalars().all()
-
-    return {
-        'total': total,
-        'results': registros,
-    }
-
-
-
-@admin.get(
-    '/deletados-recentes/simpatizante',
-    status_code=HTTPStatus.OK,
-    response_model=RegistrosRecentes,
-)
-# @limiter.limit('30/minute')
-async def simpatizante_deletados_recentes(
-    request: Request,
-    session: Session,
-    current_user: Get_current_user,
-    scope: ScopeValid,
-    nome_provincia: str | None = Query(None, description='Filtrar por nome da província (só Superadmin)'),
-    nome_municipio: str | None = Query(None, description='Filtrar por nome do município'),
-    email: str | None = Query(None, description='Filtrar por email exato'),
-    nif: str | None = Query(None, description='Filtrar por NIF exato'),
-    limit: int = Query(default=10, ge=1, le=50),
-    offset: int = Query(default=0, ge=0),
-):
-    """
-    Lista simpatizante soft-deleted (deletado_em preenchido).
-
-    - Superadmin: todas as províncias (+ filtros)
-    - Admin Provincial: só a sua província
-    - Admin Municipal: acesso negado
-    """
-    logger.info(
-        'Usuário %s listando simpatizante deletados (provincia=%s, municipio=%s, email=%s, nif=%s)',
-        current_user.id,
-        nome_provincia,
-        nome_municipio,
-        email,
-        nif,
+        numero_militante,
     )
 
     if scope.municipio_id is not None:
@@ -1353,11 +1343,140 @@ async def simpatizante_deletados_recentes(
     municipio_id_filtro = None
     if nome_municipio:
         nome_municipio = nome_municipio.strip().title()
+
+        if scope.provincia_id is None and provincia_id_filtro is None:
+            raise HTTPException(
+                status_code=HTTPStatus.BAD_REQUEST,
+                detail='Informe também a província ao filtrar por município.',
+            )
+
         query_municipio = select(Municipio).where(Municipio.nome_municipio == nome_municipio)
 
         if provincia_id_filtro is not None:
             query_municipio = query_municipio.where(Municipio.id_provincia == provincia_id_filtro)
+        if scope.provincia_id is not None:
+            query_municipio = query_municipio.where(Municipio.id_provincia == scope.provincia_id)
 
+        municipio_banco = await session.scalar(query_municipio)
+        if not municipio_banco:
+            raise HTTPException(
+                status_code=HTTPStatus.NOT_FOUND,
+                detail=f'Município "{nome_municipio}" não encontrado ou não pertence à província informada.',
+            )
+        municipio_id_filtro = municipio_banco.id
+
+    # ---- Filtros Base ----
+    filtros = [
+        User.ativo.is_(True),
+        User.cadastrar_militante == CadastrarComo.SIMPATIZANTE,
+        User.deletado_em.is_(None),
+    ]
+
+    if scope.provincia_id is not None:
+        filtros.append(User.provincia_id == scope.provincia_id)
+    if provincia_id_filtro is not None:
+        filtros.append(User.provincia_id == provincia_id_filtro)
+    if municipio_id_filtro is not None:
+        filtros.append(User.municipio_id == municipio_id_filtro)
+    if email:
+        filtros.append(User.email == email.lower().strip())
+    if nif:
+        filtros.append(User.nif == nif.upper().strip())
+    if numero_militante:
+        filtros.append(User.militante_numero == numero_militante.strip().upper())
+
+    total = await session.scalar(select(func.count(User.id)).where(*filtros)) or 0
+
+    query = (
+        select(User)
+        .where(*filtros)
+        .options(
+            selectinload(User.provincia),
+            selectinload(User.municipio),
+            selectinload(User.role),
+        )
+        .order_by(User.criado_em.desc())
+    )
+
+    # REGRA DE OURO
+    if not email and not nif and not numero_militante:
+        query = query.limit(limit).offset(offset)
+
+    result = await session.execute(query)
+    registros = result.scalars().all()
+
+    return {'total': total, 'results': registros}
+
+
+@admin.get(
+    '/deletados-recentes/simpatizante',
+    status_code=HTTPStatus.OK,
+    response_model=RegistrosRecentes,
+)
+# @limiter.limit('30/minute')
+async def simpatizante_deletados_recentes(
+    session: Session,
+    current_user: Get_current_user,
+    scope: ScopeValid,
+    nome_provincia: str | None = Query(None, description='Filtrar por nome da província (só Superadmin)'),
+    nome_municipio: str | None = Query(None, description='Filtrar por nome do município'),
+    email: str | None = Query(None, description='Filtrar por email exato'),
+    nif: str | None = Query(None, description='Filtrar por NIF exato'),
+    numero_militante: str | None = Query(None, description='Filtrar por número de militante exato'),
+    limit: int = Query(default=10, ge=1, le=50),
+    offset: int = Query(default=0, ge=0),
+):
+    """
+    Lista simpatizantes soft-deleted.
+    """
+    logger.info(
+        'Usuário %s listando simpatizantes deletados (provincia=%s, municipio=%s, email=%s, nif=%s, numero=%s)',
+        current_user.id,
+        nome_provincia,
+        nome_municipio,
+        email,
+        nif,
+        numero_militante,
+    )
+
+    if scope.municipio_id is not None:
+        raise HTTPException(
+            status_code=HTTPStatus.FORBIDDEN,
+            detail='Acesso negado: Você não tem permissão para acessar estes registros.',
+        )
+
+    if scope.provincia_id is not None and nome_provincia is not None:
+        raise HTTPException(
+            status_code=HTTPStatus.FORBIDDEN,
+            detail='Acesso negado: Admin provincial não pode filtrar por outra província.',
+        )
+
+    # ---- Província ----
+    provincia_id_filtro = None
+    if nome_provincia:
+        nome_provincia = nome_provincia.strip().title()
+        provincia_banco = await session.scalar(
+            select(Provincia).where(Provincia.nome_provincia == nome_provincia)
+        )
+        if not provincia_banco:
+            raise HTTPException(status_code=HTTPStatus.NOT_FOUND, detail='Província não encontrada')
+        provincia_id_filtro = provincia_banco.id
+
+    # ---- Município ----
+    municipio_id_filtro = None
+    if nome_municipio:
+        nome_municipio = nome_municipio.strip().title()
+
+        if scope.provincia_id is None and provincia_id_filtro is None:
+            raise HTTPException(
+                status_code=HTTPStatus.BAD_REQUEST,
+                detail='Informe também a província ao filtrar por município.',
+            )
+
+        query_municipio = select(Municipio).where(Municipio.nome_municipio == nome_municipio)
+
+        if provincia_id_filtro is not None:
+            query_municipio = query_municipio.where(Municipio.id_provincia == provincia_id_filtro)
         if scope.provincia_id is not None:
             query_municipio = query_municipio.where(Municipio.id_provincia == scope.provincia_id)
 
@@ -1372,24 +1491,21 @@ async def simpatizante_deletados_recentes(
     # ---- Filtros: SÓ DELETADOS ----
     filtros = [
         User.cadastrar_militante == CadastrarComo.SIMPATIZANTE,
-        User.deletado_em.isnot(None),  # soft-deleted
-        # opcional: User.ativo.is_(False),  # se no delete também pões ativo=False
+        User.deletado_em.isnot(None),
     ]
 
     if scope.provincia_id is not None:
         filtros.append(User.provincia_id == scope.provincia_id)
-
     if provincia_id_filtro is not None:
         filtros.append(User.provincia_id == provincia_id_filtro)
-
     if municipio_id_filtro is not None:
         filtros.append(User.municipio_id == municipio_id_filtro)
-
     if email:
         filtros.append(User.email == email.lower().strip())
-
     if nif:
         filtros.append(User.nif == nif.upper().strip())
+    if numero_militante:
+        filtros.append(User.militante_numero == numero_militante.strip().upper())
 
     total = await session.scalar(select(func.count(User.id)).where(*filtros)) or 0
 
@@ -1401,18 +1517,402 @@ async def simpatizante_deletados_recentes(
             selectinload(User.municipio),
             selectinload(User.role),
         )
-        .order_by(User.deletado_em.desc())  # mais recentemente apagados primeiro
-        .limit(limit)
-        .offset(offset)
+        .order_by(User.deletado_em.desc())
     )
+
+    # REGRA DE OURO
+    if not email and not nif and not numero_militante:
+        query = query.limit(limit).offset(offset)
 
     result = await session.execute(query)
     registros = result.scalars().all()
 
-    return {
-        'total': total,
-        'results': registros,
-    }
+    return {'total': total, 'results': registros}
+
+
+
+
+
+
+# @admin.get(
+#     '/deletados-recentes',
+#     status_code=HTTPStatus.OK,
+#     response_model=RegistrosRecentes,
+# )
+# # @limiter.limit('30/minute')
+# async def militantes_deletados_recentes(
+#     request: Request,
+#     session: Session,
+#     current_user: Get_current_user,
+#     scope: ScopeValid,
+#     nome_provincia: str | None = Query(None, description='Filtrar por nome da província (só Superadmin)'),
+#     nome_municipio: str | None = Query(None, description='Filtrar por nome do município'),
+#     email: str | None = Query(None, description='Filtrar por email exato'),
+#     nif: str | None = Query(None, description='Filtrar por NIF exato'),
+#     limit: int = Query(default=10, ge=1, le=50),
+#     offset: int = Query(default=0, ge=0),
+# ):
+#     """
+#     Lista militantes soft-deleted (deletado_em preenchido).
+
+#     - Superadmin: todas as províncias (+ filtros)
+#     - Admin Provincial: só a sua província
+#     - Admin Municipal: acesso negado
+#     """
+#     logger.info(
+#         'Usuário %s listando militantes deletados (provincia=%s, municipio=%s, email=%s, nif=%s)',
+#         current_user.id,
+#         nome_provincia,
+#         nome_municipio,
+#         email,
+#         nif,
+#     )
+
+#     if scope.municipio_id is not None:
+#         raise HTTPException(
+#             status_code=HTTPStatus.FORBIDDEN,
+#             detail='Acesso negado: Você não tem permissão para acessar estes registros.',
+#         )
+
+#     if scope.provincia_id is not None and nome_provincia is not None:
+#         raise HTTPException(
+#             status_code=HTTPStatus.FORBIDDEN,
+#             detail='Acesso negado: Admin provincial não pode filtrar por outra província.',
+#         )
+
+#     # ---- Província ----
+#     provincia_id_filtro = None
+#     if nome_provincia:
+#         nome_provincia = nome_provincia.strip().title()
+#         provincia_banco = await session.scalar(
+#             select(Provincia).where(Provincia.nome_provincia == nome_provincia)
+#         )
+#         if not provincia_banco:
+#             raise HTTPException(status_code=HTTPStatus.NOT_FOUND, detail='Província não encontrada')
+#         provincia_id_filtro = provincia_banco.id
+
+#     # ---- Município ----
+#     municipio_id_filtro = None
+#     if nome_municipio:
+#         nome_municipio = nome_municipio.strip().title()
+#         query_municipio = select(Municipio).where(Municipio.nome_municipio == nome_municipio)
+
+#         if provincia_id_filtro is not None:
+#             query_municipio = query_municipio.where(Municipio.id_provincia == provincia_id_filtro)
+
+#         if scope.provincia_id is not None:
+#             query_municipio = query_municipio.where(Municipio.id_provincia == scope.provincia_id)
+
+#         municipio_banco = await session.scalar(query_municipio)
+#         if not municipio_banco:
+#             raise HTTPException(
+#                 status_code=HTTPStatus.NOT_FOUND,
+#                 detail=f'Município "{nome_municipio}" não encontrado ou não pertence à província informada.',
+#             )
+#         municipio_id_filtro = municipio_banco.id
+
+#     # ---- Filtros: SÓ DELETADOS ----
+#     filtros = [
+#         User.cadastrar_militante == CadastrarComo.MILITANTE,
+#         User.deletado_em.isnot(None),  # soft-deleted
+#         # opcional: User.ativo.is_(False),  # se no delete também pões ativo=False
+#     ]
+
+#     if scope.provincia_id is not None:
+#         filtros.append(User.provincia_id == scope.provincia_id)
+
+#     if provincia_id_filtro is not None:
+#         filtros.append(User.provincia_id == provincia_id_filtro)
+
+#     if municipio_id_filtro is not None:
+#         filtros.append(User.municipio_id == municipio_id_filtro)
+
+#     if email:
+#         filtros.append(User.email == email.lower().strip())
+
+#     if nif:
+#         filtros.append(User.nif == nif.upper().strip())
+
+#     total = await session.scalar(select(func.count(User.id)).where(*filtros)) or 0
+
+#     query = (
+#         select(User)
+#         .where(*filtros)
+#         .options(
+#             selectinload(User.provincia),
+#             selectinload(User.municipio),
+#             selectinload(User.role),
+#         )
+#         .order_by(User.deletado_em.desc())  # mais recentemente apagados primeiro
+#         .limit(limit)
+#         .offset(offset)
+#     )
+
+#     result = await session.execute(query)
+#     registros = result.scalars().all()
+
+#     return {
+#         'total': total,
+#         'results': registros,
+#     }
+
+
+
+
+
+# @admin.get(
+#     '/registros-recentes/simpatizante',
+#     status_code=HTTPStatus.OK,
+#     response_model=RegistrosRecentes,
+# )
+# # @limiter.limit('30/minute')
+# async def registros_simpatizantes_recentes(
+#     session: Session,
+#     current_user: Get_current_user,
+#     scope: ScopeValid,
+#     nome_provincia: str | None = Query(None, description='Filtrar por nome da província (só Superadmin)'),
+#     nome_municipio: str | None = Query(None, description='Filtrar por nome do município'),
+#     email: str | None = Query(None, description='Filtrar por email exato'),
+#     nif: str | None = Query(None, description='Filtrar por NIF exato'),
+#     limit: int = Query(default=10, ge=1, le=50),
+#     offset: int = Query(default=0, ge=0),
+# ):
+#     """
+#     Lista simpatizantes com filtros opcionais.
+
+#     - Superadmin: pode filtrar por província, município, email, nif
+#     - Admin Provincial: só município (da sua província), email, nif
+#     - Admin Municipal: acesso negado
+#     - Sem filtros: retorna todos (respeitando o escopo do admin)
+#     """
+#     logger.info(
+#         'Usuário %s listando simpatizantes (provincia=%s, municipio=%s, email=%s, nif=%s)',
+#         current_user.id,
+#         nome_provincia,
+#         nome_municipio,
+#         email,
+#         nif,
+#     )
+
+#     # Admin municipal não pode
+#     if scope.municipio_id is not None:
+#         raise HTTPException(
+#             status_code=HTTPStatus.FORBIDDEN,
+#             detail='Acesso negado: Você não tem permissão para acessar estes registros.',
+#         )
+
+#     # Admin provincial não pode filtrar por província
+#     if scope.provincia_id is not None and nome_provincia is not None:
+#         raise HTTPException(
+#             status_code=HTTPStatus.FORBIDDEN,
+#             detail='Acesso negado: Admin provincial não pode filtrar por outra província.',
+#         )
+
+#     # ---- Resolve província (se informada) ----
+#     provincia_id_filtro = None
+#     if nome_provincia:
+#         nome_provincia = nome_provincia.strip().title()
+#         provincia_banco = await session.scalar(
+#             select(Provincia).where(Provincia.nome_provincia == nome_provincia)
+#         )
+#         if not provincia_banco:
+#             raise HTTPException(status_code=HTTPStatus.NOT_FOUND, detail='Província não encontrada')
+#         provincia_id_filtro = provincia_banco.id
+
+#     # ---- Resolve município (se informado) ----
+#     municipio_id_filtro = None
+#     if nome_municipio:
+#         nome_municipio = nome_municipio.strip().title()
+#         query_municipio = select(Municipio).where(Municipio.nome_municipio == nome_municipio)
+
+#         # Se superadmin filtrou província, o município tem que pertencer a ela
+#         if provincia_id_filtro is not None:
+#             query_municipio = query_municipio.where(Municipio.id_provincia == provincia_id_filtro)
+
+#         # Se for admin provincial, o município tem que ser da província dele
+#         if scope.provincia_id is not None:
+#             query_municipio = query_municipio.where(Municipio.id_provincia == scope.provincia_id)
+
+#         municipio_banco = await session.scalar(query_municipio)
+#         if not municipio_banco:
+#             raise HTTPException(
+#                 status_code=HTTPStatus.NOT_FOUND,
+#                 detail=f'Município "{nome_municipio}" não encontrado ou não pertence à província informada.',
+#             )
+#         municipio_id_filtro = municipio_banco.id
+
+#     # ---- Query base ----
+#     filtros = [
+#         User.ativo.is_(True),
+#         User.cadastrar_militante == CadastrarComo.SIMPATIZANTE,  # confirme o valor do enum
+#     ]
+
+#     # Escopo automático do admin provincial
+#     if scope.provincia_id is not None:
+#         filtros.append(User.provincia_id == scope.provincia_id)
+
+#     # Filtros opcionais
+#     if provincia_id_filtro is not None:
+#         filtros.append(User.provincia_id == provincia_id_filtro)
+
+#     if municipio_id_filtro is not None:
+#         filtros.append(User.municipio_id == municipio_id_filtro)
+
+#     if email:
+#         filtros.append(User.email == email.lower().strip())
+
+#     if nif:
+#         filtros.append(User.nif == nif.upper().strip())
+
+#     # Contagem total
+#     count_query = select(func.count(User.id)).where(*filtros)
+#     total = await session.scalar(count_query) or 0
+
+#     # Dados paginados
+#     query = (
+#         select(User)
+#         .where(*filtros)
+#         .options(
+#             selectinload(User.provincia),
+#             selectinload(User.municipio),
+#             selectinload(User.role),
+#         )
+#         .order_by(User.criado_em.desc())
+#         .limit(limit)
+#         .offset(offset)
+#     )
+
+#     result = await session.execute(query)
+#     registros = result.scalars().all()
+
+#     return {
+#         'total': total,
+#         'results': registros,
+#     }
+
+
+
+# @admin.get(
+#     '/deletados-recentes/simpatizante',
+#     status_code=HTTPStatus.OK,
+#     response_model=RegistrosRecentes,
+# )
+# # @limiter.limit('30/minute')
+# async def simpatizante_deletados_recentes(
+#     request: Request,
+#     session: Session,
+#     current_user: Get_current_user,
+#     scope: ScopeValid,
+#     nome_provincia: str | None = Query(None, description='Filtrar por nome da província (só Superadmin)'),
+#     nome_municipio: str | None = Query(None, description='Filtrar por nome do município'),
+#     email: str | None = Query(None, description='Filtrar por email exato'),
+#     nif: str | None = Query(None, description='Filtrar por NIF exato'),
+#     limit: int = Query(default=10, ge=1, le=50),
+#     offset: int = Query(default=0, ge=0),
+# ):
+#     """
+#     Lista simpatizante soft-deleted (deletado_em preenchido).
+
+#     - Superadmin: todas as províncias (+ filtros)
+#     - Admin Provincial: só a sua província
+#     - Admin Municipal: acesso negado
+#     """
+#     logger.info(
+#         'Usuário %s listando simpatizante deletados (provincia=%s, municipio=%s, email=%s, nif=%s)',
+#         current_user.id,
+#         nome_provincia,
+#         nome_municipio,
+#         email,
+#         nif,
+#     )
+
+#     if scope.municipio_id is not None:
+#         raise HTTPException(
+#             status_code=HTTPStatus.FORBIDDEN,
+#             detail='Acesso negado: Você não tem permissão para acessar estes registros.',
+#         )
+
+#     if scope.provincia_id is not None and nome_provincia is not None:
+#         raise HTTPException(
+#             status_code=HTTPStatus.FORBIDDEN,
+#             detail='Acesso negado: Admin provincial não pode filtrar por outra província.',
+#         )
+
+#     # ---- Província ----
+#     provincia_id_filtro = None
+#     if nome_provincia:
+#         nome_provincia = nome_provincia.strip().title()
+#         provincia_banco = await session.scalar(
+#             select(Provincia).where(Provincia.nome_provincia == nome_provincia)
+#         )
+#         if not provincia_banco:
+#             raise HTTPException(status_code=HTTPStatus.NOT_FOUND, detail='Província não encontrada')
+#         provincia_id_filtro = provincia_banco.id
+
+#     # ---- Município ----
+#     municipio_id_filtro = None
+#     if nome_municipio:
+#         nome_municipio = nome_municipio.strip().title()
+#         query_municipio = select(Municipio).where(Municipio.nome_municipio == nome_municipio)
+
+#         if provincia_id_filtro is not None:
+#             query_municipio = query_municipio.where(Municipio.id_provincia == provincia_id_filtro)
+
+#         if scope.provincia_id is not None:
+#             query_municipio = query_municipio.where(Municipio.id_provincia == scope.provincia_id)
+
+#         municipio_banco = await session.scalar(query_municipio)
+#         if not municipio_banco:
+#             raise HTTPException(
+#                 status_code=HTTPStatus.NOT_FOUND,
+#                 detail=f'Município "{nome_municipio}" não encontrado ou não pertence à província informada.',
+#             )
+#         municipio_id_filtro = municipio_banco.id
+
+#     # ---- Filtros: SÓ DELETADOS ----
+#     filtros = [
+#         User.cadastrar_militante == CadastrarComo.SIMPATIZANTE,
+#         User.deletado_em.isnot(None),  # soft-deleted
+#         # opcional: User.ativo.is_(False),  # se no delete também pões ativo=False
+#     ]
+
+#     if scope.provincia_id is not None:
+#         filtros.append(User.provincia_id == scope.provincia_id)
+
+#     if provincia_id_filtro is not None:
+#         filtros.append(User.provincia_id == provincia_id_filtro)
+
+#     if municipio_id_filtro is not None:
+#         filtros.append(User.municipio_id == municipio_id_filtro)
+
+#     if email:
+#         filtros.append(User.email == email.lower().strip())
+
+#     if nif:
+#         filtros.append(User.nif == nif.upper().strip())
+
+#     total = await session.scalar(select(func.count(User.id)).where(*filtros)) or 0
+
+#     query = (
+#         select(User)
+#         .where(*filtros)
+#         .options(
+#             selectinload(User.provincia),
+#             selectinload(User.municipio),
+#             selectinload(User.role),
+#         )
+#         .order_by(User.deletado_em.desc())  # mais recentemente apagados primeiro
+#         .limit(limit)
+#         .offset(offset)
+#     )
+
+#     result = await session.execute(query)
+#     registros = result.scalars().all()
+
+#     return {
+#         'total': total,
+#         'results': registros,
+#     }
 
 
 # @admin.get(
