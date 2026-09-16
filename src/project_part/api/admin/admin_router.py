@@ -873,9 +873,6 @@ async def evolucao_simpatizante(
 
 
 
-
-
-
 @admin.get(
     '/registros-recentes',
     status_code=HTTPStatus.OK,
@@ -931,26 +928,51 @@ async def registros_militantes_recentes(
             select(Provincia).where(Provincia.nome_provincia == nome_provincia)
         )
         if not provincia_banco:
-            raise HTTPException(status_code=HTTPStatus.NOT_FOUND, detail='Província não encontrada')
+            raise HTTPException(
+                status_code=HTTPStatus.NOT_FOUND,
+                detail='Província não encontrada',
+            )
         provincia_id_filtro = provincia_banco.id
 
     # ---- Município ----
     municipio_id_filtro = None
     if nome_municipio:
         nome_municipio = nome_municipio.strip().title()
-        query_municipio = select(Municipio).where(Municipio.nome_municipio == nome_municipio)
+
+        # Superadmin filtrando por município deve informar a província
+        # para evitar ambiguidade de nomes iguais em províncias diferentes
+        if (
+            scope.provincia_id is None
+            and provincia_id_filtro is None
+            and nome_municipio
+        ):
+            raise HTTPException(
+                status_code=HTTPStatus.BAD_REQUEST,
+                detail='Informe também a província ao filtrar por município.',
+            )
+
+        query_municipio = select(Municipio).where(
+            Municipio.nome_municipio == nome_municipio
+        )
 
         if provincia_id_filtro is not None:
-            query_municipio = query_municipio.where(Municipio.id_provincia == provincia_id_filtro)
+            query_municipio = query_municipio.where(
+                Municipio.id_provincia == provincia_id_filtro
+            )
 
         if scope.provincia_id is not None:
-            query_municipio = query_municipio.where(Municipio.id_provincia == scope.provincia_id)
+            query_municipio = query_municipio.where(
+                Municipio.id_provincia == scope.provincia_id
+            )
 
         municipio_banco = await session.scalar(query_municipio)
         if not municipio_banco:
             raise HTTPException(
                 status_code=HTTPStatus.NOT_FOUND,
-                detail=f'Município "{nome_municipio}" não encontrado ou não pertence à província informada.',
+                detail=(
+                    f'Município "{nome_municipio}" não encontrado '
+                    'ou não pertence à província informada.'
+                ),
             )
         municipio_id_filtro = municipio_banco.id
 
@@ -977,7 +999,9 @@ async def registros_militantes_recentes(
         filtros.append(User.nif == nif.upper().strip())
 
     # Contagem total com base nos filtros aplicados
-    total = await session.scalar(select(func.count(User.id)).where(*filtros)) or 0
+    total = await session.scalar(
+        select(func.count(User.id)).where(*filtros)
+    ) or 0
 
     # ---- Construção da Query de Dados ----
     query = (
@@ -991,8 +1015,11 @@ async def registros_militantes_recentes(
         .order_by(User.criado_em.desc())
     )
 
-    # REGRA DE OURO: Se o utilizador NÃO está a filtrar por campos únicos (Email/NIF), aplica paginação normalmente.
-    # Se estiver a filtrar por Email ou NIF, ignora o limit/offset para trazer o registo de qualquer parte do banco.
+    # REGRA DE OURO:
+    # Se NÃO estiver filtrando por campos únicos (email/NIF),
+    # aplica paginação normalmente.
+    # Se estiver filtrando por email ou NIF, ignora limit/offset
+    # para trazer o registro de qualquer parte do banco.
     if not email and not nif:
         query = query.limit(limit).offset(offset)
 
@@ -1003,9 +1030,6 @@ async def registros_militantes_recentes(
         'total': total,
         'results': registros,
     }
-
-
-
 
 
 
