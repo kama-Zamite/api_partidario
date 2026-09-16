@@ -63,9 +63,9 @@ async def lifespan(app: FastAPI):
     scheduler.add_job(
         job_quotas,
         CronTrigger(
-            day=16, 
+            # day=16, 
             hour=14,
-            minute=40,
+            minute=50,
             timezone=fuso_horario),  # dia 15, 02:00 (fuso do scheduler!)
         id='job_verificar_quotas',
         replace_existing=True,
