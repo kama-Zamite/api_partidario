@@ -61,7 +61,7 @@ async def lifespan(app: FastAPI):
 
     scheduler.add_job(
         job_quotas,
-        CronTrigger(day=15, hour=2, minute=0),  # dia 15, 02:00 (fuso do scheduler!)
+        CronTrigger(day=15, hour=10, minute=0),  # dia 15, 02:00 (fuso do scheduler!)
         id='job_verificar_quotas',
         replace_existing=True,
         max_instances=1,  # por processo; o Redis cobre multi-processo

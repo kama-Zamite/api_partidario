@@ -910,6 +910,7 @@ async def registros_militantes_recentes(
         nif,
     )
 
+    # ---- Validações de Escopo ----
     if scope.municipio_id is not None:
         raise HTTPException(
             status_code=HTTPStatus.FORBIDDEN,
@@ -953,11 +954,11 @@ async def registros_militantes_recentes(
             )
         municipio_id_filtro = municipio_banco.id
 
-    # ---- Filtros ----
+    # ---- Construção dos Filtros Base ----
     filtros = [
         User.ativo.is_(True),
         User.cadastrar_militante == CadastrarComo.MILITANTE,
-        User.deletado_em.is_(None),  # se usar soft delete; remova se não tiver
+        User.deletado_em.is_(None),
     ]
 
     if scope.provincia_id is not None:
@@ -975,10 +976,10 @@ async def registros_militantes_recentes(
     if nif:
         filtros.append(User.nif == nif.upper().strip())
 
-    # Contagem
+    # Contagem total com base nos filtros aplicados
     total = await session.scalar(select(func.count(User.id)).where(*filtros)) or 0
 
-    # Dados
+    # ---- Construção da Query de Dados ----
     query = (
         select(User)
         .where(*filtros)
@@ -988,9 +989,12 @@ async def registros_militantes_recentes(
             selectinload(User.role),
         )
         .order_by(User.criado_em.desc())
-        .limit(limit)
-        .offset(offset)
     )
+
+    # REGRA DE OURO: Se o utilizador NÃO está a filtrar por campos únicos (Email/NIF), aplica paginação normalmente.
+    # Se estiver a filtrar por Email ou NIF, ignora o limit/offset para trazer o registo de qualquer parte do banco.
+    if not email and not nif:
+        query = query.limit(limit).offset(offset)
 
     result = await session.execute(query)
     registros = result.scalars().all()
@@ -999,6 +1003,11 @@ async def registros_militantes_recentes(
         'total': total,
         'results': registros,
     }
+
+
+
+
+
 
 
 @admin.get(
