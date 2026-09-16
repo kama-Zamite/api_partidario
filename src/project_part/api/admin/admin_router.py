@@ -887,7 +887,7 @@ async def registros_militantes_recentes(
     nome_municipio: str | None = Query(None, description='Filtrar por nome do município'),
     email: str | None = Query(None, description='Filtrar por email exato'),
     nif: str | None = Query(None, description='Filtrar por NIF exato'),
-    limit: int = Query(default=10, ge=1, le=50),
+    limit: int = Query(default=1, ge=1, le=50),
     offset: int = Query(default=0, ge=0),
 ):
     """
@@ -4131,6 +4131,7 @@ async def aprovar_quota(
         titulo="Pagamento de Quota Aprovada",
         mensagem=f"Olá {pag.militante.nome_completo}! Seu pagamento de quota com referência {pag.referencia} no valor de {pag.quantia} AOA foi aprovada. Sua validade foi estendida para {m.data_expiracao_quota.strftime('%m/%Y')}.",
         motivo="",
+        # destinatario="ADMIN",
         categoria=RoleCategoriaNotificacao.QUOTA
     )
 
