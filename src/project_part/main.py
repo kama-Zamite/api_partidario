@@ -62,7 +62,11 @@ async def lifespan(app: FastAPI):
     fuso_horario = ZoneInfo('Africa/Luanda')
     scheduler.add_job(
         job_quotas,
-        CronTrigger(day=16, hour=12, minute=30, timezone=fuso_horario),  # dia 15, 02:00 (fuso do scheduler!)
+        CronTrigger(
+            day=16, 
+            hour=14,
+            minute=40,
+            timezone=fuso_horario),  # dia 15, 02:00 (fuso do scheduler!)
         id='job_verificar_quotas',
         replace_existing=True,
         max_instances=1,  # por processo; o Redis cobre multi-processo
