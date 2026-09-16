@@ -1315,7 +1315,6 @@ async def registros_simpatizantes_recentes(
     nome_municipio: str | None = Query(None, description='Filtrar por nome do município'),
     email: str | None = Query(None, description='Filtrar por email exato'),
     nif: str | None = Query(None, description='Filtrar por NIF exato'),
-    numero_militante: str | None = Query(None, description='Filtrar por número de militante exato'),
     limit: int = Query(default=10, ge=1, le=50),
     offset: int = Query(default=0, ge=0),
 ):
@@ -1323,13 +1322,12 @@ async def registros_simpatizantes_recentes(
     Lista simpatizantes com filtros opcionais.
     """
     logger.info(
-        'Usuário %s listando simpatizantes (provincia=%s, municipio=%s, email=%s, nif=%s, numero=%s)',
+        'Usuário %s listando simpatizantes (provincia=%s, municipio=%s, email=%s, nif=%s)',
         current_user.id,
         nome_provincia,
         nome_municipio,
         email,
         nif,
-        numero_militante,
     )
 
     if scope.municipio_id is not None:
@@ -1406,8 +1404,6 @@ async def registros_simpatizantes_recentes(
         filtros.append(User.email == email.lower().strip())
     if nif:
         filtros.append(User.nif == nif.upper().strip())
-    if numero_militante:
-        filtros.append(User.militante_numero == numero_militante.strip().upper())
 
     total = await session.scalar(select(func.count(User.id)).where(*filtros_total)) or 0
 
@@ -1423,13 +1419,15 @@ async def registros_simpatizantes_recentes(
     )
 
     # REGRA DE OURO
-    if not email and not nif and not numero_militante:
+    if not email and not nif:
         query = query.limit(limit).offset(offset)
 
     result = await session.execute(query)
     registros = result.scalars().all()
 
     return {'total': total, 'results': registros}
+
+
 
 
 @admin.get(
@@ -1446,7 +1444,6 @@ async def simpatizante_deletados_recentes(
     nome_municipio: str | None = Query(None, description='Filtrar por nome do município'),
     email: str | None = Query(None, description='Filtrar por email exato'),
     nif: str | None = Query(None, description='Filtrar por NIF exato'),
-    numero_militante: str | None = Query(None, description='Filtrar por número de militante exato'),
     limit: int = Query(default=10, ge=1, le=50),
     offset: int = Query(default=0, ge=0),
 ):
@@ -1454,13 +1451,12 @@ async def simpatizante_deletados_recentes(
     Lista simpatizantes soft-deleted.
     """
     logger.info(
-        'Usuário %s listando simpatizantes deletados (provincia=%s, municipio=%s, email=%s, nif=%s, numero=%s)',
+        'Usuário %s listando simpatizantes deletados (provincia=%s, municipio=%s, email=%s, nif=%s)',
         current_user.id,
         nome_provincia,
         nome_municipio,
         email,
         nif,
-        numero_militante,
     )
 
     if scope.municipio_id is not None:
@@ -1535,8 +1531,6 @@ async def simpatizante_deletados_recentes(
         filtros.append(User.email == email.lower().strip())
     if nif:
         filtros.append(User.nif == nif.upper().strip())
-    if numero_militante:
-        filtros.append(User.militante_numero == numero_militante.strip().upper())
 
     total = await session.scalar(select(func.count(User.id)).where(*filtros_total)) or 0
 
@@ -1552,7 +1546,7 @@ async def simpatizante_deletados_recentes(
     )
 
     # REGRA DE OURO
-    if not email and not nif and not numero_militante:
+    if not email and not nif:
         query = query.limit(limit).offset(offset)
 
     result = await session.execute(query)
