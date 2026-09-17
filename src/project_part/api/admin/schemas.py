@@ -215,6 +215,8 @@ class ValidarFilterSimpatizante(BaseModel):
         return nif_limpo
 
 class UserResponse(BaseModel):
+    id: uuid.UUID
+    ativo: bool | None = None
     nome_completo: str
     genero: Genero | None = None
     criado_em: datetime
