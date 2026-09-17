@@ -221,6 +221,10 @@ class UserResponse(BaseModel):
     ativo: bool
     provincia: str
     municipio: str
+    email: str
+    telefone: str
+    data_nascimento: date
+    image_url: str | None = None
     militante_numero: str | None
 
 
