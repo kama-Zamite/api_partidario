@@ -228,6 +228,8 @@ class UserResponse(BaseModel):
     data_nascimento: date
     image_url: str | None = None
     militante_numero: str | None
+    nif: str = Field(max_length=30)
+    estado_civil: EstadoCivil = Field(default=EstadoCivil.SOLTEIRO)
 
 
 
