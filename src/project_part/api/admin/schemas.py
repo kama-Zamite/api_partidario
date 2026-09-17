@@ -221,6 +221,8 @@ class UserResponse(BaseModel):
     ativo: bool
     provincia: str
     municipio: str
+    militante_numero: str | None
+
 
 
     model_config = ConfigDict(from_attributes=True, ser_json_circular_logic='ignore')
