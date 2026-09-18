@@ -3947,11 +3947,27 @@ async def remover_escopo_administrativo(
 async def upgrade_role_user(
     id_militante: uuid.UUID,
     session: Session,
-    # current_user: Get_current_user,
-    # scope: ScopeValid,
+    current_user: Get_current_user,
+    scope: ScopeValid,
     role_nome: str = Form(..., max_length=15, description='Nome do novo role a ser atribuído ao usuário'),
 ):
-    """ """
+    """
+        Atualiza o role de um usuário para Militante.
+        Verifica as permissões do usuário atual e o escopo.
+        Se o usuário alvo não existir ou o role não for encontrado, retorna erro 404.
+        Retorna uma mensagem de sucesso se a atualização for bem-sucedida.
+
+    """
+
+    verificar_permissao_global_pais(scope, current_user)
+
+    if id_militante == current_user.id:
+        logger.warning('Superadmin com o numero de militante: %s, tentou fazer uma auto atualizacao de role', current_user.militante_numero)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail='Superadmin nao pode alterar o seu role'
+        )
+        
     query = select(User).where(User.id == id_militante)
     usuario_banco = await session.scalar(query)
     if not usuario_banco:
@@ -4355,9 +4371,7 @@ async def rejeitar_militante_card(
         )
 
 
-
 @admin.post('/doacoes/{doacao_id}/aprovar', status_code=HTTPStatus.OK)
-# @limiter.limit('20/minute')
 async def aprovar_doacao(
     request: Request,
     doacao_id: uuid.UUID,
@@ -4366,14 +4380,16 @@ async def aprovar_doacao(
     scope: ScopeValid,
 ):
     doacao = await session.scalar(
-        select(Doacao).where(Doacao.id == doacao_id).options(selectinload(Doacao.doador))
+        select(Doacao)
+        .where(Doacao.id == doacao_id)
+        .options(selectinload(Doacao.doador))
     )
     if not doacao:
         raise HTTPException(HTTPStatus.NOT_FOUND, detail='Doação não encontrada.')
     if doacao.status != DonationStatusEnum.PENDING:
         raise HTTPException(HTTPStatus.CONFLICT, detail=f'Status atual: {doacao.status}')
 
-    # scope territorial (se tiver doador)
+    # Validação de escopo territorial
     if doacao.doador:
         if scope.municipio_id and doacao.doador.municipio_id != scope.municipio_id:
             raise HTTPException(HTTPStatus.FORBIDDEN, detail='Acesso negado.')
@@ -4399,45 +4415,84 @@ async def aprovar_doacao(
         detalhe={'referencia': doacao.referencia},
     )
 
-    
-    # notificacao_user = Notification(
-    #     user_id = doacao.doador.id,
-    #     titulo="Doação Aprovada",
-    #     mensagem=f"Ola {doacao.doador.nome_completo if doacao.doador else 'militante'}! Sua doação com referência {doacao.referencia} no valor de {doacao.quantia} AOA foi aprovada.",
-    #     # destinatario="ADMIN",
-    #     categoria=RoleCategoriaNotificacao.DOACAO
-    # )
+    # Busca o superadmin
+    super_admin = await session.scalar(
+        select(User.id)
+        .join(AdminScope, AdminScope.user_id == User.id)
+        .where(
+            User.role_id == settings.ADMIN_ROLE_ID,
+            User.ativo.is_(True),
+            User.deletado_em.is_(None),
+            AdminScope.provincia_id.is_(None),
+            AdminScope.municipio_id.is_(None),
+        )
+    )
 
-    # session.add(notificacao_user)
+    if not super_admin:
+        logger.warning(
+            'Nenhum superadmin encontrado para notificar aprovação de doação do user %s',
+            current_user.id,
+        )
 
-    # Cria e adiciona a notificação APENAS se o doador existir
+    # -------------------------------------------------------
+    # 1. Notificação para o DOADOR (se existir)
+    # -------------------------------------------------------
     if doacao.doador:
-        notificacao_user = Notification(
+        notificacao_doador = Notification(
+            admin_id=None,
             user_id=doacao.doador.id,
             titulo="Doação Aprovada",
-            mensagem=f"Olá {doacao.doador.nome_completo}! Sua doação com referência {doacao.referencia} no valor de {doacao.quantia} AOA foi aprovada.",
-            categoria=RoleCategoriaNotificacao.DOACAO
+            mensagem=(
+                f"Olá {doacao.doador.nome_completo}! "
+                f"Sua doação com referência {doacao.referencia} "
+                f"no valor de {doacao.quantia} AOA foi aprovada."
+            ),
+            motivo="",
+            destinatario="MILITANTE",  # ou "ADMIN" se o doador for admin
+            categoria=RoleCategoriaNotificacao.DOACAO,
         )
-        session.add(notificacao_user)
+        session.add(notificacao_doador)
 
+    # -------------------------------------------------------
+    # 2. Notificação para o SUPERADMIN
+    # -------------------------------------------------------
+    if super_admin:
+        nome_provincia = "desconhecida"
+        if scope.provincia_id:
+            provincia = await session.scalar(
+                select(Provincia.nome_provincia).where(Provincia.id == scope.provincia_id)
+            )
+            if provincia:
+                nome_provincia = provincia
+
+        notificacao_superadmin = Notification(
+            admin_id=super_admin,
+            titulo="Doação Aprovada",
+            mensagem=(
+                f"Olá Superadmin, o admin provincial da província {nome_provincia} "
+                f"({current_user.nome_completo}) aprovou a doação "
+                f"no valor de {doacao.quantia} AOA (referência: {doacao.referencia})."
+            ),
+            motivo="",
+            destinatario="ADMIN",
+            categoria=RoleCategoriaNotificacao.DOACAO,
+        )
+        session.add(notificacao_superadmin)
 
     try:
         await session.commit()
-        if doacao.doador:  # Apenas faz refresh se for necessário rastrear o estado
-                await session.refresh(doacao)
         await session.refresh(doacao)
     except Exception as e:
         await session.rollback()
-        logger.error("Erro ao salvar solicitação e notificação: %s", str(e))
-        raise HTTPException(status_code=HTTPStatus.INTERNAL_SERVER_ERROR, detail="Erro ao salvar dados no banco.")
+        logger.error("Erro ao salvar aprovação de doação e notificações: %s", str(e))
+        raise HTTPException(
+            status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+            detail="Erro ao salvar dados no banco.",
+        )
 
-
-    # await session.commit()
     return {
-        "msg": f"Doação aprovado com sucesso. Pelo admin {current_user.nome_completo},\n {current_user.email}"
+        "msg": "Doação aprovada com sucesso."
     }
-
-
 
 @admin.post('/doacoes/{doacao_id}/rejeitar', status_code=HTTPStatus.OK)
 # @limiter.limit('20/minute')
@@ -4604,9 +4659,6 @@ async def aprovar_quota(
     if not m:
         raise HTTPException(HTTPStatus.NOT_FOUND, detail='Militante associado a esta quota não foi encontrado.')
 
-    # # Validação de escopo regional
-    # if scope.municipio_id and m.municipio_id != scope.municipio_id:
-    #     raise HTTPException(HTTPStatus.FORBIDDEN, detail='Acesso negado.')
     if scope.provincia_id and m.provincia_id != scope.provincia_id:
         raise HTTPException(HTTPStatus.FORBIDDEN, detail='Acesso negado.')
 
@@ -4617,21 +4669,16 @@ async def aprovar_quota(
     pag.aprovado_em = datetime.now(timezone.utc)
 
     # ATUALIZAÇÃO DA DATA DE EXPIRAÇÃO NO PERFIL DO USER
-    # Garantimos a quantidade de meses (padrão 1 caso seja nulo)
     meses_adicionar = pag.meses_pagar if pag.meses_pagar else 1
     data_atual = datetime.now(timezone.utc).date()
 
     if m.data_expiracao_quota:
         if m.data_expiracao_quota >= data_atual:
-            # Se o utilizador já estava em dia, acumula a partir da data futura existente
             m.data_expiracao_quota = m.data_expiracao_quota + relativedelta(months=meses_adicionar)
         else:
-            # Se ele estava com a quota expirada/atrasada, o cálculo baseia-se no período inicial 
-            # que foi reservado para esta transação específica
             data_base = datetime.strptime(pag.periodo, "%Y-%m").date()
             m.data_expiracao_quota = data_base + relativedelta(months=meses_adicionar - 1)
     else:
-        # Se for a primeiríssima quota do militante
         data_base = datetime.strptime(pag.periodo, "%Y-%m").date()
         m.data_expiracao_quota = data_base + relativedelta(months=meses_adicionar - 1)
 
@@ -4650,22 +4697,78 @@ async def aprovar_quota(
         detalhe={'periodo': pag.periodo, 'novos_meses': meses_adicionar},
     )
 
-    # Cria notificação para o militante
-    notificacao_user = Notification(
-        user_id=pag.militante.id,
-        titulo="Pagamento de Quota Aprovada",
-        mensagem=f"Olá {pag.militante.nome_completo}! Seu pagamento de quota com referência {pag.referencia} no valor de {pag.quantia} AOA foi aprovada. Sua validade foi estendida para {m.data_expiracao_quota.strftime('%m/%Y')}.",
-        motivo="",
-        # destinatario="ADMIN",
-        categoria=RoleCategoriaNotificacao.QUOTA
+    # Busca o superadmin
+    super_admin = await session.scalar(
+        select(User.id)
+        .join(AdminScope, AdminScope.user_id == User.id)
+        .where(
+            User.role_id == settings.ADMIN_ROLE_ID,
+            User.ativo.is_(True),
+            User.deletado_em.is_(None),
+            AdminScope.provincia_id.is_(None),
+            AdminScope.municipio_id.is_(None),
+        )
     )
 
-    session.add(notificacao_user)
-    session.add(m)  # Adiciona explicitamente o objeto do militante modificado à sessão
+    if not super_admin:
+        logger.warning(
+            'Nenhum superadmin encontrado para notificar aprovação de quota do user %s',
+            current_user.id,
+        )
+
+
+    # -------------------------------------------------------
+    # 1. Notificação para o MILITANTE (quem pagou)
+    # -------------------------------------------------------
+    notificacao_militante = Notification(
+        user_id=pag.militante.id,
+        titulo="Pagamento de Quota Aprovada",
+        mensagem=(
+            f"Olá {pag.militante.nome_completo}! Seu pagamento de quota com referência "
+            f"{pag.referencia} no valor de {pag.quantia} AOA foi aprovado. "
+            f"Sua validade foi estendida para {m.data_expiracao_quota.strftime('%m/%Y')}."
+        ),
+        motivo="",
+        destinatario='MILITANTE',
+        categoria=RoleCategoriaNotificacao.QUOTA,
+    )
+    session.add(notificacao_militante)
+
+    # -------------------------------------------------------
+    # 2. Notificação para o SUPERADMIN
+    # -------------------------------------------------------
+    if super_admin:
+        # Tenta obter o nome da província do admin que aprovou
+        logger.info('Buscando nome da província para notificação ao superadmin...')
+        nome_provincia = "desconhecida"
+        if scope.provincia_id:
+            # Ajusta conforme o teu modelo (Provincia, ProvinciaModel, etc.)
+            provincia = await session.scalar(
+                select(Provincia.nome_provincia).where(Provincia.id == scope.provincia_id)
+            )
+            if provincia:
+                nome_provincia = provincia
+
+        notificacao_superadmin = Notification(
+            admin_id=super_admin,
+            titulo="Pagamento de Quota Aprovado",
+            mensagem=(
+                f"Olá Superadmin, o admin provincial da província {nome_provincia} "
+                f"({current_user.nome_completo}) aprovou o pagamento de quota "
+                f"no valor de {pag.quantia} AOA (referência: {pag.referencia})."
+            ),
+            motivo="",
+            destinatario="ADMIN",
+            categoria=RoleCategoriaNotificacao.QUOTA,
+        )
+        session.add(notificacao_superadmin)
+
+    session.add(m)  # garante que a data de expiração é persistida
 
     try:
         await session.commit()
         await session.refresh(pag)
+        logger.info('Pagamento de quota aprovado com sucesso para o user %s', current_user.id)
     except Exception as e:
         await session.rollback()
         logger.error("Erro crítico ao aprovar quota no banco: %s", e)
@@ -4673,10 +4776,11 @@ async def aprovar_quota(
             status_code=HTTPStatus.BAD_REQUEST,
             detail='Erro ao registrar aprovação da quota'
         )
-        
+
     return {
-        "msg": f"Pagamento de quota aprovado com sucesso. Pelo admin {current_user.nome_completo}.\n Email: {current_user.email}"
+        "msg": "Pagamento de quota aprovado com sucesso. "
     }
+
 
 
 
@@ -4730,7 +4834,7 @@ async def rejeitar_quota(
         user_id = pag.militante.id,
         titulo="Pagamento de Quota Rejeitada",
         mensagem=f"Ola {pag.militante.nome_completo if pag.militante else 'militante'}! Seu pagamento de quota com referência {pag.referencia} no valor de {pag.quantia} AOA foi rejeitada.",
-        # destinatario="ADMIN",
+        destinatario="MILITANTE",
         motivo=f"Motivo: {body.observacao}",
         categoria=RoleCategoriaNotificacao.QUOTA
     )
