@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from enum import Enum
 from typing import List, Optional
 from decimal import Decimal
@@ -355,6 +355,32 @@ class User(Base):
         CheckConstraint('nif = upper(nif) AND length(trim(nif)) = 14', name='check_nif_angola'),
         CheckConstraint('length(trim(telefone)) > 0', name='check_telefone_preenchido'),
     )
+
+
+
+class TwoFactorChallenge(Base):
+    __tablename__ = 'two_factor_challenges'
+ 
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    # [FIX-2FA] SHA-256 do token entregue ao cliente (unique + index p/ lookup rápido)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    # [FIX-2FA] Ligada ao utilizador que passou na senha
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey('users.id', ondelete='CASCADE'), index=True  # ajusta o nome da tabela
+    )
+    # [FIX-2FA] Ligada ao contexto (IP + User-Agent) onde a senha foi validada
+    ip_address: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    user_agent_hash: Mapped[str] = mapped_column(String(64))
+    # [FIX-2FA] Limite de tentativas por challenge (anti brute-force do TOTP)
+    
+    tentativas: Mapped[int] = mapped_column(Integer, default=0)
+    # [FIX-2FA] Curta duração + uso único
+    expira_as: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    usado_as: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    criado_as: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+
 
 
 class UserRefreshToken(Base):

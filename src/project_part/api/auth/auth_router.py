@@ -38,6 +38,8 @@ from project_part.core.secury import (
     hash_password,
     verify_password,
     gerar_e_registar_refresh_token,
+    verificar_permissao_global_pais,
+    
 )
 from jwt import decode, PyJWTError
 from project_part.core.setting import settings
@@ -58,6 +60,14 @@ from project_part.services.email_service.recuperar_senha import (
     enviar_email_real_async,
 )
 from project_part.services.email_service.loginEmail import email_sucesso_login_async
+from project_part.services.two_factor_challenge import (
+    criar_challenge_2fa,
+    get_client_ip,
+    obter_challenge_valida,
+    registrar_tentativa,
+    consumir_challenge,
+    CHALLENGE_TTL,
+)
 from project_part.api.auth.util import set_auth_cookies
 from project_part.services.claudflare_turnfile import verificar_turnstile
 from .schemas import (
@@ -88,23 +98,14 @@ TypeCacheBase = 'v4:permissao:listar'
 
 router_auth = APIRouter(prefix="/auth", tags=["Autenticação"])
 
-# Exemplo de rota de login protegida
-# @router_auth.post("/login")
-# async def login(
-#     form_data: OAuth2PasswordRequestForm = Depends(),
-#     db: Session = Depends(get_db),
-#     _captcha: bool = Depends(verificar_turnstile)  # 🌟 PROTEÇÃO ATIVADA AQUI
-# ):
-#     """
-#     O FastAPI só executa o bloco interno desta função se o token 
-#     enviado no Header 'cf-turnstile-response' for 100% legítimo.
-#     """
-#     # Sua lógica de login/2FA já existente continua exatamente aqui...
-#     return {"message": "Autenticado com sucesso e protegido contra bots!"}
 
+DETAIL_CHALLENGE_INVALIDA = 'Requisição de login inválida ou expirada. Faça login novamente.'
+ 
 
-
-@auth.post('/login', status_code=status.HTTP_200_OK, summary='Autenticação de Usuário')
+@auth.post('/login',
+           status_code=status.HTTP_200_OK,
+           summary='Autenticação de Usuário'
+           )
 @limiter.limit('3/minute')
 async def login(
     request: Request, 
@@ -112,7 +113,7 @@ async def login(
     session: Session,
     token: Access_token,
     # backgroundTasks: BackgroundTasks,
-    _captcha: Claudflare_turnfile
+    # _captcha: Claudflare_turnfile
     ):
     """Endpoint para autenticação de usuário."""
 
@@ -125,12 +126,15 @@ async def login(
         await session.rollback()
         logger.error('Falha crítica ao consultar utilizador no banco: %s', str(query_err))
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail='Erro interno de processamento na base de dados.'
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail='Erro interno de processamento na base de dados.'
         )
 
     if user and not user.ativo:
         logger.warning('Tentativa de login em conta desativada: %s', token.username)
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail='E-mail ou senha incorretos')
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail='E-mail ou senha incorretos')
 
     if not user:
         logger.warning('Falha de login: usuario %s nao encontrado', token.username)
@@ -203,8 +207,8 @@ async def login(
     user_agent = request.headers.get("user-agent")
     
     # --- Fluxo de Autenticação com Sucesso ---
-    logger.info('Tentando atualizar o ultimo login do usuario')
-    user.ultimo_login = agora
+    logger.info('Senha validada. Resetando contadores de tentativas do usuario')
+
     user.tentativas_apos_bloqueio = 0
     user.tentativa_acertos = 0
     user.bloqueado_ate = None
@@ -214,20 +218,38 @@ async def login(
         logger.info('Usuário %s requer verificação de 2FA.', token.username)
         # Aqui você pode implementar a lógica para enviar o código 2FA ou redirecionar para o endpoint de verificação.
         try:
+            challenge_token = await criar_challenge_2fa(
+                session=session,
+                user_id=user.id,
+                ip=ip_address,
+                user_agent=user_agent,
+            )
             session.add(user)
             await session.commit()
+            logger.info('Challenge 2FA criado com sucesso para o usuário %s', token.username)
         except Exception as e:
             await session.rollback()
-            logger.error('Falha ao salvar estado pré-2FA: %s', str(e))
-        
+            logger.error('Falha ao criar challenge 2FA: %s', str(e))
+            raise HTTPException(
+                        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                        detail='Erro interno de processamento.',
+                    )
 
-        return  {
-            "require_2fa": True,
-            "user_id": str(user.id),
-            "message": "Autenticação de dois fatores necessária. Verifique seu dispositivo.",
-        }
+        # return  {
+        #     "require_2fa": True,
+        #     "user_id": str(user.id),
+        #     "message": "Autenticação de dois fatores necessária. Verifique seu dispositivo.",
+        # }
+        response.headers['Cache-Control'] = 'no-store'
+        return {
+                'require_2fa': True,
+                'challenge_token': challenge_token,
+                'expires_in': int(CHALLENGE_TTL.total_seconds()),
+                'message': 'Autenticação de dois fatores necessária. Verifique seu dispositivo.',
+            }
     
     logger.info('Usuário %s autenticado com sucesso (Sem 2FA)', token.username)
+    user.ultimo_login = agora
     token_gerado = create_token({'sub': str(user.id)})
 
 
@@ -291,37 +313,69 @@ async def verify_2fa(
     body: Login2FARequest,
     session: Session,
     backgroundTasks: BackgroundTasks,
+    _captcha: Claudflare_turnfile,
 ):
     """
     Endpoint para verificação de autenticação de dois fatores (2FA).
-    Este endpoint recebe o código 2FA do usuário, verifica a autenticidade e retorna um token de acesso e um refresh token.
+    Recebe a challenge emitida pelo /login (após validar a senha) e o código 2FA.
+    Se tudo estiver correcto, emite o access token e o refresh token.
+ 
     Args:
-        response (Response): Objeto de resposta para configurar os cookies.
-        session (Session): Sessão assíncrona do banco de dados (SQLAlchemy).
-        body (Login2FARequest): Corpo da requisição contendo o código 2FA e o ID do usuário.
+        body (Login2FARequest): challenge_token + codigo (TOTP de 6 ou backup de 8 dígitos).
+ 
     Raises:
-        HTTPException [401 UNAUTHORIZED]: Se o código 2FA estiver incorreto ou expirado.
+        HTTPException [401]: challenge inválida, expirada, já usada ou de outra origem.
+        HTTPException [400]: código inválido, expirado ou já usado.
+        HTTPException [500]: Erro interno do servidor.
+        HTTPException [404]: Usuário não encontrado.
+        HTTPException [403]: Acesso negado.
+        HTTPException [429]: Requisições em excesso.
+        HTTPException [409]: Conflito de dados.
+    """
 
-    # async def login(response: Response, session: Session, token: Access_token):
-   """
+    logger.info('Tentativa de verificação 2FA')
+    ip_address = get_client_ip(request)
+    user_agent = request.headers.get('user-agent')
 
-    logger.info('Tentativa de verificação 2FA para o usuário: %s', body.user_id)
-    query = select(User).where(User.id == body.user_id)
-    user = await session.scalar(query)
+    challenge = await obter_challenge_valida(
+        session=session,
+        token_em_claro=body.challenge_token,
+        ip=ip_address,
+        user_agent=user_agent,
+    )
+    if not challenge:
+        logger.warning('Challenge 2FA inválida, expirada, usada ou de origem diferente (ip=%s)', ip_address)
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=DETAIL_CHALLENGE_INVALIDA)
+     
+    # if not user or not user.two_factor_enabled:
+    #     raise HTTPException(
+    #         status_code=status.HTTP_400_BAD_REQUEST,
+    #         detail="Requisição de login inválida ou expirada."
+    #     )
+    challenge_id = challenge.id
+    user_id = challenge.user_id
 
-    if not user or not user.two_factor_enabled:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Requisição de login inválida ou expirada."
-        )
+    if not await registrar_tentativa(session, challenge_id):
+        logger.warning('Challenge %s sem tentativas restantes', challenge_id)
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=DETAIL_CHALLENGE_INVALIDA)
+
+    logger.info('Tentativa de verificação 2FA para o usuário: %s', user_id)
+
+    user = await session.scalar(select(User).where(User.id == user_id))
+
+    if not user or not user.ativo or user.bloqueado_permanente or not user.two_factor_enabled:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=DETAIL_CHALLENGE_INVALIDA)
+ 
 
     codigo_limpo = body.codigo.strip()
+    codigo_encontrado = None 
+
     if len(codigo_limpo) == 6:
         totp = pyotp.TOTP(user.two_factor_secret)
-        logger.info('Verificando código 2FA para o usuário: %s', body.user_id)
+        logger.info('Verificando código 2FA')
         #valid_window=1 permite aceitar códigos válidos dentro de uma janela de tempo de 30 segundos antes ou depois do código atual.
         if not totp.verify(codigo_limpo, valid_window=1):
-            logger.warning('Código 2FA inválido para o usuário: %s', body.user_id)
+            logger.warning('Código 2FA inválido')
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Código 2FA inválido ou expirado."
@@ -336,37 +390,82 @@ async def verify_2fa(
         )
         codigos_disponiveis = backup_result.all()
         
-        codigo_encontrado = None
         for codigo in codigos_disponiveis:
             if verify_password(codigo_limpo, codigo.code_hash):
                 codigo_encontrado = codigo
                 break
         if not codigo_encontrado:
-            logger.warning('Código de backup inválido para o usuário: %s', body.user_id)
+            logger.warning('Código de backup inválido')
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Código de resgate inválido ou já utilizado."
             )
 
-        try:
-            codigo_encontrado.used = True
-            await session.commit()
-        except Exception as e:
-            await session.rollback()
-            logger.error('Não foi possível marcar o código de resgate como usado: %s', str(e))
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Erro ao processar validação de segurança."
-            )
+        # try:
+        #     codigo_encontrado.used = True
+        #     await session.commit()
+        # except Exception as e:
+        #     await session.rollback()
+        #     logger.error('Não foi possível marcar o código de resgate como usado: %s', str(e))
+        #     raise HTTPException(
+        #         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        #         detail="Erro ao processar validação de segurança."
+        #     )
 
     else:
-        logger.warning('Código 2FA ou de backup com tamanho inválido para o usuário: %s', body.user_id)
+        logger.warning('Código 2FA ou de backup com tamanho inválido')
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="O código deve conter 6 dígitos (aplicativo) ou 8 dígitos (resgate)."
         )
 
-        logger.info('Usuário %s autenticado com sucesso', token.username)
+
+    nome_completo = user.nome_completo
+    email_destino = user.email
+    user_id_str = str(user.id)
+
+
+
+    try:
+        if not await consumir_challenge(session, challenge_id):
+            # Outro pedido concorrente já consumiu esta challenge (replay)
+            await session.rollback()
+            logger.warning('Challenge %s já consumida (possível replay)', challenge_id)
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail=DETAIL_CHALLENGE_INVALIDA
+                )
+ 
+        if codigo_encontrado is not None:
+            # UPDATE condicional: garante uso único do código de backup mesmo com concorrência
+            resultado_backup = await session.execute(
+                update(BackupCode)
+                .where(BackupCode.id == codigo_encontrado.id, BackupCode.used == False)  # noqa: E712
+                .values(used=True)
+            )
+            if resultado_backup.rowcount != 1:
+                await session.rollback()
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail='Código de resgate inválido ou já utilizado.',
+                )
+ 
+        # [FIX-2FA] ultimo_login gravado só agora (login realmente concluído).
+        user.ultimo_login = datetime.now(timezone.utc)
+        session.add(user)
+        await session.commit()
+    except HTTPException:
+        raise
+    except Exception as e:
+        await session.rollback()
+        logger.error('Não foi possível concluir a validação 2FA: %s', str(e))
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail='Erro ao processar validação de segurança.',
+        )
+
+    logger.info('Usuário %s autenticado com sucesso (2FA)', user_id_str)
+     
     token_gerado = create_token({'sub': str(user.id)})
 
     ip_address = (
@@ -394,30 +493,28 @@ async def verify_2fa(
     try:
         session.add(user)
         await session.commit()
-        # CORREÇÃO 2: Removido o 'await session.refresh(user)' que causava colisão de transação
-        # com middlewares assíncronos de resposta após o commit já ter sido efetivado.
         logger.info('Sucesso na atualizacao do ultimo_login do usuario')
     except Exception as e:
         await session.rollback()
         logger.error('Nao foi possivel atualizar a data de ultimo_login no DB: %s', str(e))
 
     user_agent_parsed = parse(user_agent)
-    try:
-        backgroundTasks.add_task(
-            email_sucesso_login_async, 
-            nome_completo=user.nome_completo, 
-            ip_address=ip_address, 
-            email_destino=user.email,
-            navegador=user_agent_parsed.browser.family, 
-            sistema_operacional=user_agent_parsed.os.family, 
-            )
-        logger.info("E-mail de login enviado com sucesso para %s", user.email)
-    except Exception as e:
-        logger.error("Falha ao enviar e-mail de login para %s: %s", user.email, str(e))
-        raise HTTPException(
-            status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
-            detail="Falha ao enviar e-mail de login. Tente novamente mais tarde."
-        )
+    # try:
+    #     # backgroundTasks.add_task(
+    #     #     email_sucesso_login_async, 
+    #     #     nome_completo=user.nome_completo, 
+    #     #     ip_address=ip_address, 
+    #     #     email_destino=user.email,
+    #     #     navegador=user_agent_parsed.browser.family, 
+    #     #     sistema_operacional=user_agent_parsed.os.family, 
+    #     #     )
+    #     logger.info("E-mail de login enviado com sucesso para %s", user.email)
+    # except Exception as e:
+    #     logger.error("Falha ao enviar e-mail de login para %s: %s", user.email, str(e))
+    #     raise HTTPException(
+    #         status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+    #         detail="Falha ao enviar e-mail de login. Tente novamente mais tarde."
+    #     )
     
     set_auth_cookies(
         response=response,
@@ -1027,24 +1124,10 @@ async def criar_permissao(
     schema: CreatePermissao,
     session: Session,
     redis: Redis, 
-    # current_user: Get_current_user, scope: ScopeValid
+    current_user: Get_current_user, scope: ScopeValid
 ):
-    # if not current_user.scope:
-    #     raise HTTPException(status_code=HTTPStatus.UNAUTHORIZED, detail='Usuario sem autorizacao')
-
-    # if scope.provincia_id is not None:
-    #     logger.warning('Erro: admin %s nao tem permissao para criar permissao.', current_user.email)
-    #     raise HTTPException(
-    #         status_code=HTTPStatus.FORBIDDEN, detail=f'Erro: admin {current_user.email} nao tem permissao'
-    #     )
-
-    # if scope.municipio_id is not None:
-    #     logger.info('Erro: admin %s nao tem permissao para criar permissao.', current_user.email)
-    #     raise HTTPException(
-    #         status_code=HTTPStatus.FORBIDDEN, detail=f'Erro: admin {current_user.email} nao tem permissao'
-    #     )
-
-    # logger.info('Procurar usuario: %s no banco de dados...', current_user.nome_completo)
+    verificar_permissao_global_pais(scope, current_user)
+    logger.info('Procurar usuario: %s no banco de dados...', current_user.nome_completo)
     nova_permissao = Permissao(nome=schema.nome)
 
     try:
@@ -1132,9 +1215,13 @@ async def listar_permissoes(
 @limiter.limit('5/minute')
 async def criar_role(
     request: Request,
-    schemas: CreateRole, session: Session, redis: Redis, 
-    # current_user: Get_current_user, scope: ScopeValid
+    schemas: CreateRole,
+    session: Session,
+    redis: Redis, 
+    current_user: Get_current_user,
+    scope: ScopeValid
 ):
+    verificar_permissao_global_pais(scope, current_user)
 
     # if scope.provincia_id is not None:
     #     logger.warning('Erro: admin %s nao tem permissao para criar Role.', current_user.email)
@@ -1243,17 +1330,19 @@ async def atualizar_permissao(
     current_user: Get_current_user,
     scope: ScopeValid,
 ):
-    if scope.provincia_id is not None:
-        logger.warning('Erro: admin %s nao tem permissao para atualizar Permissoes.', current_user.email)
-        raise HTTPException(
-            status_code=HTTPStatus.FORBIDDEN, detail=f'Erro: admin {current_user.email} nao tem permissao'
-        )
+    """Endpoint para atualizar uma permissão existente. Recebe o ID da permissão e os novos dados, verifica a validade do ID e atualiza a permissão no banco de dados."""
+    verificar_permissao_global_pais(scope, current_user)
+    # if scope.provincia_id is not None:
+    #     logger.warning('Erro: admin %s nao tem permissao para atualizar Permissoes.', current_user.email)
+    #     raise HTTPException(
+    #         status_code=HTTPStatus.FORBIDDEN, detail=f'Erro: admin {current_user.email} nao tem permissao'
+    #     )
 
-    if scope.municipio_id is not None:
-        logger.info('Erro: admin %s nao tem permissao para atualizar permissoes.', current_user.email)
-        raise HTTPException(
-            status_code=HTTPStatus.FORBIDDEN, detail=f'Erro: admin {current_user.email} nao tem permissao'
-        )
+    # if scope.municipio_id is not None:
+    #     logger.info('Erro: admin %s nao tem permissao para atualizar permissoes.', current_user.email)
+    #     raise HTTPException(
+    #         status_code=HTTPStatus.FORBIDDEN, detail=f'Erro: admin {current_user.email} nao tem permissao'
+    #     )
 
     logger.info('Buscando pela permissao %d...', id_permissao)
     permissao = await session.scalar(select(Permissao).where(Permissao.id == id_permissao))
@@ -1294,17 +1383,32 @@ async def eliminar_permissao(
     request: Request,
     id_permissao: int, session: Session, redis: Redis, current_user: Get_current_user, scope: ScopeValid
 ):
-    if scope.provincia_id is not None:
-        logger.warning('Erro: admin %s nao tem permissao para deletar permissao.', current_user.email)
-        raise HTTPException(
-            status_code=HTTPStatus.FORBIDDEN, detail=f'Erro: admin {current_user.email} nao tem permissao'
-        )
+    """
+    Endpoint para deletar uma permissão existente. Recebe o ID da permissão, verifica a validade do ID e remove a permissão do banco de dados.
+    Args:
+        request (Request): O objeto de requisição.
+        id_permissao (int): O ID da permissão a ser deletada.
+        session (Session): A sessão do banco de dados.
+        redis (Redis): A instância do Redis.
+        current_user (Get_current_user): O usuário atual.
+        scope (ScopeValid): O escopo de validade.
+    Raises:
+        HTTPException [403 FORBIDDEN]: Se o usuário não tiver permissão para deletar
+        HTTPException [404 NOT FOUND]: Se a permissão não for encontrada.
 
-    if scope.municipio_id is not None:
-        logger.info('Erro: admin %s nao tem permissao para para deletar permissao.', current_user.email)
-        raise HTTPException(
-            status_code=HTTPStatus.FORBIDDEN, detail=f'Erro: admin {current_user.email} nao tem permissao'
-        )
+    """
+    verificar_permissao_global_pais(scope, current_user)
+    # if scope.provincia_id is not None:
+    #     logger.warning('Erro: admin %s nao tem permissao para deletar permissao.', current_user.email)
+    #     raise HTTPException(
+    #         status_code=HTTPStatus.FORBIDDEN, detail=f'Erro: admin {current_user.email} nao tem permissao'
+    #     )
+
+    # if scope.municipio_id is not None:
+    #     logger.info('Erro: admin %s nao tem permissao para para deletar permissao.', current_user.email)
+    #     raise HTTPException(
+    #         status_code=HTTPStatus.FORBIDDEN, detail=f'Erro: admin {current_user.email} nao tem permissao'
+    #     )
 
     logger.info('Buscando pela permissao %d...', id_permissao)
     permissao = await session.scalar(select(Permissao).where(Permissao.id == id_permissao))
@@ -1348,17 +1452,32 @@ async def atualizar_role(
     current_user: Get_current_user,
     scope: ScopeValid,
 ):
-    if scope.provincia_id is not None:
-        logger.warning('Erro: admin %s nao tem permissao para atualizar Role.', current_user.email)
-        raise HTTPException(
-            status_code=HTTPStatus.FORBIDDEN, detail=f'Erro: admin {current_user.email} nao tem permissao'
-        )
+    """ 
+    Endpoint para atualizar uma role existente. Recebe o ID da role e os novos dados, verifica a validade do ID e atualiza a role no banco de dados.
+    Args:
+        request (Request): O objeto de requisição.
+        schemas (UpgradeRole): O esquema de atualização da role.
+        id_role (int): O ID da role a ser atualizada.
+        session (Session): A sessão do banco de dados.
+        redis (Redis): A instância do Redis.
+        current_user (Get_current_user): O usuário atual.
+        scope (ScopeValid): O escopo de validade.
+    Raises:
+        HTTPException [403 FORBIDDEN]: Se o usuário não tiver permissão para atualizar a
 
-    if scope.municipio_id is not None:
-        logger.info('Erro: admin %s nao tem permissao para atualizar role.', current_user.email)
-        raise HTTPException(
-            status_code=HTTPStatus.FORBIDDEN, detail=f'Erro: admin {current_user.email} nao tem permissao'
-        )
+    """
+    verificar_permissao_global_pais(scope, current_user)
+    # if scope.provincia_id is not None:
+    #     logger.warning('Erro: admin %s nao tem permissao para atualizar Role.', current_user.email)
+    #     raise HTTPException(
+    #         status_code=HTTPStatus.FORBIDDEN, detail=f'Erro: admin {current_user.email} nao tem permissao'
+    #     )
+
+    # if scope.municipio_id is not None:
+    #     logger.info('Erro: admin %s nao tem permissao para atualizar role.', current_user.email)
+    #     raise HTTPException(
+    #         status_code=HTTPStatus.FORBIDDEN, detail=f'Erro: admin {current_user.email} nao tem permissao'
+    #     )
 
     logger.info('Buscando pelo role de id %d...', id_role)
     role = await session.scalar(select(Role).where(Role.id == id_role).options(selectinload(Role.permissoes)))
@@ -1396,18 +1515,20 @@ async def atualizar_role(
 async def eliminar_role(
     request: Request,
     id_role: int, session: Session, redis: Redis, current_user: Get_current_user, scope: ScopeValid
-):
-    if scope.provincia_id is not None:
-        logger.warning('Erro: admin %s nao tem permissao para deletar Role.', current_user.email)
-        raise HTTPException(
-            status_code=HTTPStatus.FORBIDDEN, detail=f'Erro: admin {current_user.email} nao tem permissao'
-        )
+): 
 
-    if scope.municipio_id is not None:
-        logger.info('Erro: admin %s nao tem permissao para deletar role.', current_user.email)
-        raise HTTPException(
-            status_code=HTTPStatus.FORBIDDEN, detail=f'Erro: admin {current_user.email} nao tem permissao'
-        )
+    verificar_permissao_global_pais(scope, current_user)
+    # if scope.provincia_id is not None:
+    #     logger.warning('Erro: admin %s nao tem permissao para deletar Role.', current_user.email)
+    #     raise HTTPException(
+    #         status_code=HTTPStatus.FORBIDDEN, detail=f'Erro: admin {current_user.email} nao tem permissao'
+    #     )
+
+    # if scope.municipio_id is not None:
+    #     logger.info('Erro: admin %s nao tem permissao para deletar role.', current_user.email)
+    #     raise HTTPException(
+    #         status_code=HTTPStatus.FORBIDDEN, detail=f'Erro: admin {current_user.email} nao tem permissao'
+    #     )
 
     logger.info('Buscando pelo role de id %d...', id_role)
     role = await session.scalar(select(Role).where(Role.id == id_role).options(selectinload(Role.permissoes)))

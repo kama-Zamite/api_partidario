@@ -131,10 +131,24 @@ class UpgradePassWord(BaseModel):
     nova_senha: str = Field(min_length=8, max_length=30)
     confirmar_nova_senha: str = Field(min_length=8, max_length=30)
 
-    @model_validator(mode='after')
-    def validar_nova_senha(self):
+
+    @field_validator("nova_senha")
+    @classmethod
+    def validar_complexidade(cls, v: str) -> str:
+        if not re.search(r"[A-Z]", v):
+            raise ValueError("A senha deve conter pelo menos uma letra maiúscula")
+        if not re.search(r"[a-z]", v):
+            raise ValueError("A senha deve conter pelo menos uma letra minúscula")
+        if not re.search(r"\d", v):
+            raise ValueError("A senha deve conter pelo menos um número")
+        if not re.search(r"[!@#$%^&*(),.?\":{}|<>]", v):
+            raise ValueError("A senha deve conter pelo menos um caractere especial")
+        return v
+
+    @model_validator(mode="after")
+    def senhas_iguais(self):
         if self.nova_senha != self.confirmar_nova_senha:
-            raise ValueError('A nova senha e a confirmação não são iguais.')
+            raise ValueError("A nova senha e a confirmação não são iguais.")
         return self
 
 

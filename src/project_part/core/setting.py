@@ -50,6 +50,10 @@ class Settings(BaseSettings):
 
     MAX_CONTENT_LENGTH: int = 10 * 1024 * 1024
 
+    # Exemplo: ".meusite.com" (o ponto no início permite o domínio e todos os subdomínios)
+    # Em desenvolvimento local (localhost), deixe como None ou "localhost"
+    # COOKIE_DOMAIN: str = ".meusite.com" if ENV == "production" else None
+
     @computed_field
     def SECURE_COOKIES(self) -> bool:
         """Retorna True apenas se o ambiente for produção."""
@@ -58,6 +62,7 @@ class Settings(BaseSettings):
     @computed_field
     def SAMESITE_COOKIE(self) -> str:
         """Retorna 'none' para produção (exige HTTPS) ou 'lax' para local."""
+
         return "none" if self.SECURE_COOKIES else "lax"
     
     @field_validator('ALLOWED_ORIGINS', 'ALLOWED_HOSTS', mode='before')
@@ -75,3 +80,7 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+
+# 'Retorna 'lax' para produção e desenvolvimento.
+# 'lax' protege contra CSRF mesmo entre subdomínios (front.meusite.com -> back.meusite.com).'

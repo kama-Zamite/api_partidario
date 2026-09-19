@@ -142,6 +142,7 @@ def home(request: Request):
 
 # endpoint interno só em DEBUG / com token
 @app.post('/internal/jobs/quotas-vencidas')
+@limiter.limit('5/minute')
 async def run_job_now(request: Request, redis: Redis):
     await verificar_e_notificar_quotas_vencidas(async_session, redis)
     return {'ok': True}

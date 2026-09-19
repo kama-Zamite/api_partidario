@@ -22,6 +22,7 @@ def set_auth_cookies(
         "secure": settings.SECURE_COOKIES,
         "samesite": settings.SAMESITE_COOKIE,
         "path": "/",
+        # "domain": settings.COOKIE_DOMAIN, # <--- Permite que o front e o back compartilhem o cookie
     }
 
     response.set_cookie(

@@ -43,11 +43,14 @@ CACHE_KEY_PROVINCIAS = 'v2:provincia:listar'
 
 @provincia.post('/create', status_code=HTTPStatus.CREATED, response_model=ResponseProvincia)
 async def create_provincia(
-    schemas: CreateProvincia, session: Session, redis: Redis,
-    # current_user: Get_current_user, scope: ScopeValid
+    schemas: CreateProvincia,
+    session: Session,
+    redis: Redis,
+    current_user: Get_current_user,
+    scope: ScopeValid
 ):
 
-    # verificar_permissao_global_pais(scope, current_user)
+    verificar_permissao_global_pais(scope, current_user)
 
     nova_provincia = Provincia(nome_provincia=schemas.nome_provincia)
 
@@ -59,6 +62,7 @@ async def create_provincia(
         logger.info('Cache de listagem de províncias invalidado.')
 
         await session.refresh(nova_provincia)
+        logger.info('Província %s cadastrada com sucesso.', nova_provincia.nome_provincia)
         return {
             'id': nova_provincia.id,
             'nome_provincia': nova_provincia.nome_provincia,
@@ -76,9 +80,9 @@ async def create_provincia(
 @provincia.post('/municipio/create', status_code=HTTPStatus.CREATED)
 async def criar_municipio(
     schemas: CreateMunicipio, session: Session, redis: Redis,
-    # current_user: Get_current_user, scope: ScopeValid
+    current_user: Get_current_user, scope: ScopeValid
 ):
-    # verificar_permissao_global_pais(scope, current_user)
+    verificar_permissao_global_pais(scope, current_user)
 
     logger.info('Buscando província vinculada no PostgreSQL: %s', schemas.nome_provincia)
     pegar_provincia = await session.scalar(select(Provincia).where(Provincia.nome_provincia == schemas.nome_provincia))
@@ -184,7 +188,11 @@ async def atualizar_provincia(
 
 @provincia.delete('/delete/{id_provincia}', status_code=HTTPStatus.OK)
 async def eliminar_provincia(
-    id_provincia: uuid.UUID, session: Session, redis: Redis, current_user: Get_current_user, scope: ScopeValid
+    id_provincia: uuid.UUID,
+    session: Session,
+    redis: Redis,
+    current_user: Get_current_user,
+    scope: ScopeValid
 ):
     verificar_permissao_global_pais(scope, current_user)
 

@@ -21,10 +21,15 @@ class TokenResponse(BaseModel):
     refresh_token: str | None = None
     token_type: str
 
+# class Login2FARequest(BaseModel):
+#     user_id: uuid.UUID
+#     codigo: str = Field(min_length=6, max_length=8)
+
 class Login2FARequest(BaseModel):
-    user_id: uuid.UUID
+    challenge_token: str = Field(min_length=20, max_length=128)  # [FIX-2FA] substitui user_id
     codigo: str = Field(min_length=6, max_length=8)
 
+ 
 class PermissaoBase(BaseModel):
     nome: str = Field(min_length=3, max_length=100)
 

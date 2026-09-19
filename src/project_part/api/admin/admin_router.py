@@ -10,6 +10,7 @@ from datetime import (
     timedelta,
     date
 )
+
 from dateutil.relativedelta import relativedelta
 from decimal import Decimal
 from http import HTTPStatus
@@ -42,6 +43,7 @@ from project_part.core.secury import (
     verificar_permissao_global_pais,
 )
 from project_part.core.setting import settings
+from project_part.core.rate_limit import limiter
 from project_part.db.cache import get_redis
 from project_part.db.session import get_session
 from project_part.model.models import (
@@ -132,7 +134,9 @@ admin = APIRouter(prefix='/admin', tags=['Admin Management'])
 
 
 @admin.post('/set-scope', status_code=HTTPStatus.CREATED)
+@limiter.limit('30/minute')
 async def criar_scope(
+    request: Request,
     schema: CreateAdminScope,
     session: Session, 
     redis: Redis,
@@ -256,7 +260,9 @@ async def criar_scope(
     status_code=HTTPStatus.OK,
     response_model=list[ResponseAdminScope],
 )
+@limiter.limit('30/minute')
 async def listar_admin_scope(
+    request: Request,
     response: Response,
     session: Session,
     redis: Redis,
@@ -420,7 +426,9 @@ async def listar_admin_scope(
 
 
 @admin.get('/militantes-registrados', status_code=HTTPStatus.OK)
+@limiter.limit('30/minute')
 async def militantes_registrados(
+    request: Request,
     scope: ScopeValid,
     current_user: Get_current_user,
     session: Session
@@ -465,7 +473,9 @@ async def militantes_registrados(
 
 
 @admin.get('/simpatizantes-registrados', status_code=HTTPStatus.OK)
+@limiter.limit('30/minute')
 async def simpatizantes_registrados(
+    request: Request,
     scope: ScopeValid,
     current_user: Get_current_user,
     session: Session
@@ -511,7 +521,9 @@ async def simpatizantes_registrados(
 
 
 @admin.get('/militantes-registrados/nos-ultimos-dias', status_code=HTTPStatus.OK)
+@limiter.limit('30/minute')
 async def ultimos_militantes_resgistrados(
+    request: Request,
     session: Session,
     current_user: Get_current_user,
     scope: ScopeValid,
@@ -3079,14 +3091,14 @@ async def criar_solicitacao_fundo(
 
     # Fallback: qualquer admin se não houver scope de superadmin
     if not superadmin_ids:
-        superadmin_ids = (
-            await session.scalars(
-                select(User.id).where(
-                    User.role_id == settings.ADMIN_ROLE_ID,
-                    User.ativo.is_(True),
-                ).limit(5)
-            )
-        ).all()
+        logger.warning(
+            'Nenhum superadmin encontrado para notificar sobre a solicitação %s',
+            solicitacao.id,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail='Nenhum superadmin encontrado para notificar sobre a solicitação.',
+        )
 
     nome_provincia = None
     prov = await session.scalar(
@@ -3174,6 +3186,8 @@ async def listar_solicitacoes_fundo(
     Admin municipal: negado.
     """
     if scope.municipio_id is not None:
+        logger.warning(
+        'Admin municipal %s tentou listar solicitações de fundo, acesso negado.',)
         raise HTTPException(status_code=HTTPStatus.FORBIDDEN, detail='Acesso negado.')
 
     filtros = []
@@ -4392,8 +4406,18 @@ async def aprovar_doacao(
     # Validação de escopo territorial
     if doacao.doador:
         if scope.municipio_id and doacao.doador.municipio_id != scope.municipio_id:
+            logger.warning(
+                'Admin %s tentou aprovar doação %s fora de seu escopo municipal.',
+                current_user.id,
+                doacao.id,
+            )
             raise HTTPException(HTTPStatus.FORBIDDEN, detail='Acesso negado.')
         if scope.provincia_id and doacao.doador.provincia_id != scope.provincia_id:
+            logger.warning(
+                'Admin %s tentou aprovar doação %s fora de seu escopo provincial.',
+                current_user.id,
+                doacao.id,
+            )
             raise HTTPException(HTTPStatus.FORBIDDEN, detail='Acesso negado.')
 
     anterior = doacao.status.value
@@ -4514,8 +4538,18 @@ async def rejeitar_doacao(
 
     if doacao.doador:
         if scope.municipio_id and doacao.doador.municipio_id != scope.municipio_id:
+            logger.warning(
+                'Admin %s tentou rejeitar doação %s fora de seu escopo municipal.',
+                current_user.id,
+                doacao.id,
+            )
             raise HTTPException(HTTPStatus.FORBIDDEN, detail='Acesso negado.')
         if scope.provincia_id and doacao.doador.provincia_id != scope.provincia_id:
+            logger.warning(
+                'Admin %s tentou rejeitar doação %s fora de seu escopo provincial.',
+                current_user.id,
+                doacao.id,
+            )
             raise HTTPException(HTTPStatus.FORBIDDEN, detail='Acesso negado.')
 
     anterior = doacao.status.value
@@ -4660,6 +4694,11 @@ async def aprovar_quota(
         raise HTTPException(HTTPStatus.NOT_FOUND, detail='Militante associado a esta quota não foi encontrado.')
 
     if scope.provincia_id and m.provincia_id != scope.provincia_id:
+        logger.warning(
+            'Admin %s tentou aprovar quota %s fora de seu escopo provincial.',
+            current_user.id,
+            pag.id,
+        )
         raise HTTPException(HTTPStatus.FORBIDDEN, detail='Acesso negado.')
 
     # Atualiza o status da transação
@@ -4806,8 +4845,18 @@ async def rejeitar_quota(
 
     m  = pag.militante
     if scope.municipio_id and m.municipio_id != scope.municipio_id:
+        logger.warning(
+            'Admin %s tentou rejeitar pagamento de quota %s fora de seu escopo municipal.',
+            current_user.id,
+            pag.id,
+        )
         raise HTTPException(HTTPStatus.FORBIDDEN, detail='Acesso negado.')
     if scope.provincia_id and m.provincia_id != scope.provincia_id:
+        logger.warning(
+            'Admin %s tentou rejeitar pagamento de quota %s fora de seu escopo provincial.',
+            current_user.id,
+            pag.id,
+        )
         raise HTTPException(HTTPStatus.FORBIDDEN, detail='Acesso negado.')
 
     anterior = pag.status.value
