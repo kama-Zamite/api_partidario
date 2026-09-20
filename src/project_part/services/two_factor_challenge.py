@@ -19,7 +19,7 @@ from project_part.db.session import get_session
 
 
 # [FIX-2FA] Parâmetros da challenge
-CHALLENGE_TTL = timedelta(minutes=5)   # curta duração
+CHALLENGE_TTL = timedelta(minutes=20)   # curta duração
 CHALLENGE_MAX_ATTEMPTS = 5             # tentativas de código por challenge
  
 Session = Annotated[AsyncSession, Depends(get_session)]
