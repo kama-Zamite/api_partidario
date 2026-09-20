@@ -21,6 +21,7 @@ from sqlalchemy import (
     Table,
     UniqueConstraint,
     func,
+    text,
     # UUID,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
@@ -882,6 +883,14 @@ class PagamentoQuota(Base):
         CheckConstraint('quantia > 0', name='ck_quota_quantia_positiva'),
         Index('ix_quota_user_periodo', 'user_id', 'periodo'),
         Index('ix_quota_status_data', 'status', 'data_pagamento'),
+
+        Index(
+            'uq_pagamento_quota_user_pending',
+            'user_id',
+            unique=True,
+            postgresql_where=text("status = 'PENDING'"),
+            sqlite_where=text("status = 'PENDING'"),  # só para testes locais
+        ),
     )
 
 

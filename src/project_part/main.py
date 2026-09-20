@@ -141,11 +141,11 @@ def home(request: Request):
     return {'msg': 'rota criada com sucesso!'}
 
 # endpoint interno só em DEBUG / com token
-@app.post('/internal/jobs/quotas-vencidas')
-@limiter.limit('5/minute')
-async def run_job_now(request: Request, redis: Redis):
-    await verificar_e_notificar_quotas_vencidas(async_session, redis)
-    return {'ok': True}
+# @app.post('/internal/jobs/quotas-vencidas')
+# @limiter.limit('5/minute')
+# async def run_job_now(request: Request, redis: Redis):
+#     await verificar_e_notificar_quotas_vencidas(async_session, redis)
+#     return {'ok': True}
 
 app.include_router(auth)
 app.include_router(router_2FA)

@@ -4,7 +4,8 @@ from decimal import Decimal
 
 from typing import Any, Optional, Annotated
 import logging
-from fastapi import APIRouter, Request, Query, HTTPException, Depends
+from fastapi import APIRouter, Request, Query, HTTPException, Depends, status
+from project_part.core.rate_limit import limiter
 from dateutil.relativedelta import relativedelta  # Garante manipulação exata de meses
 from sqlalchemy import select, func
 from sqlalchemy.orm import selectinload
@@ -54,6 +55,10 @@ Session = Annotated[AsyncSession, Depends(get_session)]
 
 logger = logging.getLogger(__name__)
 finance = APIRouter(prefix='/finance', tags=['Financeiro'])
+
+QUOTA_PENDENTE_UQ = 'uq_pagamento_quota_user_pending'
+DETAIL_QUOTA_PENDENTE = 'Você já possui um pagamento de quota pendente aguardando aprovação.'
+MAX_MESES_PAGAR = 120
 
 @finance.post('/doacao', status_code=HTTPStatus.CREATED)
 async def criar_doacao(
@@ -239,6 +244,7 @@ async def criar_doacao_anonimo(
         'msg': 'Doação enviada com sucesso, aguarde a aprovação do admin.',
         'doacao_id': str(doacao.id),
     }
+
 # @finance.post('/quota', status_code=HTTPStatus.CREATED)
 # # @limiter.limit('5/minute')
 # async def criar_pagamento_quota(
@@ -407,7 +413,32 @@ async def criar_doacao_anonimo(
 
 
 
+
+def _erro_integridade_quota(exc: IntegrityError, user_id) -> HTTPException:
+    msg = str(getattr(exc, 'orig', exc))
+    if QUOTA_PENDENTE_UQ in msg:
+        logger.warning('Race condition contida pelo banco: quota PENDING duplicada (user %s)', user_id)
+        return HTTPException(status_code=HTTPStatus.CONFLICT, detail=DETAIL_QUOTA_PENDENTE)
+    if 'unique' in msg.lower() or 'duplicate' in msg.lower():
+        logger.warning('Violação de unicidade em pagamento de quota (user %s): %s', user_id, msg)
+        # [HARDENING] No modelo, só `id_transacao` tem unique=True (`referencia` não),
+        #             por isso a mensagem já não menciona a referência.
+        return HTTPException(
+            status_code=HTTPStatus.CONFLICT,
+            detail='ID de transação já existe.',
+        )
+    # [HARDENING] Antes qualquer IntegrityError virava "referência já existe",
+    #             mesmo sendo FK / NOT NULL. Agora só é dito quando é mesmo unicidade.
+    logger.error('IntegrityError inesperado em pagamento de quota (user %s): %s', user_id, msg)
+    return HTTPException(
+        status_code=HTTPStatus.BAD_REQUEST,
+        detail='Não foi possível registar o pagamento de quota.',
+    )
+
+
+
 @finance.post('/quota', status_code=HTTPStatus.CREATED)
+@limiter.limit('5/minute')
 async def criar_pagamento_quota(
     request: Request,
     quantia: Decimal,
@@ -419,6 +450,8 @@ async def criar_pagamento_quota(
     session: Session,
     current_user: Get_current_user,
 ):
+    user_id = current_user.id
+
     if current_user.cadastrar_militante != CadastrarComo.MILITANTE:
         raise HTTPException(
             HTTPStatus.FORBIDDEN,
@@ -431,6 +464,17 @@ async def criar_pagamento_quota(
             detail='A quantidade de meses a pagar deve ser de pelo menos 1 mês.'
         )
 
+    if meses_pagar > MAX_MESES_PAGAR:
+        raise HTTPException(
+            HTTPStatus.BAD_REQUEST,
+            detail=f'A quantidade de meses a pagar não pode exceder {MAX_MESES_PAGAR}.'
+        )
+
+    if not quantia.is_finite() or quantia <= 0:
+        raise HTTPException(
+            HTTPStatus.BAD_REQUEST,
+            detail='A quantia deve ser um valor positivo.'
+        )
     get_referencia = referencia if referencia else current_user.telefone
 
     try:
@@ -445,34 +489,33 @@ async def criar_pagamento_quota(
         )
     except ValueError as e:
         logger.error("Erro de validação ao criar pagamento de quota: %s", str(e))
-        raise HTTPException(status_code=HTTPStatus.BAD_REQUEST, detail=str(e))
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
     # 1. Bloqueia se houver algum pagamento PENDING
     query_pendente = (
-        select(PagamentoQuota)
+        select(PagamentoQuota.id)
         .where(
-            PagamentoQuota.user_id == current_user.id,
+            PagamentoQuota.user_id == user_id,
             PagamentoQuota.status == QuotaStatusEnum.PENDING
         )
+        .limit(1)
     )
-    if await session.scalar(query_pendente):
-        logger.warning("Usuário %s já possui um pagamento de quota pendente.", current_user.id)
+    if await session.scalar(query_pendente) is not None:
+        logger.warning("Usuário %s já possui um pagamento de quota pendente.", user_id)
+        logger.warning("Usuário %s já possui um pagamento de quota pendente.", user_id)
         raise HTTPException(
             status_code=HTTPStatus.CONFLICT,
-            detail='Você já possui um pagamento de quota pendente aguardando aprovação.'
+            detail=DETAIL_QUOTA_PENDENTE
         )
 
     # 2. Descobre o ponto inicial olhando DIRETAMENTE para a expiração do perfil
     data_atual = datetime.now(timezone.utc).date()
 
     if current_user.data_expiracao_quota:
-        # Se ele já tem um histórico de expiração
-        if current_user.data_expiracao_quota >= data_atual:
-            # Se está em dia, o novo pagamento inicia no mês seguinte ao que expira
-            data_inicio = current_user.data_expiracao_quota + relativedelta(months=1)
-        else:
-            # Se está expirado (atrasado), o sistema força a regularização a partir do mês em atraso
-            data_inicio = current_user.data_expiracao_quota + relativedelta(months=1)
+       logger.info("Usuário %s tem data de expiração de quota: %s", user_id, current_user.data_expiracao_quota)
+        # Em dia: começa no mês seguinte à expiração.
+        # Expirado: força a regularização a partir do mês em atraso (mesma conta).
+       data_inicio = current_user.data_expiracao_quota + relativedelta(months=1)
     else:
         # Se nunca pagou uma quota na vida, começa a contar a partir do mês atual
         data_inicio = data_atual
@@ -481,17 +524,30 @@ async def criar_pagamento_quota(
     periodo_inicial_str = data_inicio.strftime('%Y-%m')
 
     # 3. Calcula o valor total proporcional
-    valor_total_quota = body.quantia * body.meses_pagar
+    valor_bruto  = body.quantia * body.meses_pagar
+    if valor_bruto >= Decimal('10000000000000'):  # 10^13 = limite de Numeric(15,2)
+        logger.warning("Valor total da quota fora do intervalo permitido para o usuário %s: %s", user_id, valor_bruto)
+        raise HTTPException(
+            HTTPStatus.BAD_REQUEST,
+            detail='Valor total da quota fora do intervalo permitido.'
+        )
+    valor_total_quota = valor_bruto.quantize(Decimal('0.01'))
 
+    if valor_total_quota <= 0:
+        raise HTTPException(
+            HTTPStatus.BAD_REQUEST,
+            detail='Valor total da quota fora do intervalo permitido.'
+        )
+    
     pagamento = PagamentoQuota(
-        user_id=current_user.id,
+        user_id=user_id,
         quantia=valor_total_quota,
         moeda='AOA',
         meses_pagar=body.meses_pagar,
         periodo=periodo_inicial_str, 
         metodo_pagamento=body.metodo_pagamento,
-        referencia=body.referencia.strip() if body.referencia else None,
-        id_transacao=body.id_transacao.strip() if body.id_transacao else None,
+        referencia=(body.referencia or '').strip() or None,
+        id_transacao=(body.id_transacao or '').strip() or None,
         observacao=body.observacao,
         status=QuotaStatusEnum.PENDING,
     )
@@ -500,11 +556,19 @@ async def criar_pagamento_quota(
         logger.info("Adicionando pagamento de quota à sessão para o usuário %s", current_user.id)
         session.add(pagamento)
         await session.flush()
+    except IntegrityError as e:
+            logger.warning("IntegrityError ao criar pagamento de quota para o usuário %s: %s", user_id, e)
+            await session.rollback()
+            raise _erro_integridade_quota(e, user_id)
     except Exception as e:
         await session.rollback()
-        logger.error("Erro no flush: %s", e)
-        raise HTTPException(status_code=HTTPStatus.BAD_REQUEST, detail='Erro ao armazenar o pagamento de quota')
-
+        # [HARDENING] logger.exception guarda o traceback; falha inesperada = 500 (era 400).
+        logger.exception("Erro no flush ao criar pagamento de quota (user %s): %s", user_id, e)
+        raise HTTPException(
+            status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+            detail='Erro ao armazenar o pagamento de quota'
+       )
+    pagamento_id = pagamento.id  # [HARDENING] guardado antes do commit (objecto expira)
     # Registo de histórico de movimentos
     await registar_movimento(
         session,
@@ -533,26 +597,40 @@ async def criar_pagamento_quota(
     admin_alvo = await session.scalar(query_admin_regional)
     
     if not admin_alvo:
+        logger.warning("Nenhum admin regional específico encontrado. Buscando Admin Geral...")
         query_admin_geral = select(User).where(User.role_id == settings.ADMIN_ROLE_ID).limit(1)
         admin_alvo = await session.scalar(query_admin_geral)
 
-    notificacao_admin = Notification(
-        admin_id=admin_alvo.id,
-        user_id=current_user.id,
-        titulo="Pagamento de Quota",
-        mensagem=f"O militante {current_user.nome_completo} solicitou pagamento de {body.meses_pagar} meses iniciando em {periodo_inicial_str}.",
-        destinatario="ADMIN",
-        categoria=RoleCategoriaNotificacao.QUOTA
-    )
+    if admin_alvo:
+        notificacao_admin = Notification(
+            admin_id=admin_alvo.id,
+            user_id=current_user.id,
+            titulo="Pagamento de Quota",
+            mensagem=f"O militante {current_user.nome_completo} solicitou pagamento de {body.meses_pagar} meses iniciando em {periodo_inicial_str}.",
+            destinatario="ADMIN",
+            categoria=RoleCategoriaNotificacao.QUOTA
+        )
     
-    session.add(notificacao_admin)
+        session.add(notificacao_admin)
+    else:
+        logger.error(
+            "Nenhum administrador encontrado para notificar o pagamento de quota %s (user %s)",
+            pagamento_id, user_id,
+        )
+
     try:
         await session.commit()
-        await session.refresh(pagamento)
-    except IntegrityError:
+    except IntegrityError as e:
         await session.rollback()
-        raise HTTPException(HTTPStatus.CONFLICT, detail='Referência ou ID de transação já existe.')
-
+        raise _erro_integridade_quota(e, user_id)
+    except Exception as e:
+        await session.rollback()
+        logger.exception("Erro no commit do pagamento de quota (user %s): %s", user_id, e)
+        raise HTTPException(
+            status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+            detail='Erro ao armazenar o pagamento de quota'
+        )
+    logger.info("Pagamento de quota %s finalizado com sucesso para o usuário %s", pagamento_id, user_id)
     return {
         "msg": "Pagamento de quota enviado com sucesso, aguarde a aprovação do admin.",
     }

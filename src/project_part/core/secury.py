@@ -7,7 +7,7 @@ from uuid import UUID
 
 from fastapi import Depends, HTTPException, Request, Cookie, status
 from fastapi.security import OAuth2PasswordBearer
-from jwt import DecodeError, PyJWTError, decode, encode
+from jwt import DecodeError, ExpiredSignatureError, PyJWTError, decode, encode
 from pwdlib import PasswordHash
 from slowapi.util import get_remote_address
 from sqlalchemy import select, update
@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from project_part.db.session import get_session
+from project_part.core.revocar_token_apos_alterar_passWord import token_reflete_senha_atual
 from project_part.model.models import (
     AdminScope,
     PasswordResetToken,
@@ -229,27 +230,56 @@ async def check_token(request: Request, session: Session):
         raise http_responses
 
     try:
-        payload = decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
-        user_id = payload.get('sub')
-        expire_token = payload.get('exp')
-        logger.info('CONTEÚDO DO TOKEN -> sub: %s , exp: %d', str(user_id), int(expire_token))
-        if not user_id or not expire_token:
-            logger.warning("Token não possui 'sub' ou 'exp'")
-            raise http_responses
-    except PyJWTError as e:
-        logger.error('ERRO CRÍTICO NA DECODIFICAÇÃO DO JWT: %s', str(e.args))
+        payload = decode(
+            token,
+            settings.SECRET_KEY,
+            algorithms=[settings.ALGORITHM],
+            options={'require': ['exp', 'sub']},
+        )
+
+    except ExpiredSignatureError:
+        logger.info('Access token expirado')
         raise http_responses
+    except PyJWTError as e:
+        logger.error('ERRO NA DECODIFICAÇÃO DO JWT: %s', str(e.args))
+        raise http_responses
+    
+    user_id = payload.get('sub')
+
+    if not user_id:
+        logger.warning("Token não possui 'sub'")
+        raise http_responses
+
+    if payload.get('jti') is not None or payload.get('type', 'access') != 'access':
+        logger.warning('Refresh token apresentado como access token (sub: %s)', user_id)
+        raise http_responses
+    
+
+
 
     try:
         user_uuid = UUID(user_id)
-    except ValueError:
+    except (ValueError, TypeError, AttributeError):
         logger.warning("Token com 'sub' inválido (não é UUID): %s", user_id)
         raise http_responses
 
+    expire_token = payload.get('exp')
+    if not expire_token:
+        logger.warning("Token não possui 'exp'")
+        raise http_responses
+    
     user = await session.scalar(select(User).where(User.id == user_uuid).options(selectinload(User.scope)))
     if not user:
         logger.warning('Usuário com ID %s não existe mais no banco', user_uuid)
         raise http_responses
+    
+    if not user.ativo or user.bloqueado_permanente:
+            logger.warning('Acesso negado: conta desativada ou bloqueada (user %s)', user_uuid)
+            raise http_responses
+    
+    if not token_reflete_senha_atual(payload, user):
+            logger.warning('Access token rejeitado: senha alterada após a emissão (user %s)', user_uuid)
+            raise http_responses
 
     return user
 

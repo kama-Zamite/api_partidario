@@ -8,7 +8,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from project_part.db.session import get_session
 from project_part.core.setting import settings
-from project_part.core.secury import create_token
 
 
 def set_auth_cookies(

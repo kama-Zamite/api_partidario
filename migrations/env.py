@@ -42,6 +42,7 @@ from src.project_part.model.models import (
     SolicitacaoFundo,
     FinalidadeFundoEnum,
     DespesaStatusEnum,
+    TwoFactorChallenge,
     )
 # from project_part.model.finance import (
 #     Doacao,

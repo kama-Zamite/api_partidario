@@ -5,6 +5,7 @@ from http import HTTPStatus
 from typing import Annotated, List
 from user_agents import parse
 import uuid
+import asyncio
 
 
 from aiosmtplib import response
@@ -42,6 +43,10 @@ from project_part.core.secury import (
     
 )
 from jwt import decode, PyJWTError
+from project_part.core.revocar_token_apos_alterar_passWord import (
+    emitir_access_token,
+    revogar_todas_sessoes,
+)  
 from project_part.core.setting import settings
 from project_part.db import session
 from project_part.db.cache import get_redis
@@ -93,6 +98,8 @@ logger = logging.getLogger(__name__)
 
 auth = APIRouter(prefix='/auth', tags=['Auth'])
 
+IP_MAX = 45
+UA_MAX = 500
 
 TypeCacheBase = 'v4:permissao:listar'
 
@@ -250,7 +257,7 @@ async def login(
     
     logger.info('Usuário %s autenticado com sucesso (Sem 2FA)', token.username)
     user.ultimo_login = agora
-    token_gerado = create_token({'sub': str(user.id)})
+    token_gerado = emitir_access_token(user.id, user.password_alterado_em)
 
 
     refresh_gerado = await gerar_e_registar_refresh_token(
@@ -312,7 +319,7 @@ async def verify_2fa(
     request: Request,
     body: Login2FARequest,
     session: Session,
-    backgroundTasks: BackgroundTasks,
+    # backgroundTasks: BackgroundTasks,
     _captcha: Claudflare_turnfile,
 ):
     """
@@ -466,7 +473,7 @@ async def verify_2fa(
 
     logger.info('Usuário %s autenticado com sucesso (2FA)', user_id_str)
      
-    token_gerado = create_token({'sub': str(user.id)})
+    token_gerado = emitir_access_token(user.id, user.password_alterado_em)
 
     ip_address = (
         request.headers.get("x-forwarded-for")
@@ -707,7 +714,8 @@ async def solicitar_recuperacao(
     return mensagem_padrao
 
 
-@auth.post('/redefinir-senha', status_code=HTTPStatus.OK)
+
+@auth.post('/redefinir-senha', status_code=status.HTTP_200_OK, summary='Redefinir Senha')
 @limiter.limit('5/minute')
 async def redefinir_senha(
     request: Request,
@@ -728,37 +736,48 @@ async def redefinir_senha(
         payload.token,
         session
         )
+    pwd_hash = await asyncio.to_thread(hash_password, payload.password)
     try:
-        logger.info('Busca o token com condição de ainda não ter sido usado')
-        query_token = select(PasswordResetToken).where(
-            PasswordResetToken.id == token_id,
-            PasswordResetToken.usado.is_(False),
-        )
-        token_banco = await session.scalar(query_token)
+        user_banco = await session.scalar(select(User).where(User.email == email))
 
-        if not token_banco:
+        if not user_banco:
+            logger.info('Usuário associado ao token de recuperação não encontrado: %s', email)
+            raise HTTPException(status_code=HTTPStatus.NOT_FOUND, detail='Usuário associado ao token não encontrado.')
+
+        user_id = user_banco.id
+        logger.info('Consumindo token de recuperação: %s', token_id)
+        resultado_token = await session.execute(
+            update(PasswordResetToken)
+            .where(
+                PasswordResetToken.id == token_id,
+                PasswordResetToken.usado.is_(False),
+            )
+            .values(usado=True)
+            .execution_options(synchronize_session=False)
+        )
+        if resultado_token.rowcount != 1:
             raise HTTPException(
                 status_code=HTTPStatus.BAD_REQUEST,
                 detail="Este link de recuperação já foi utilizado ou é inválido.",
             )
-        logger.info('Token de recuperação encontrado e válido: %s', token_id)
-        query = select(User).where(
-            User.email == email).options(selectinload(User.provincia), selectinload(User.municipio))
+        logger.info('Token de recuperação consumido com sucesso: %s', token_id)
 
-        user_banco = await session.scalar(query)
 
-        if not user_banco:
-            raise HTTPException(status_code=HTTPStatus.NOT_FOUND, detail='Usuário associado ao token não encontrado.')
-
-        token_banco.usado = True
-        pwd_hash = hash_password(payload.password)
-        user_banco.password_hash = pwd_hash
         data_atualizacao = datetime.now(timezone.utc)
+        user_banco.password_hash = pwd_hash
         user_banco.atualizado_em = data_atualizacao
+        user_banco.password_alterado_em = data_atualizacao
 
+        await session.flush()
 
+        revogados = await revogar_todas_sessoes(session, user_id, data_atualizacao)
         await session.commit()
-        logger.info('Senha atualizada com sucesso para o usuário: %s', email)
+        logger.info(
+                'Senha atualizada com sucesso para o usuário %s. Sessões revogadas: %d',
+                user_id,  # [HARDENING] id em vez do e-mail nos logs
+                revogados,
+            )
+
     except HTTPException:
         raise
     except Exception as e:
@@ -772,14 +791,68 @@ async def redefinir_senha(
             status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
             detail="Erro interno ao processar a redefinição de senha.",
         )
+    # [SEC-008] Não emitimos sessão aqui: o utilizador tem de fazer login com a nova
+    #           senha (e passar no 2FA, se activo).
     return {
         "status": "success",
         "message": "Senha redefinida com sucesso!",
     }
+        
+        
+    # try:
+    #     logger.info('Busca o token com condição de ainda não ter sido usado')
+    #     query_token = select(PasswordResetToken).where(
+    #         PasswordResetToken.id == token_id,
+    #         PasswordResetToken.usado.is_(False),
+    #     )
+    #     token_banco = await session.scalar(query_token)
+
+    #     if not token_banco:
+    #         raise HTTPException(
+    #             status_code=HTTPStatus.BAD_REQUEST,
+    #             detail="Este link de recuperação já foi utilizado ou é inválido.",
+    #         )
+    #     logger.info('Token de recuperação encontrado e válido: %s', token_id)
+    #     query = select(User).where(
+    #         User.email == email).options(selectinload(User.provincia), selectinload(User.municipio))
+
+    #     user_banco = await session.scalar(query)
+
+    #     if not user_banco:
+    #         raise HTTPException(status_code=HTTPStatus.NOT_FOUND, detail='Usuário associado ao token não encontrado.')
+
+    #     token_banco.usado = True
+    #     pwd_hash = hash_password(payload.password)
+    #     user_banco.password_hash = pwd_hash
+    #     data_atualizacao = datetime.now(timezone.utc)
+    #     user_banco.atualizado_em = data_atualizacao
+
+
+    #     await session.commit()
+    #     logger.info('Senha atualizada com sucesso para o usuário: %s', email)
+    # except HTTPException:
+    #     raise
+    # except Exception as e:
+    #     await session.rollback()
+    #     logger.error(
+    #         "Erro crítico ao redefinir senha (token_id=%s): %s",
+    #         token_id,
+    #         str(e),
+    #     )
+    #     raise HTTPException(
+    #         status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+    #         detail="Erro interno ao processar a redefinição de senha.",
+    #     )
+    # return {
+    #     "status": "success",
+    #     "message": "Senha redefinida com sucesso!",
+    # }
+
+
 
 @auth.post(
     "/refresh",
-    status_code=status.HTTP_204_NO_CONTENT,
+    status_code=status.HTTP_200_OK,
 )
 async def refresh_token(
     request: Request,
@@ -796,7 +869,21 @@ async def refresh_token(
     try:
 
         # =====================================================
-        # 1. LOCK DA LINHA
+        # 1. Buscar usuário
+        # =====================================================
+
+        user = await session.scalar(
+            select(User)
+            .where(User.id == user_id)
+        )
+
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Sessão inválida.",
+            )
+        # =====================================================
+        # 2. LOCK DA LINHA
         # =====================================================
 
         result = await session.execute(
@@ -816,8 +903,17 @@ async def refresh_token(
                 detail="Sessão inválida.",
             )
 
+        if str(db_token.user_id) != str(user_id):
+            logger.warning(
+                "Refresh token com jti de outro utilizador. jwt_user=%s",
+                user_id,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Sessão inválida.",
+            )
         # =====================================================
-        # 2. Verificar estado
+        # 3. Verificar estado
         # =====================================================
 
         if db_token.revogado:
@@ -828,7 +924,7 @@ async def refresh_token(
             )
 
         # =====================================================
-        # 3. Detectar REUTILIZAÇÃO
+        # 4. Detectar REUTILIZAÇÃO
         # =====================================================
 
         if db_token.utilizado:
@@ -840,16 +936,8 @@ async def refresh_token(
             )
 
             # Revoga todas as sessões do usuário.
-            await session.execute(
-                update(UserRefreshToken)
-                .where(
-                    UserRefreshToken.user_id == user_id
-                )
-                .values(
-                    revogado=True,
-                    revogado_em=agora,
-                )
-            )
+            await revogar_todas_sessoes(session, user_id, agora)
+             
 
             await session.commit()
 
@@ -859,7 +947,7 @@ async def refresh_token(
             )
 
         # =====================================================
-        # 4. Verificar expiração
+        # 5. Verificar expiração
         # =====================================================
 
         if db_token.expira_em <= agora:
@@ -874,53 +962,62 @@ async def refresh_token(
                 detail="Sessão expirada.",
             )
 
+
+
+         
         # =====================================================
-        # 5. Buscar usuário
+        # 6. Verificar estado da conta
         # =====================================================
-
-        user = await session.scalar(
-            select(User)
-            .where(User.id == user_id)
-        )
-
-        if not user or not user.ativo:
-
-            db_token.revogado = True
-            db_token.revogado_em = agora
-
+        # (O utilizador já foi carregado e bloqueado no passo 1.)
+        # [HARDENING] Conta desativada ou bloqueada permanentemente: revoga TODAS as
+        #             sessões (antes só revogava o token apresentado, e os outros
+        #             dispositivos continuavam a poder renovar). Alinhado com o check_token.
+ 
+        if not user.ativo or user.bloqueado_permanente:
+ 
+            await revogar_todas_sessoes(session, user_id, agora)
+ 
             await session.commit()
-
+ 
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Sessão inválida.",
             )
-
+        
         # =====================================================
-        # 6. Consumir token antigo
+        # 7. Consumir token antigo
         # =====================================================
 
         db_token.utilizado = True
         db_token.utilizado_em = agora
 
         # =====================================================
-        # 7. Informações da nova sessão
+        # 8. Informações da nova sessão
         # =====================================================
 
-        ip_address = (
-            request.headers.get("x-forwarded-for")
-            or (
-                request.client.host
-                if request.client
-                else None
-            )
-        )
+        # ip_address = (
+        #     request.headers.get("x-forwarded-for")
+        #     or (
+        #         request.client.host
+        #         if request.client
+        #         else None
+        #     )
+        # )
 
-        user_agent = request.headers.get(
-            "user-agent"
-        )
+        ip_address = (get_client_ip(request) or "")[:IP_MAX] or None
+         
+
+        # user_agent = request.headers.get(
+        #     "user-agent"
+        # )
+
+        user_agent = (
+                    request.headers.get("user-agent") or ""
+                )[:UA_MAX] or None
+         
 
         # =====================================================
-        # 8. Criar NOVO refresh token
+        # 9. Criar NOVO refresh token
         # =====================================================
 
         novo_refresh_token = (
@@ -933,24 +1030,37 @@ async def refresh_token(
         )
 
         # =====================================================
-        # 9. Criar novo access token
+        # 10. Criar novo access token
         # =====================================================
 
-        novo_access_token = create_token(
-            {
-                "sub": str(user.id),
-                "type": "access",
-            }
+        # novo_access_token = create_token(
+        #     {
+        #         "sub": str(user.id),
+        #         "type": "access",
+        #     }
+        # )
+
+        novo_access_token = emitir_access_token(
+            user.id,
+            user.password_alterado_em,
         )
+        # =====================================================
+        # 11. COMMIT ATÔMICO
+        # =====================================================
+        try:
+            await session.commit()
+        except Exception as e:
+            await session.rollback()
+            logger.exception(
+                "Falha ao gravar refresh token no banco de dados."
+            )
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Erro interno de autenticação.",
+            )
 
         # =====================================================
-        # 10. COMMIT ATÔMICO
-        # =====================================================
-
-        await session.commit()
-
-        # =====================================================
-        # 11. Atualizar cookies
+        # 12. Atualizar cookies
         # =====================================================
 
         set_auth_cookies(

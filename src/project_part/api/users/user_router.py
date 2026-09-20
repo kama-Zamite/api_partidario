@@ -27,7 +27,6 @@ from fastapi import (
     Form,
     BackgroundTasks,
     Cookie,
-
 )
 from decimal import Decimal
 import secrets
@@ -45,6 +44,12 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload, joinedload
 
+from fastapi import Response
+from project_part.core.revocar_token_apos_alterar_passWord import revogar_todas_sessoes, emitir_access_token
+from project_part.services.two_factor_challenge import get_client_ip 
+from project_part.core.revocar_token_apos_alterar_passWord import (
+    emitir_access_token,
+)
 from project_part.core.secury import (
     hash_password,
     verify_password,
@@ -469,7 +474,7 @@ async def create_user(
         logger.error("Falha ao enviar e-mail para %s: %s", novo_usuario.email, str(e))
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Falha ao enviar e-mail de cadastro.")
     # agora = datetime.now(timezone.utc)
-    token_gerado = create_token({'sub': str(novo_usuario.id)})
+    token_gerado = emitir_access_token(novo_usuario.id, novo_usuario.password_alterado_em)
 
     ip_address = (
         request.headers.get("x-forwarded-for")
@@ -865,53 +870,63 @@ async def create_user(
 
 
 
-@user.patch('/perfil/password', status_code=HTTPStatus.NO_CONTENT)
-@limiter.limit("2/minute; 100/day")
+
+@user.patch('/perfil/password', status_code=status.HTTP_204_NO_CONTENT)
+@limiter.limit("2/minute; 7/day")
 async def atualizar_perfil_password(
     request: Request,
+    response: Response,
     schemas: UpgradePassWord,
     session: Session,
     current_user: Get_current_user
 ):
     """
-    Altera de forma segura a senha do usuário autenticado.
-    Valida a credencial atual e atualiza o hash da senha.
+        Altera de forma segura a senha do usuário autenticado.
+        Valida a credencial atual, atualiza o hash da senha e REVOGA todas as
+        sessões existentes (refresh tokens + access tokens antigos).
+        O dispositivo que fez a alteração recebe uma sessão nova; todos os outros
+        ficam deslogados.
     """
+
+    user_id = current_user.id
+    user_email = current_user.email
+    
     logger.info(
         'Iniciando processo de alteração de senha para o usuário: %s',
-        current_user.email
+        user_email
     )
 
-    if not verify_password(
-        schemas.senha_atual,
-        current_user.password_hash
-    ):
+    if not await asyncio.to_thread(
+            verify_password,
+            schemas.senha_atual,
+            current_user.password_hash
+        ):
         logger.warning(
             'Falha na alteração de senha: senha atual incorreta para o usuário ID: %s',
-            current_user.id
+            user_id
         )
         raise HTTPException(
-            status_code=HTTPStatus.BAD_REQUEST,
+            status_code=status.HTTP_400_BAD_REQUEST,
             detail='A senha atual inserida está incorreta.'
         )
 
     agora = datetime.now(timezone.utc)
-    ultima_alteracao = 60 * 60 * 24 * 30
+    # ultima_alteracao = 60 * 60 * 24 * 30
 
-    if current_user.password_alterado_em is not None:
-        if (
-            agora.timestamp()
-            - current_user.password_alterado_em.timestamp()
-            < ultima_alteracao
-        ):
-            logger.warning(
-                'Tentativa de alteração de senha muito frequente para o usuário ID: %s',
-                current_user.id
-            )
-            raise HTTPException(
-                status_code=HTTPStatus.TOO_MANY_REQUESTS,
-                detail='A senha só pode ser alterada uma vez a cada 30 dias.'
-            )
+    # if current_user.password_alterado_em is not None:
+    #     if (
+    #         agora.timestamp()
+    #         - current_user.password_alterado_em.timestamp()
+    #         < ultima_alteracao
+    #     ):
+    #         logger.warning(
+    #             'Tentativa de alteração de senha muito frequente para o usuário ID: %s',
+    #             current_user.id
+    #         )
+    #         raise HTTPException(
+    #             status_code=HTTPStatus.TOO_MANY_REQUESTS,
+    #             detail='A senha só pode ser alterada uma vez a cada 30 dias.'
+    #         )
 
     crypt_password = await asyncio.to_thread(
         hash_password,
@@ -924,12 +939,15 @@ async def atualizar_perfil_password(
 
     try:
         session.add(current_user)
+
+        revogados = await revogar_todas_sessoes(session, user_id, agora)
         await session.commit()
 
         logger.info(
-            'Senha do usuário %s atualizada com sucesso.',
-            current_user.email
-        )
+                    'Senha do usuário %s atualizada com sucesso. Sessões revogadas: %d',
+                    user_email,
+                    revogados
+                )
 
     except IntegrityError as e:
         await session.rollback()
@@ -940,7 +958,7 @@ async def atualizar_perfil_password(
         )
 
         raise HTTPException(
-            status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR   ,
             detail='Erro interno de consistência ao processar a requisição.'
         )
 
@@ -949,7 +967,7 @@ async def atualizar_perfil_password(
 
         logger.error(
             'Erro desconhecido na alteração da senha do usuário %s: %s',
-            current_user.email,
+            user_email,
             str(e)
         )
 
@@ -957,6 +975,32 @@ async def atualizar_perfil_password(
             status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
             detail='Não foi possível processar a alteração da senha no momento.'
         )
+
+    
+    try:
+        novo_access = emitir_access_token(user_id, agora)
+        novo_refresh = await gerar_e_registar_refresh_token(
+        session=session,
+            user_id=user_id,
+            ip=get_client_ip(request),
+            user_agent=request.headers.get('user-agent'),
+        )
+        set_auth_cookies(
+            response=response,
+            access_token=novo_access,
+            refresh_token=novo_refresh,
+        )
+        response.headers['Cache-Control'] = 'no-store'
+    except Exception as e:
+        logger.warning(
+            'Senha alterada, mas não foi possível reemitir a sessão do dispositivo actual (user %s): %s',
+            user_id,
+            str(e)
+        )
+
+
+
+
 
 @user.put('/perfil/upgrade', status_code=HTTPStatus.OK)
 @limiter.limit("3/minute; 100/day")
