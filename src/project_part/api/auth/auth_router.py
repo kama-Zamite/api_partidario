@@ -327,7 +327,7 @@ async def verify_2fa(
     body: Login2FARequest,
     session: Session,
     # backgroundTasks: BackgroundTasks,
-    _captcha: Claudflare_turnfile,
+    # _captcha: Claudflare_turnfile,
 ):
     """
     Endpoint para verificação de autenticação de dois fatores (2FA).
