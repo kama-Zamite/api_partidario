@@ -120,7 +120,7 @@ async def login(
     session: Session,
     token: Access_token,
     # backgroundTasks: BackgroundTasks,
-    _captcha: Claudflare_turnfile
+    # _captcha: Claudflare_turnfile
     ):
     """Endpoint para autenticação de usuário."""
 
@@ -320,7 +320,7 @@ async def verify_2fa(
     body: Login2FARequest,
     session: Session,
     # backgroundTasks: BackgroundTasks,
-    _captcha: Claudflare_turnfile,
+    # _captcha: Claudflare_turnfile,
 ):
     """
     Endpoint para verificação de autenticação de dois fatores (2FA).
