@@ -109,6 +109,17 @@ router_auth = APIRouter(prefix="/auth", tags=["Autenticação"])
 DETAIL_CHALLENGE_INVALIDA = 'Requisição de login inválida ou expirada. Faça login novamente.'
  
 
+def get_client_ip(request: Request) -> str | None:
+    xff = request.headers.get('x-forwarded-for')
+    if xff:
+        valor = xff.split(',')[0].strip()
+    else:
+        valor = request.client.host if request.client else None
+    return valor[:45] if valor else None  # [HARDENING] era: return xff.split(',')[0].strip()
+
+
+
+
 @auth.post('/login',
            status_code=status.HTTP_200_OK,
            summary='Autenticação de Usuário'
@@ -198,20 +209,14 @@ async def login(
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail='E-mail ou senha incorretos')
 
 
-    ip_address = (
-        request.headers.get("x-forwarded-for")
-        or (
-            request.client.host
-            if request.client
-            else None
-        )
-    )
+    ip_address = get_client_ip(request)
 
     if not ip_address:
         ip_address = request.client.host if request.client else None
 
     # 3. Capturar o User-Agent (Navegador/Dispositivo)
     user_agent = request.headers.get("user-agent")
+
     
     # --- Fluxo de Autenticação com Sucesso ---
     logger.info('Senha validada. Resetando contadores de tentativas do usuario')
@@ -270,13 +275,14 @@ async def login(
     try:
         session.add(user)
         await session.commit()
-        # CORREÇÃO 2: Removido o 'await session.refresh(user)' que causava colisão de transação
-        # com middlewares assíncronos de resposta após o commit já ter sido efetivado.
         logger.info('Sucesso na atualizacao do ultimo_login do usuario')
     except Exception as e:
         await session.rollback()
-        logger.error('Nao foi possivel atualizar a data de ultimo_login no DB: %s', str(e))
-
+        logger.error('Nao foi possivel concluir o login no DB: %s', str(e))
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail='Erro interno de processamento.',
+        )
     
     #enviar email
 
@@ -430,6 +436,7 @@ async def verify_2fa(
     nome_completo = user.nome_completo
     email_destino = user.email
     user_id_str = str(user.id)
+    pwd_alterado_em = user.password_alterado_em
 
 
 
@@ -473,37 +480,41 @@ async def verify_2fa(
 
     logger.info('Usuário %s autenticado com sucesso (2FA)', user_id_str)
      
-    token_gerado = emitir_access_token(user.id, user.password_alterado_em)
+    token_gerado = emitir_access_token(user_id, pwd_alterado_em)
 
-    ip_address = (
-        request.headers.get("x-forwarded-for")
-        or (
-            request.client.host
-            if request.client
-            else None
-        )
-    )
+    # ip_address = (
+    #     request.headers.get("x-forwarded-for")
+    #     or (
+    #         request.client.host
+    #         if request.client
+    #         else None
+    #     )
+    # )
 
-    if not ip_address:
-        ip_address = request.client.host if request.client else None
+    # if not ip_address:
+    #     ip_address = request.client.host if request.client else None
 
-    # 3. Capturar o User-Agent (Navegador/Dispositivo)
-    user_agent = request.headers.get("user-agent")
+    # # 3. Capturar o User-Agent (Navegador/Dispositivo)
+    # user_agent = request.headers.get("user-agent")
     
     refresh_gerado = await gerar_e_registar_refresh_token(
         session=session,      # <-- Faltava este argumento!
-        user_id=user.id, 
+        user_id=user_id, 
         ip=ip_address, 
-        user_agent=user_agent
+        user_agent=(user_agent or '')[:500] or None,
     )
 
     try:
-        session.add(user)
+        # session.add(user)
         await session.commit()
         logger.info('Sucesso na atualizacao do ultimo_login do usuario')
     except Exception as e:
         await session.rollback()
         logger.error('Nao foi possivel atualizar a data de ultimo_login no DB: %s', str(e))
+        raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail='Erro interno de processamento.',
+            )
 
     user_agent_parsed = parse(user_agent)
     # try:
