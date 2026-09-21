@@ -37,7 +37,7 @@ logger = logging.getLogger(__name__)
 # [FIX-2FA] Parâmetros da challenge
 # Tens 20 min. Funciona, mas é uma janela grande para um segundo factor:
 # 5 a 10 minutos é o habitual.
-CHALLENGE_TTL = timedelta(minutes=20)
+CHALLENGE_TTL = timedelta(minutes=5)
 CHALLENGE_MAX_ATTEMPTS = 5             # tentativas de código por challenge
 
 # [FIX-2FA] Ligação ESTRITA ao IP. Atrás de Cloudflare + Render e com utilizadores em

@@ -101,6 +101,8 @@ auth = APIRouter(prefix='/auth', tags=['Auth'])
 IP_MAX = 45
 UA_MAX = 500
 
+REFRESH_REUSE_GRACE_SECONDS = 10
+
 TypeCacheBase = 'v4:permissao:listar'
 
 router_auth = APIRouter(prefix="/auth", tags=["Autenticação"])
@@ -940,6 +942,23 @@ async def refresh_token(
 
         if db_token.utilizado:
 
+            utilizado_ha = (
+                    (agora - db_token.utilizado_em).total_seconds()
+                    if db_token.utilizado_em
+                    else None
+                        )
+
+            if utilizado_ha is not None and 0 <= utilizado_ha <= REFRESH_REUSE_GRACE_SECONDS:
+                logger.info(
+                    "Refresh concorrente tolerado (%.1fs após a rotação). user_id=%s",
+                    utilizado_ha,
+                    user_id,
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="Sessão em renovação. Repita o pedido.",
+                )
+
             logger.warning(
                 "Reutilização de refresh token detectada. "
                 "user_id=%s",
@@ -1023,8 +1042,8 @@ async def refresh_token(
         # )
 
         user_agent = (
-                    request.headers.get("user-agent") or ""
-                )[:UA_MAX] or None
+            request.headers.get("user-agent") or ""
+        )[:UA_MAX] or None
          
 
         # =====================================================
@@ -1080,7 +1099,7 @@ async def refresh_token(
             refresh_token=novo_refresh_token,
         )
 
-        response.status_code = status.HTTP_200_OK
+        # response.status_code = status.HTTP_200_OK
         response.headers["Cache-Control"] = "no-store"
 
         # Agora o retorno é 100% legítimo e o FastAPI aceitará o JSON perfeitamente

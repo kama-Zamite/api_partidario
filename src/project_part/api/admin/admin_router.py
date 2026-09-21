@@ -1063,7 +1063,7 @@ async def registros_militantes_recentes(
     nif: str | None = Query(None, description='Filtrar por NIF exato'),
     numero_militante: str | None = Query(None, description='Filtrar por número de militante exato'),
     limit: int = Query(default=10, ge=1, le=50),
-    offset: int = Query(default=0, ge=0),
+    skip: int = Query(default=0, ge=0),
 ):
     """
     Lista militantes com filtros opcionais.
@@ -1138,29 +1138,28 @@ async def registros_militantes_recentes(
         User.cadastrar_militante == CadastrarComo.MILITANTE,
         User.deletado_em.is_(None),
     ]
-    filtros_total = [
-        User.ativo.is_(True),
-        User.cadastrar_militante == CadastrarComo.MILITANTE,
-        User.deletado_em.is_(None)
-    ]
 
     if scope.provincia_id is not None:
         filtros.append(User.provincia_id == scope.provincia_id)
-        filtros_total.append(User.provincia_id == scope.provincia_id)
     if provincia_id_filtro is not None:
         filtros.append(User.provincia_id == provincia_id_filtro)
-        filtros_total.append(User.provincia_id == provincia_id_filtro)
     if municipio_id_filtro is not None:
         filtros.append(User.municipio_id == municipio_id_filtro)
-        filtros_total.append(User.municipio_id == municipio_id_filtro)
-    if email:
-        filtros.append(User.email == email.lower().strip())
-    if nif:
-        filtros.append(User.nif == nif.upper().strip())
-    if numero_militante:
-        filtros.append(User.militante_numero == numero_militante.strip().upper())
+    
+    # Tratamento seguro contra None e Strings Vazias do Frontend/Swagger
+    email_limpo = email.lower().strip() if email and email.strip() else None
+    nif_limpo = nif.upper().strip() if nif and nif.strip() else None
+    num_limpo = numero_militante.strip().upper() if numero_militante and numero_militante.strip() else None
 
-    total = await session.scalar(select(func.count(User.id)).where(*filtros_total)) or 0
+    if email_limpo:
+        filtros.append(User.email == email_limpo)
+    if nif_limpo:
+        filtros.append(User.nif == nif_limpo)
+    if num_limpo:
+        filtros.append(User.militante_numero == num_limpo)
+
+    # CORREÇÃO: total agora usa exatamente os mesmos filtros aplicados na busca
+    total = await session.scalar(select(func.count(User.id)).where(*filtros)) or 0
 
     query = (
         select(User)
@@ -1170,17 +1169,24 @@ async def registros_militantes_recentes(
             selectinload(User.municipio),
             selectinload(User.role),
         )
-        .order_by(User.criado_em.desc())
+        .order_by(User.criado_em.desc(), User.id.desc())
     )
 
-    # REGRA DE OURO: se filtrar por campo único, ignora paginação
-    if not email and not nif and not numero_militante:
-        query = query.limit(limit).offset(offset)
+
+    # 2. Só ignora a paginação se REALMENTE houver um filtro de busca único preenchido
+    if ((not email or email == ' ' ) or (not nif or nif == ' ' ) or (not numero_militante or numero_militante == ' ')):
+        # A ordem correta: primeiro LIMIT, depois OFFSET
+        query = query.limit(limit).offset(skip)
+    # if not email_limpo and not nif_limpo and not num_limpo:
+    #     query = query.limit(limit).offset(skip)
 
     result = await session.execute(query)
     registros = result.scalars().all()
 
     return {'total': total, 'results': registros}
+
+
+
 
 
 @admin.get(
@@ -1199,7 +1205,7 @@ async def militantes_deletados_recentes(
     nif: str | None = Query(None, description='Filtrar por NIF exato'),
     numero_militante: str | None = Query(None, description='Filtrar por número de militante exato'),
     limit: int = Query(default=10, ge=1, le=50),
-    offset: int = Query(default=0, ge=0),
+    skip: int = Query(default=0, ge=0),
 ):
     """
     Lista militantes soft-deleted.
@@ -1300,13 +1306,12 @@ async def militantes_deletados_recentes(
             selectinload(User.municipio),
             selectinload(User.role),
         )
-        .order_by(User.deletado_em.desc())
+        .order_by(User.deletado_em.desc(),  User.id.desc())
     )
 
     # REGRA DE OURO
-    if not email and not nif and not numero_militante:
-        query = query.limit(limit).offset(offset)
-
+    if ((not email or email == ' ' ) or (not nif or nif == ' ' ) or (not numero_militante or numero_militante == ' ')):
+        query = query.limit(limit).offset(skip)
     result = await session.execute(query)
     registros = result.scalars().all()
 
@@ -1328,7 +1333,7 @@ async def registros_simpatizantes_recentes(
     email: str | None = Query(None, description='Filtrar por email exato'),
     nif: str | None = Query(None, description='Filtrar por NIF exato'),
     limit: int = Query(default=10, ge=1, le=50),
-    offset: int = Query(default=0, ge=0),
+    skip: int = Query(default=0, ge=0),
 ):
     """
     Lista simpatizantes com filtros opcionais.
@@ -1427,12 +1432,12 @@ async def registros_simpatizantes_recentes(
             selectinload(User.municipio),
             selectinload(User.role),
         )
-        .order_by(User.criado_em.desc())
+        .order_by(User.criado_em.desc(), User.id.desc())
     )
 
     # REGRA DE OURO
-    if not email and not nif:
-        query = query.limit(limit).offset(offset)
+    if ((not email or email == ' ' ) or (not nif or nif == ' ' )):
+        query = query.limit(limit).offset(skip)
 
     result = await session.execute(query)
     registros = result.scalars().all()
@@ -1554,12 +1559,12 @@ async def simpatizante_deletados_recentes(
             selectinload(User.municipio),
             selectinload(User.role),
         )
-        .order_by(User.deletado_em.desc())
+        .order_by(User.deletado_em.desc(), User.id.desc())
     )
 
     # REGRA DE OURO
-    if not email and not nif:
-        query = query.limit(limit).offset(offset)
+    if ((not email or email == ' ' ) or (not nif or nif == ' ' )):
+        query = query.limit(limit).offset(skip)
 
     result = await session.execute(query)
     registros = result.scalars().all()
