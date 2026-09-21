@@ -319,6 +319,7 @@ async def login(
 
 
 
+
 @auth.post('/login/2fa-verify', status_code=HTTPStatus.OK, summary='Verificação de 2FA')
 @limiter.limit('7/minute')
 async def verify_2fa(
