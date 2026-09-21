@@ -56,7 +56,6 @@ from project_part.core.secury import (
     Get_current_user,
     garante_escopo_territorial,
     create_token,
-    create_refresh_token,
     gerar_e_registar_refresh_token
     )
 from project_part.db import session
@@ -980,7 +979,7 @@ async def atualizar_perfil_password(
     try:
         novo_access = emitir_access_token(user_id, agora)
         novo_refresh = await gerar_e_registar_refresh_token(
-        session=session,
+            session=session,
             user_id=user_id,
             ip=get_client_ip(request),
             user_agent=request.headers.get('user-agent'),

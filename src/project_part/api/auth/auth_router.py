@@ -32,7 +32,6 @@ from project_part.core.secury import (
     Get_current_user,
     check_refresh_token,
     check_token_recuperar_senha,
-    create_refresh_token,
     create_token,
     create_token_recuperar_senha,
     garante_escopo_territorial,
@@ -133,7 +132,7 @@ async def login(
     session: Session,
     token: Access_token,
     # backgroundTasks: BackgroundTasks,
-    _captcha: Claudflare_turnfile
+    # _captcha: Claudflare_turnfile
     ):
     """Endpoint para autenticação de usuário."""
 
@@ -891,9 +890,13 @@ async def refresh_token(
         )
 
         if not user:
+            logger.warning(
+                "Refresh token com jti de outro utilizador. jwt_user=%s",
+                user_id,
+            )
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Sessão inválida.",
+                detail="Refresh token com jti de outro utilizador.",
             )
         # =====================================================
         # 2. LOCK DA LINHA
@@ -910,10 +913,14 @@ async def refresh_token(
         db_token = result.scalar_one_or_none()
 
         if not db_token:
+            logger.warning(
+                "Refresh token não encontrado. jti=%s",
+                token_jti,
+            )
 
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Sessão inválida.",
+                detail="Refresh token não encontrado.",
             )
 
         if str(db_token.user_id) != str(user_id):
@@ -923,17 +930,21 @@ async def refresh_token(
             )
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Sessão inválida.",
+                detail="Refresh token com jti de outro utilizador.",
             )
         # =====================================================
         # 3. Verificar estado
         # =====================================================
 
         if db_token.revogado:
+            logger.warning(
+                "Refresh token revogado. jti=%s",
+                token_jti,
+            )
 
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Sessão inválida.",
+                detail="Refresh token revogado.",
             )
 
         # =====================================================
@@ -973,7 +984,7 @@ async def refresh_token(
 
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Sessão inválida.",
+                detail="Reutilização de refresh token detectada.",
             )
 
         # =====================================================
@@ -986,7 +997,10 @@ async def refresh_token(
             db_token.revogado_em = agora
 
             await session.commit()
-
+            logger.warning(
+                "Refresh token expirado. user_id=%s",
+                user_id,
+            )
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Sessão expirada.",
@@ -1004,14 +1018,18 @@ async def refresh_token(
         #             dispositivos continuavam a poder renovar). Alinhado com o check_token.
  
         if not user.ativo or user.bloqueado_permanente:
- 
+            logger.warning(
+                "Refresh token de conta desativada ou bloqueada permanentemente. user_id=%s ",
+                user_id,
+            )
             await revogar_todas_sessoes(session, user_id, agora)
  
             await session.commit()
  
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Sessão inválida.",
+                detail="Refresh token de conta desativada ou bloqueada permanentemente. user_id=%s.",
+                params={"user_id": user_id},
             )
         
         # =====================================================
@@ -1108,16 +1126,21 @@ async def refresh_token(
             "message": "Tokens de autenticação renovados com sucesso."
         }
     except HTTPException:
-
+        logger.warning(
+            "Falha ao renovar refresh token para user_id=%s. Detalhes: %s",
+            user_id,
+            str(e)
+        )
         raise
 
     except Exception:
+        logger.warning(
+            "Falha ao renovar refresh token para user_id=%s. Detalhes: %s",
+            user_id,
+            str(e)
+        )
 
         await session.rollback()
-
-        logger.exception(
-            "Erro interno durante refresh token."
-        )
 
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,

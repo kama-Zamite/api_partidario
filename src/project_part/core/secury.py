@@ -284,13 +284,13 @@ async def check_token(request: Request, session: Session):
     return user
 
 
-def create_refresh_token(data: dict):
-    to_encode = data.copy()
-    expire = datetime.now(timezone.utc) + timedelta(minutes=int(settings.REFRESH_TOKEN))
-    to_encode.update({'exp': int(expire.timestamp())})
-    payload = encode(to_encode, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
+# def create_refresh_token(data: dict):
+#     to_encode = data.copy()
+#     expire = datetime.now(timezone.utc) + timedelta(minutes=int(settings.REFRESH_TOKEN))
+#     to_encode.update({'exp': int(expire.timestamp())})
+#     payload = encode(to_encode, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
 
-    return payload
+#     return payload
 
 
 Get_current_user = Annotated[User, Depends(check_token)]
@@ -418,15 +418,19 @@ async def check_refresh_token(
     request: Request,
 ) -> dict:
 
+    logger.info("Iniciando verificação do refresh token a partir do cookie.") 
     erro = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Sessão inválida.",
+        detail="Sessão inválida. ups",
     )
 
     refresh_token = request.cookies.get("refresh_token")
 
     if not refresh_token:
-        raise erro
+        raise  HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Sessão inválida. ups",
+    )
 
     try:
 
@@ -441,16 +445,29 @@ async def check_refresh_token(
         token_type = payload.get("type")
 
         if not user_id:
-            raise erro
+            raise  HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Usuário não encontrado no token de refresh. Sessão inválida.",
+    )
 
         if not token_jti:
-            raise erro
+            raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="JTI não encontrado no token de refresh. Sessão inválida.",
+        )
 
         if token_type != "refresh":
-            raise erro
+            raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Tipo de token inválido. Sessão inválida.",
+        )
 
         user_uuid = uuid.UUID(user_id)
-
+        logger.info(
+            "Refresh token decodificado com sucesso. user_id=%s, jti=%s",
+            user_uuid,
+            token_jti,
+        )
         return {
             "user_id": user_uuid,
             "jti": token_jti,
@@ -460,9 +477,15 @@ async def check_refresh_token(
         PyJWTError,
         ValueError,
         TypeError,
-    ):
-
-        raise erro
+    ) as e:
+        logger.warning(
+            "Falha ao decodificar refresh token. Detalhes: %s",
+            str(e)
+        )
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Falha ao decodificar refresh token.",
+        )
 
 
 
