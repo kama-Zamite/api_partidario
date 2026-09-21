@@ -1462,7 +1462,7 @@ async def simpatizante_deletados_recentes(
     email: str | None = Query(None, description='Filtrar por email exato'),
     nif: str | None = Query(None, description='Filtrar por NIF exato'),
     limit: int = Query(default=10, ge=1, le=50),
-    offset: int = Query(default=0, ge=0),
+    skip: int = Query(default=0, ge=0),
 ):
     """
     Lista simpatizantes soft-deleted.
