@@ -49,7 +49,6 @@ logging.getLogger('uvicorn.access').setLevel(settings.LOG_LEVEL)
 
 Session = Annotated[AsyncSession, Depends(get_session)]
 Redis = Annotated[AsyncRedis, Depends(get_redis)]
-app = FastAPI(title='Uniao', description='uma api de povo para povo', version='1.0.0')
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -63,10 +62,11 @@ async def lifespan(app: FastAPI):
     scheduler.add_job(
         job_quotas,
         CronTrigger(
-            # day=16, 
-            hour=14,
-            minute=50,
-            timezone=fuso_horario),  # dia 15, 02:00 (fuso do scheduler!)
+            day=1, 
+            hour=2,
+            minute=0,
+            timezone=fuso_horario
+            ),  # dia 15, 02:00 (fuso do scheduler!)
         id='job_verificar_quotas',
         replace_existing=True,
         max_instances=1,  # por processo; o Redis cobre multi-processo
@@ -79,6 +79,7 @@ async def lifespan(app: FastAPI):
 
     scheduler.shutdown(wait=False)
 
+app = FastAPI(title='Uniao', lifespan=lifespan, description='uma api de povo para povo', version='1.0.0')
 
 app.state.limiter = limiter
 app.add_exception_handler(
