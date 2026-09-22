@@ -877,6 +877,7 @@ async def atualizar_perfil_password(
     response: Response,
     schemas: UpgradePassWord,
     session: Session,
+    _captcha: Claudflare_turnfile,
     current_user: Get_current_user
 ):
     """
@@ -1003,7 +1004,14 @@ async def atualizar_perfil_password(
 
 @user.put('/perfil/upgrade', status_code=HTTPStatus.OK)
 @limiter.limit("3/minute; 100/day")
-async def perfil(request: Request, schemas: UpgradeUser, caches: Redis, session: Session, current_user: Get_current_user):
+async def perfil(
+    request: Request,
+    _captcha: Claudflare_turnfile,
+    schemas: UpgradeUser,
+    caches: Redis,
+    session: Session,
+    current_user: Get_current_user
+    ):
 
     current_role_stmt = select(Role.nome).where(Role.id == current_user.role_id)
     current_role_name = await session.scalar(current_role_stmt)
@@ -1276,6 +1284,7 @@ def _extrair_public_id_da_url(url: str) -> str | None:
 async def atualizar_foto_perfil(
     request: Request,
     session: Session,
+    _captcha: Claudflare_turnfile,
     current_user: Get_current_user,
     background_tasks: BackgroundTasks,
     arquivo: UploadFile = File(..., description="Selecione uma imagem JPG ou JPEG (max 5MB)"),
@@ -2641,6 +2650,7 @@ async def obter_ultimo_pagamento_quota(
 async def delete_user(
     request: Request,
     response: Response,
+    _captcha: Claudflare_turnfile,
     session: Session,
     caches: Redis,
     current_user: Get_current_user,

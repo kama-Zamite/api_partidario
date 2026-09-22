@@ -733,6 +733,7 @@ async def solicitar_recuperacao(
 async def redefinir_senha(
     request: Request,
     payload: RedefinirSenhaSchema,
+    _captcha: Claudflare_turnfile,
     session: Session):
     """Endpoint para redefinir a senha do usuário. Recebe o token de recuperação e a nova senha, verifica a validade do token e atualiza a senha no banco de dados.
     Args:
@@ -1288,6 +1289,7 @@ async def criar_permissao(
     schema: CreatePermissao,
     session: Session,
     redis: Redis, 
+    _captcha: Claudflare_turnfile,
     current_user: Get_current_user, scope: ScopeValid
 ):
     verificar_permissao_global_pais(scope, current_user)
@@ -1381,6 +1383,7 @@ async def criar_role(
     request: Request,
     schemas: CreateRole,
     session: Session,
+    _captcha: Claudflare_turnfile,
     redis: Redis, 
     current_user: Get_current_user,
     scope: ScopeValid
@@ -1490,6 +1493,7 @@ async def atualizar_permissao(
     id_permissao: int,
     schemas: UpgradePermissao,
     session: Session,
+    _captcha: Claudflare_turnfile,
     redis: Redis,
     current_user: Get_current_user,
     scope: ScopeValid,
@@ -1545,7 +1549,11 @@ async def atualizar_permissao(
 @limiter.limit('5/minute')
 async def eliminar_permissao(
     request: Request,
-    id_permissao: int, session: Session, redis: Redis, current_user: Get_current_user, scope: ScopeValid
+    id_permissao: int,
+    session: Session,
+    redis: Redis,
+    current_user: Get_current_user,
+    scope: ScopeValid
 ):
     """
     Endpoint para deletar uma permissão existente. Recebe o ID da permissão, verifica a validade do ID e remove a permissão do banco de dados.
@@ -1609,6 +1617,7 @@ async def eliminar_permissao(
 @limiter.limit('5/minute')
 async def atualizar_role(
     request: Request,
+    _captcha: Claudflare_turnfile,
     schemas: UpgradeRole,
     id_role: int,
     session: Session,
