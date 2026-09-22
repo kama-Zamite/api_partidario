@@ -3013,16 +3013,6 @@ async def listar_quotas(
 
 
 
-def _apenas_superadmin(scope: ScopeValid) -> None:
-    if scope.provincia_id is not None or scope.municipio_id is not None:
-        raise HTTPException(
-            status_code=HTTPStatus.FORBIDDEN,
-            detail='Acesso negado: apenas Superadmin.',
-        )
-
-
-
-
 @admin.post(
     '/fundos/solicitacoes',
     status_code=HTTPStatus.CREATED,

@@ -166,17 +166,17 @@ class MetodoPagamentoEnum(str, Enum):
 
 
 class DonationStatusEnum(str, Enum):
-    PENDING = 'PENDING'
-    APPROVED = 'APPROVED'
-    REJECTED = 'REJECTED'
-    CANCELLED = 'CANCELLED'
+    PENDING = 'PENDENTE'
+    APPROVED = 'APROVADO'
+    REJECTED = 'REJEITADO'
+    CANCELLED = 'CANCELADO'
 
 
 class QuotaStatusEnum(str, Enum):
-    PENDING = 'PENDING'
-    APPROVED = 'APPROVED'
-    REJECTED = 'REJECTED'
-    CANCELLED = 'CANCELLED'
+    PENDING = 'PENDENTE'
+    APPROVED = 'APROVADO'
+    REJECTED = 'REJEITADO'
+    CANCELLED = 'CANCELADO'
 
 
 class TipoMovimentoEnum(str, Enum):
