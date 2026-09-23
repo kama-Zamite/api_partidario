@@ -223,6 +223,7 @@ class UserResponse(BaseModel):
     ativo: bool
     provincia: str
     municipio: str
+    role: str
     email: str
     telefone: str
     data_nascimento: date
@@ -253,6 +254,17 @@ class UserResponse(BaseModel):
         if isinstance(v, str):
             return v
         raise ValueError('Município inválido ou ausente')
+
+    @field_validator('role', mode='before')
+    @classmethod
+    def extrair_nome_role(cls, v: Any) -> Optional[str]:
+        if v and hasattr(v, 'nome'):
+            return getattr(v, 'nome')
+        if isinstance(v, str):
+            return v
+        raise ValueError('Função inválida ou ausente')
+
+
 
 
 class RegistrosRecentes(BaseModel):
