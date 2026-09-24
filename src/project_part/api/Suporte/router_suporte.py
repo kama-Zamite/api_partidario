@@ -22,7 +22,6 @@ from project_part.model.models import (
     RoleMensagemSuporte,
     CategoriaMensagemSuporte,
     Notification,
-    NoticiaCategoria,
     AdminScope,
     User,
 )
