@@ -20,12 +20,13 @@ def to_doacao_response(doacao: Doacao) -> DoacaoResponse:
         status=doacao.status,
         observacao=doacao.observacao,
         data_doacao=doacao.data_doacao,
-        aprovado_por=doacao.aprovado_por,
         aprovado_em=doacao.aprovado_em,
         recibo_url=doacao.recibo_url,
         recibo_gerado_em=doacao.recibo_gerado_em,
         atualizado_em=doacao.atualizado_em,
         nome_doador=doacao.doador.nome_completo if doacao.doador else None,
+        nome_aprovador=doacao.aprovador,
+        scope_aprovador=doacao.aprovador.scope if doacao.aprovador else None,
     )
 
 
@@ -65,10 +66,11 @@ def to_quota_response(pag: PagamentoQuota) -> QuotaResponse:
         status=pag.status,
         observacao=pag.observacao,
         data_pagamento=pag.data_pagamento,
-        aprovado_por=pag.aprovado_por,
         aprovado_em=pag.aprovado_em,
         atualizado_em=pag.atualizado_em,
         nome_militante=pag.militante.nome_completo if pag.militante else None,
+        nome_aprovador=pag.aprovador,
+        scope_aprovador=pag.aprovador.scope if pag.aprovador else None,
     )
     
 def to_solicitacao_response(s: SolicitacaoFundo) -> SolicitacaoFundoResponse:

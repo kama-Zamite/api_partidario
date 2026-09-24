@@ -296,7 +296,6 @@ class MilitantesTerritorioResponse(BaseModel):
     total_geral: int
     results: list[MilitantesTerritorioItem]
 
-
 class DoacaoResponse(BaseModel):
     id: uuid.UUID
     user_id: uuid.UUID | None
@@ -308,35 +307,53 @@ class DoacaoResponse(BaseModel):
     status: DonationStatusEnum
     observacao: str | None
     data_doacao: datetime
-    aprovado_por: uuid.UUID | None
     aprovado_em: datetime | None
-    # recibo_url: str | None
-    # recibo_gerado_em: datetime | None
     atualizado_em: datetime
+
     nome_doador: str | None = None
-
     provincia: str | None = None
-
-
+    nome_aprovador: str | None = None          # ← adicione este campo
+    scope_aprovador: str | None = None
     model_config = ConfigDict(from_attributes=True, ser_json_circular_logic='ignore')
 
     @field_validator('provincia', mode='before')
     @classmethod
     def extrair_nome_provincia(cls, v: Any) -> Optional[str]:
-        # Se for None (doação anónima ou sem província no utilizador), permite passar
         if v is None:
             return None
+        if isinstance(v, str):
+            return v
+        if hasattr(v, 'nome_provincia'):
+            return getattr(v, 'nome_provincia')
+        raise ValueError('Província inválida ou ausente')
 
-        # Se já for a string direta extraída pelo mapeador
+    @field_validator('nome_aprovador', mode='before')
+    @classmethod
+    def extrair_nome_aprovador(cls, v: Any) -> Optional[str]:
+        if v is None:
+            return None
+        if isinstance(v, str):
+            return v
+        # quando chega o objeto User (aprovador)
+        if hasattr(v, 'nome_completo'):
+            return getattr(v, 'nome_completo')
+        raise ValueError('Aprovador inválido ou ausente')
+
+    @field_validator('scope_aprovador', mode='before')
+    @classmethod
+    def extrair_scope_aprovador(cls, v: Any) -> Optional[str]:
+        if v is None:
+            return None
         if isinstance(v, str):
             return v
 
-        # Caso ainda receba o objeto de relacionamento por outros caminhos
-        if hasattr(v, 'nome_provincia'):
-            return getattr(v, 'nome_provincia')
-
-        raise ValueError('Província inválida ou ausente')
-
+        # v aqui é o objeto AdminScope (ou None)
+        if hasattr(v, 'municipio_id') and v.municipio_id is not None:
+            return 'municipal'
+        if hasattr(v, 'provincia_id') and v.provincia_id is not None:
+            return 'provincial'
+        # se não tem provincia nem municipio → superadmin
+        return 'superadmin'
 
 class DoacaoList(BaseModel):
     total: int
@@ -362,12 +379,42 @@ class QuotaResponse(BaseModel):
     status: QuotaStatusEnum
     observacao: str | None
     data_pagamento: datetime
-    aprovado_por: uuid.UUID | None
     aprovado_em: datetime | None
     atualizado_em: datetime
     nome_militante: str | None = None
 
+    nome_aprovador: str | None = None          # ← adicione este campo
+    scope_aprovador: str | None = None
+
     model_config = ConfigDict(from_attributes=True)
+
+    @field_validator('nome_aprovador', mode='before')
+    @classmethod
+    def extrair_nome_aprovador(cls, v: Any) -> Optional[str]:
+        if v is None:
+            return None
+        if isinstance(v, str):
+            return v
+        # quando chega o objeto User (aprovador)
+        if hasattr(v, 'nome_completo'):
+            return getattr(v, 'nome_completo')
+        raise ValueError('Aprovador inválido ou ausente')
+
+    @field_validator('scope_aprovador', mode='before')
+    @classmethod
+    def extrair_scope_aprovador(cls, v: Any) -> Optional[str]:
+        if v is None:
+            return None
+        if isinstance(v, str):
+            return v
+
+        # v aqui é o objeto AdminScope (ou None)
+        if hasattr(v, 'municipio_id') and v.municipio_id is not None:
+            return 'municipal'
+        if hasattr(v, 'provincia_id') and v.provincia_id is not None:
+            return 'provincial'
+        # se não tem provincia nem municipio → superadmin
+        return 'superadmin'
 
 
 class QuotaList(BaseModel):
