@@ -16,9 +16,14 @@ from project_part.db.session import get_session  # Substitua pelo seu método de
 from project_part.model.models import User, BackupCode  # Seu modelo SQLAlchemy de Usuário
 from project_part.core.secury import hash_password, verify_password
 from project_part.core.secury import Get_current_user  # Sua dependência de autenticação JWT
+from project_part.services.claudflare_turnfile import verificar_turnstile
+
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from project_part.api.Auth_2fa.schemas import Code2FA
+
+
+Claudflare_turnfile = Annotated[bool, Depends(verificar_turnstile)]
 
 logger = logging.getLogger(__name__)
 router_2FA = APIRouter(prefix="/auth/2fa", tags=["Autenticação 2FA"])
@@ -26,7 +31,10 @@ Session = Annotated[AsyncSession, Depends(get_session)]
 
 
 @router_2FA.post("/setup")
-async def setup_2fa(current_user: Get_current_user, db: Session):
+async def setup_2fa(
+    current_user: Get_current_user,
+    db: Session
+    ):
     """
         Gera o segredo TOTP e retorna o QR Code
         necessário para configurar o autenticador.
@@ -139,6 +147,7 @@ async def setup_2fa(current_user: Get_current_user, db: Session):
 @router_2FA.post("/verify-and-enable")
 async def verify_and_enable_2fa(
     body: Code2FA,
+    _captcha: Claudflare_turnfile,
     current_user: Get_current_user,
     db: Session,
 ):
@@ -225,6 +234,7 @@ async def verify_and_enable_2fa(
 @router_2FA.post("/disable")
 async def disable_2fa(
     body: Code2FA,
+    _captcha: Claudflare_turnfile,
     current_user: Get_current_user,
     db: Session,
 ):
@@ -285,12 +295,14 @@ async def disable_2fa(
 async def verificar_segundo_fator(user_id, codigo_enviado, db):
     # 1. Se o código tiver 6 dígitos, valida com o pyotp tradicional
     if len(codigo_enviado) == 6:
+        logger.info("Verificando código TOTP para o usuário ID=%s", user_id)
         # (Sua validação normal com pyotp...)
         return True
         
     # 2. Se o código tiver 8 dígitos, é um código de backup!
     elif len(codigo_enviado) == 8:
         # Busca todos os códigos ativos (não usados) deste utilizador
+        logger.info("Verificando código de backup para o usuário ID=%s", user_id)
         result = await db.execute(
             select(BackupCode).where(BackupCode.user_id == user_id, BackupCode.used == False)
         )
@@ -306,6 +318,7 @@ async def verificar_segundo_fator(user_id, codigo_enviado, db):
                 # Código válido! Marca como usado para nunca mais ser reutilizado
                 codigo_db.used = True
                 await db.commit()
+                logger.info("Codigo de backup validado com sucesso.")
                 return True
                 
         raise HTTPException(status_code=400, detail="Código de backup inválido ou já utilizado.")

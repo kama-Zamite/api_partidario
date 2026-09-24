@@ -39,7 +39,6 @@ from project_part.core.secury import (
     verify_password,
     gerar_e_registar_refresh_token,
     verificar_permissao_global_pais,
-    
 )
 from jwt import decode, PyJWTError
 from project_part.core.revocar_token_apos_alterar_passWord import (
