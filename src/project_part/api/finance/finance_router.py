@@ -65,6 +65,7 @@ async def criar_doacao(
     request: Request,
     body: DoacaoCreate,
     session: Session,
+    _captcha: Claudflare_turnfile,
     current_user: Get_current_user,
 ):
     doacao = Doacao(
@@ -443,6 +444,7 @@ async def criar_pagamento_quota(
     request: Request,
     quantia: Decimal,
     metodo_pagamento: MetodoPagamentoEnum,
+    _captcha: Claudflare_turnfile,
     referencia: str | None,
     id_transacao: str | None,
     meses_pagar: int,

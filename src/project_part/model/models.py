@@ -207,6 +207,8 @@ class FinalidadeFundoEnum(str, Enum):
     SEDE = 'SEDE'
     OUTRO = 'OUTRO'
 
+class CategoriaNoticiaEnum(str, Enum):
+    DESTAQUE = 'DESTAQUE'
 
 
 class Provincia(Base):
@@ -588,7 +590,7 @@ class Noticia(Base):
     corpo: Mapped[str] = mapped_column(TEXT, nullable=False)
     image_url: Mapped[None | str] = mapped_column(TEXT, nullable=True)
 
-    categoria_id: Mapped[int] = mapped_column(ForeignKey('noticia_categorias.id', ondelete='CASCADE'), nullable=False)
+    categoria: Mapped[str] = mapped_column(String(20), default=CategoriaNoticiaEnum.DESTAQUE, nullable=False)
     autor_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey('users.id'), nullable=False)
     provincia_id: Mapped[int] = mapped_column(
         ForeignKey('provincias.id', ondelete='CASCADE'), nullable=True
@@ -610,18 +612,17 @@ class Noticia(Base):
     status: Mapped[str] = mapped_column(String(20), default=NoticiasStatusEnum.RASCUNHO, nullable=False)
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, index=True, default=uuid.uuid4)
-    categoria: Mapped[NoticiaCategoria] = relationship(back_populates='noticias')
     provincia: Mapped[Optional[Provincia]] = relationship()
     municipio: Mapped[Optional[Municipio]] = relationship()
 
 
-class NoticiaCategoria(Base):
-    __tablename__ = 'noticia_categorias'
+# class NoticiaCategoria(Base):
+#     __tablename__ = 'noticia_categorias'
 
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    name: Mapped[str] = mapped_column(String(100), unique=True, nullable=False)
+#     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+#     name: Mapped[str] = mapped_column(String(100), unique=True, nullable=False)
 
-    noticias: Mapped[List[Noticia]] = relationship(back_populates='categoria', cascade='all, delete-orphan')
+#     noticias: Mapped[List[Noticia]] = relationship(back_populates='categoria', cascade='all, delete-orphan')
 
 
 class AuditLog(Base):

@@ -43,9 +43,9 @@ from project_part.model.models import (
     AdminScope,
     Municipio,
     Noticia,
-    NoticiaCategoria,
     NoticiasStatusEnum,
     Provincia,
+    CategoriaNoticiaEnum
 )
 
 from .schemas import (
@@ -104,29 +104,29 @@ async def gerar_slug_unico(slug_base: str, session: Session) -> str:
     return slug_unico
 
 
-@news_router.post('/categories/create', status_code=HTTPStatus.CREATED)
-@limiter.limit('2/minute')
-async def criar_categoria(
-    request: Request,
-    schemas: CreateCategoria,
-    session: Session,
-    caches: Redis,
-    current_user: Get_current_user,
-    scope: ScopeValid,
-):
-    logger.info('Criando categoria de notícia: %s por %s', schemas.name, current_user.email)
+# @news_router.post('/categories/create', status_code=HTTPStatus.CREATED)
+# @limiter.limit('2/minute')
+# async def criar_categoria(
+#     request: Request,
+#     schemas: CreateCategoria,
+#     session: Session,
+#     caches: Redis,
+#     current_user: Get_current_user,
+#     scope: ScopeValid,
+# ):
+#     logger.info('Criando categoria de notícia: %s por %s', schemas.name, current_user.email)
 
-    verificar_permissao_global_pais(scope, current_user)
+#     verificar_permissao_global_pais(scope, current_user)
 
-    nova_categoria = NoticiaCategoria(name=schemas.name)
-    try:
-        session.add(nova_categoria)
-        await session.commit()
-        return {'msg': 'Categoria criada com sucesso!'}
-    except IntegrityError as e:
-        await session.rollback()
-        logger.error('Erro de integridade ao criar categoria: %s', str(e.orig))
-        raise HTTPException(status_code=HTTPStatus.CONFLICT, detail='Já existe uma categoria cadastrada com este nome.')
+#     nova_categoria = NoticiaCategoria(name=schemas.name)
+#     try:
+#         session.add(nova_categoria)
+#         await session.commit()
+#         return {'msg': 'Categoria criada com sucesso!'}
+#     except IntegrityError as e:
+#         await session.rollback()
+#         logger.error('Erro de integridade ao criar categoria: %s', str(e.orig))
+#         raise HTTPException(status_code=HTTPStatus.CONFLICT, detail='Já existe uma categoria cadastrada com este nome.')
 
 
 # @news_router.get('/categories/list', status_code=HTTPStatus.OK, response_model=List[CategoriaResponse])
@@ -175,7 +175,7 @@ async def criar_noticia(
     lead: Optional[str] = Form(None),
     corpo: str = Form(min_length=20),
     image_news: Optional[UploadFile] = File(None, description='Foto de perfil opcional (JPEG/JPG, max 5MB)'),
-    categoria_id: int = Form(gt=0),
+    # categoria_id: int = Form(gt=0),
     nome_provincia: Optional[str] = Form(None, min_length=4),
     nome_municipio: Optional[str] = Form(None, min_length=4),
     status: NoticiasStatusEnum = Form(default=NoticiasStatusEnum.RASCUNHO),
@@ -196,7 +196,7 @@ async def criar_noticia(
             subtitulo=subtitulo,
             lead=lead,
             corpo=corpo,
-            categoria_id=categoria_id,
+            # categoria_id=categoria_id,
             nome_provincia=nome_provincia,
             nome_municipio=nome_municipio,
             status=status,
@@ -205,13 +205,6 @@ async def criar_noticia(
         raise HTTPException(
             status_code=HTTPStatus.UNPROCESSABLE_ENTITY, detail=e.errors(include_url=False, include_context=False)
         )
-
-    categoria_banco = await session.scalar(
-        select(NoticiaCategoria).where(NoticiaCategoria.id == dados_validos.categoria_id)
-    )
-    if not categoria_banco:
-        logger.warning('Categoria [%d] nao foi encontrada.', dados_validos.categoria_id)
-        raise HTTPException(status_code=HTTPStatus.NOT_FOUND, detail='Categoria nao encontrada')
 
     if scope.provincia_id or scope.municipio_id:
         if not dados_validos.nome_provincia or not dados_validos.nome_municipio:
@@ -267,7 +260,7 @@ async def criar_noticia(
         lead=dados_validos.lead,
         corpo=dados_validos.corpo,
         image_url=None,
-        categoria_id=dados_validos.categoria_id,
+        categoria=CategoriaNoticiaEnum.DESTAQUE,
         autor_id=current_user.id,
         provincia_id=pid,
         municipio_id=mid,
@@ -275,6 +268,7 @@ async def criar_noticia(
     )
 
     try:
+        # logger.info('')
         session.add(nova_noticia)
         await session.flush()
 
@@ -412,7 +406,6 @@ async def listar_noticias(
         .options(
             selectinload(Noticia.provincia),
             selectinload(Noticia.municipio),
-            selectinload(Noticia.categoria),
         )
         .order_by(Noticia.publicado_as.desc())
         .limit(pagin.limit)
@@ -540,7 +533,7 @@ async def atualizar_noticia_completa(
     noticia_banco.lead = schemas.lead
     noticia_banco.corpo = schemas.corpo
     noticia_banco.image_url = schemas.image_url
-    noticia_banco.categoria_id = schemas.categoria_id
+    noticia_banco = schemas.categoria
     noticia_banco.status = schemas.status
     noticia_banco.atualizado_as = datetime.now(timezone.utc())
 

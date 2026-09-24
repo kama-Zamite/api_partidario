@@ -310,8 +310,8 @@ class DoacaoResponse(BaseModel):
     data_doacao: datetime
     aprovado_por: uuid.UUID | None
     aprovado_em: datetime | None
-    recibo_url: str | None
-    recibo_gerado_em: datetime | None
+    # recibo_url: str | None
+    # recibo_gerado_em: datetime | None
     atualizado_em: datetime
     nome_doador: str | None = None
 

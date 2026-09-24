@@ -17,7 +17,6 @@ from src.project_part.model.models import (
     Permissao,
     AdminScope,
     Noticia,
-    NoticiaCategoria,
     AuditLog,
     CartaoMilitante,
     Genero,
