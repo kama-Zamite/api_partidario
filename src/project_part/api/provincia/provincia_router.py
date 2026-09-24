@@ -46,11 +46,11 @@ async def create_provincia(
     schemas: CreateProvincia,
     session: Session,
     redis: Redis,
-    current_user: Get_current_user,
-    scope: ScopeValid
+    # current_user: Get_current_user,
+    # scope: ScopeValid
 ):
 
-    verificar_permissao_global_pais(scope, current_user)
+    # verificar_permissao_global_pais(scope, current_user)
 
     nova_provincia = Provincia(nome_provincia=schemas.nome_provincia)
 
@@ -79,10 +79,13 @@ async def create_provincia(
 
 @provincia.post('/municipio/create', status_code=HTTPStatus.CREATED)
 async def criar_municipio(
-    schemas: CreateMunicipio, session: Session, redis: Redis,
-    current_user: Get_current_user, scope: ScopeValid
+    schemas: CreateMunicipio,
+    session: Session,
+    redis: Redis,
+    # current_user: Get_current_user,
+    # scope: ScopeValid
 ):
-    verificar_permissao_global_pais(scope, current_user)
+    # verificar_permissao_global_pais(scope, current_user)
 
     logger.info('Buscando província vinculada no PostgreSQL: %s', schemas.nome_provincia)
     pegar_provincia = await session.scalar(select(Provincia).where(Provincia.nome_provincia == schemas.nome_provincia))

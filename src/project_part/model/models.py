@@ -283,7 +283,7 @@ class User(Base):
     )
 
     #privacy
-    partilha_dados: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    partilha_dados: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     cookies_personalizacao: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
     # 2FA
