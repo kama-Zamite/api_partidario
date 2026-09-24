@@ -877,7 +877,7 @@ async def atualizar_perfil_password(
     response: Response,
     schemas: UpgradePassWord,
     session: Session,
-    # _captcha: Claudflare_turnfile,
+    _captcha: Claudflare_turnfile,
     current_user: Get_current_user
 ):
     """
