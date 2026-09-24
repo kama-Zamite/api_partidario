@@ -132,7 +132,7 @@ async def login(
     session: Session,
     token: Access_token,
     # backgroundTasks: BackgroundTasks,
-    # _captcha: Claudflare_turnfile
+    _captcha: Claudflare_turnfile
     ):
     """Endpoint para autenticação de usuário."""
 
@@ -1289,11 +1289,11 @@ async def criar_permissao(
     schema: CreatePermissao,
     session: Session,
     redis: Redis, 
-    # _captcha: Claudflare_turnfile,
-    # current_user: Get_current_user, scope: ScopeValid
+    _captcha: Claudflare_turnfile,
+    current_user: Get_current_user, scope: ScopeValid
 ):
-    # verificar_permissao_global_pais(scope, current_user)
-    # logger.info('Procurar usuario: %s no banco de dados...', current_user.nome_completo)
+    verificar_permissao_global_pais(scope, current_user)
+    logger.info('Procurar usuario: %s no banco de dados...', current_user.nome_completo)
     nova_permissao = Permissao(nome=schema.nome)
 
     try:
@@ -1383,12 +1383,12 @@ async def criar_role(
     request: Request,
     schemas: CreateRole,
     session: Session,
-    # _captcha: Claudflare_turnfile,
+    _captcha: Claudflare_turnfile,
     redis: Redis, 
-    # current_user: Get_current_user,
-    # scope: ScopeValid
+    current_user: Get_current_user,
+    scope: ScopeValid
 ):
-    # verificar_permissao_global_pais(scope, current_user)
+    verificar_permissao_global_pais(scope, current_user)
 
     # if scope.provincia_id is not None:
     #     logger.warning('Erro: admin %s nao tem permissao para criar Role.', current_user.email)

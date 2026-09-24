@@ -157,7 +157,7 @@ async def create_user(
     caches: Redis,
     session: Session,
     backgroundTasks: BackgroundTasks,
-    # _captcha: Claudflare_turnfile,
+    _captcha: Claudflare_turnfile,
     nome_completo: str = Form(...),
     email: str = Form(...),
     password: str = Form(...),
@@ -877,7 +877,7 @@ async def atualizar_perfil_password(
     response: Response,
     schemas: UpgradePassWord,
     session: Session,
-    _captcha: Claudflare_turnfile,
+    # _captcha: Claudflare_turnfile,
     current_user: Get_current_user
 ):
     """

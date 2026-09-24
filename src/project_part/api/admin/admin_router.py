@@ -140,15 +140,15 @@ async def criar_scope(
     schema: CreateAdminScope,
     session: Session, 
     redis: Redis,
-    # current_user: Get_current_user,
-    # scope: ScopeValid
+    current_user: Get_current_user,
+    scope: ScopeValid
 ):
     """
     Define ou atualiza o escopo geográfico de atuação de um administrador.
     Apenas um único Superadmin global e apenas um admin por província são permitidos.
     """
     logger.info("Verificar os scope...")
-    # verificar_permissao_global_pais(scope, current_user)
+    verificar_permissao_global_pais(scope, current_user)
     provincia_banco = None
     municipio_banco = None
 
@@ -3956,8 +3956,8 @@ async def remover_escopo_administrativo(
 async def upgrade_role_user(
     id_militante: uuid.UUID,
     session: Session,
-    # current_user: Get_current_user,
-    # scope: ScopeValid,
+    current_user: Get_current_user,
+    scope: ScopeValid,
     role_nome: str = Form(..., max_length=15, description='Nome do novo role a ser atribuído ao usuário'),
 ):
     """
@@ -3968,14 +3968,14 @@ async def upgrade_role_user(
 
     """
 
-    # verificar_permissao_global_pais(scope, current_user)
+    verificar_permissao_global_pais(scope, current_user)
 
-    # if id_militante == current_user.id:
-    #     logger.warning('Superadmin com o numero de militante: %s, tentou fazer uma auto atualizacao de role', current_user.militante_numero)
-    #     raise HTTPException(
-    #         status_code=status.HTTP_400_BAD_REQUEST,
-    #         detail='Superadmin nao pode alterar o seu role'
-    #     )
+    if id_militante == current_user.id:
+        logger.warning('Superadmin com o numero de militante: %s, tentou fazer uma auto atualizacao de role', current_user.militante_numero)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail='Superadmin nao pode alterar o seu role'
+        )
         
     query = select(User).where(User.id == id_militante)
     usuario_banco = await session.scalar(query)
