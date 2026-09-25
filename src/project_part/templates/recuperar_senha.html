@@ -7,15 +7,16 @@
 </head>
 <body style="margin: 0; padding: 0; background-color: #f4f4f4; font-family: Arial, Helvetica, sans-serif;">
     <!-- Container principal -->
-    <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color: #f4f4f4; padding: 40px 20px;">
+    <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color: #f4f4f4; padding: 40px 5px;">
         <tr>
             <td align="center">
                 <!-- Card do e-mail -->
-                <table width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width: 600px; background-color: #ffffff; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 12px rgba(0,0,0,0.08);">
-                    <!-- Aqui vai ir a imagem -->
+                <table width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width: 400px; background-color: #ffffff; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 12px rgba(0,0,0,0.08);">
+                    
+                    <!-- Linha do Logótipo (URL Externa) -->
                     <tr>
-                        <td style="padding: 20px; text-align: center;">
-                            <img sr="" alt="Logo" style="max-width: 100%; height: auto;">
+                        <td style="padding: 10px 20px 10px 20px; text-align: center; background-color: #f0f1f3;">
+                            <img src="{{ logo_url }}" alt="Logo UNITA" style="max-width: 100px; height: auto; display: inline-block; border: 0;">
                         </td>
                     </tr>
 
@@ -30,18 +31,18 @@
 
                     <!-- Conteúdo -->
                     <tr>
-                        <td style="padding: 40px 40px 30px 40px;">
-                            <p style="margin: 0 0 14px 0; color: #333333; font-size: 17px; line-height: 1.5;">
+                        <td style="padding: 40px 10px 30px 5px;">
+                            <p align="center" style="margin: 0 0 13px 0; color: #333333; font-size: 13px; line-height: 1.5;">
                                 Olá, <strong>{{ nome }}</strong>! Recebemos um pedido para redefinir a palavra-passe da sua conta de militante.
                             </p>
 
-                            <p style="margin: 0 0 28px 0; color: #555555; font-size: 16px; line-height: 1.6;">
-                                Nao se preocupe, o nosso Galo Negro ajuda-o a retornar o rumo certo.
-                            </p>
-                            <p align: center;  style="margin: 0 0 28px 0; color: #555555; font-size: 16px; line-height: 1.6;">
-                                clique no botão abaixo para criar uma nova palavra-passe:
+                            <p  style="margin: 0 0 13px 0; color: #555555; font-size: 12px; line-height: 1.6; text-align: center;">
+                                Não se preocupe, o nosso Galo Negro ajuda-o a retornar ao rumo certo.
                             </p>
                             
+                            <p style="margin: 0 0 28px 0; color: #555555; font-size: 13px; line-height: 1.6; text-align: center;">
+                                Clique no botão abaixo para criar uma nova palavra-passe:
+                            </p>
 
                             <!-- Botão -->
                             <table width="100%" cellpadding="0" cellspacing="0" border="0">
@@ -53,7 +54,7 @@
                                                   padding: 14px 32px; 
                                                   text-decoration: none; 
                                                   border-radius: 6px; 
-                                                  font-size: 16px; 
+                                                  font-size: 14px; 
                                                   font-weight: 600;
                                                   display: inline-block;">
                                             Redefinir Palavra-passe
@@ -62,10 +63,11 @@
                                 </tr>
                             </table>
 
-                            <p style="margin: 0; color: #999999; font-size: 13px; line-height: 1.5;">
+                            <p style="margin: 0; color: #999999; font-size: 11px; line-height: 1.5; text-align: center;">
                                 Este link é válido por <strong>15 minutos</strong>. Se não solicitou esta alteração, pode ignorar este e-mail com segurança.
                             </p>
-                            <p align="center" style="margin: 15px 0 0 0; color: #1e6b37; font-size: 16px; font-weight: 600; line-height: 1.5;">
+                            
+                            <p style="margin: 15px 0 0 0; color: #1e6b37; font-size: 16px; font-weight: 600; line-height: 1.5; text-align: center;">
                                 Juntos, a marcha continua!
                             </p>
                         </td>

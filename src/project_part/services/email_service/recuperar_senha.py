@@ -20,11 +20,16 @@ env = Environment(loader=FileSystemLoader(CAMINHO_TEMPLATES))
 
 async def enviar_email_real_async(email_destino: str, token: str, nome_completo: str):
     link_completo = f"https://app-gestao-plataforma-2026.vercel.app/redefinir-senha?token={token}"
+    URL_LOGO_OFICIAL = settings.URL_LOGO_UNCLOCK
 
     # 1. Carregar e renderizar o template Jinja2
     try:
         content = env.get_template("recuperar_senha.html")
-        html_content = content.render(link=link_completo, nome=nome_completo)
+        html_content = content.render(
+            link=link_completo, 
+            logo_url=URL_LOGO_OFICIAL,
+            nome=nome_completo
+            )
     except Exception as e:
         logger.error("Erro ao carregar o template Jinja2: %s", str(e))
         return
