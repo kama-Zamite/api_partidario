@@ -34,6 +34,8 @@ class Settings(BaseSettings):
     CLOUDINARY_API_KEY: str
     CLOUDINARY_API_SECRET: str
     URL_LOGO_UNCLOCK: str
+    URL_LOGO_WELLCOME: str
+    URL_LOGIN: str
 
     SMTP_HOST: str
     SMTP_PORT: int

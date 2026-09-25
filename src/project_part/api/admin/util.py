@@ -86,6 +86,10 @@ def to_quota_response(pag: PagamentoQuota) -> QuotaResponse:
     )
     
 def to_solicitacao_response(s: SolicitacaoFundo) -> SolicitacaoFundoResponse:
+    nome_solicitante = None
+    if s.user:
+        nome_solicitante = s.user.nome_completo
+
     return SolicitacaoFundoResponse(
         id=s.id,
         provincia_id=s.provincia_id,
@@ -96,8 +100,8 @@ def to_solicitacao_response(s: SolicitacaoFundo) -> SolicitacaoFundoResponse:
         moeda=s.moeda,
         status=s.status,
         observacao=s.observacao,
-        solicitado_por=s.solicitado_por,
-        aprovado_por=s.aprovado_por,
+        solicitado_por=nome_solicitante,
+        # aprovado_por=s.aprovado_por,
         data_solicitacao=s.data_solicitacao,
         aprovado_em=s.aprovado_em,
         nome_provincia=s.provincia.nome_provincia if s.provincia else None,

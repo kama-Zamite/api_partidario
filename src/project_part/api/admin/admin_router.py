@@ -3022,7 +3022,6 @@ async def listar_quotas(
 @admin.post(
     '/fundos/solicitacoes',
     status_code=HTTPStatus.CREATED,
-    response_model=SolicitacaoFundoResponse,
 )
 # @limiter.limit('10/minute')
 async def criar_solicitacao_fundo(
@@ -3158,7 +3157,7 @@ async def criar_solicitacao_fundo(
         result.provincia_id,
         current_user.id,
     )
-    return to_solicitacao_response(result)
+    return {"msg", "Solicitação de fundo criada com sucesso."}
 
 
 
@@ -3198,7 +3197,10 @@ async def listar_solicitacoes_fundo(
         filtros.append(SolicitacaoFundo.provincia_id == scope.provincia_id)
 
     count_q = select(func.count(SolicitacaoFundo.id))
-    q = select(SolicitacaoFundo).options(selectinload(SolicitacaoFundo.provincia))
+    q = select(SolicitacaoFundo).options(
+        selectinload(SolicitacaoFundo.provincia),
+        selectinload(SolicitacaoFundo.user),
+        )
 
     if filtros:
         count_q = count_q.where(*filtros)

@@ -14,8 +14,8 @@ resend.api_key = settings.RESEND_API_KEY
 
 
 BASE_DIR = pathlib.Path(__file__).resolve().parent.parent.parent
-CAMINHO_TEMPLATES = BASE_DIR / "templates"
-env = Environment(loader=FileSystemLoader(CAMINHO_TEMPLATES))
+TEMPLATES = BASE_DIR / "templates"
+env = Environment(loader=FileSystemLoader(TEMPLATES))
 
 
 async def enviar_email_real_async(email_destino: str, token: str, nome_completo: str):

@@ -130,8 +130,8 @@ async def login(
     response: Response,
     session: Session,
     token: Access_token,
-    # backgroundTasks: BackgroundTasks,
-    # _captcha: Claudflare_turnfile
+    backgroundTasks: BackgroundTasks,
+    _captcha: Claudflare_turnfile
     ):
     """Endpoint para autenticação de usuário."""
 
@@ -287,18 +287,18 @@ async def login(
     #enviar email
 
     user_agent_parsed = parse(user_agent)
-    # try:
-    #     backgroundTasks.add_task(
-    #         email_sucesso_login_async, 
-    #         nome_completo=user.nome_completo, 
-    #         ip_address=ip_address, 
-    #         email_destino=user.email,
-    #         navegador=user_agent_parsed.browser.family, 
-    #         sistema_operacional=user_agent_parsed.os.family, 
-    #         )
-    #     logger.info("E-mail de login enviado com sucesso para %s", user.email)
-    # except Exception as e:
-    #     logger.error("Falha ao enviar e-mail de login para %s: %s", user.email, str(e))
+    try:
+        backgroundTasks.add_task(
+            email_sucesso_login_async, 
+            nome_completo=user.nome_completo, 
+            ip_address=ip_address, 
+            email_destino=user.email,
+            navegador=user_agent_parsed.browser.family, 
+            sistema_operacional=user_agent_parsed.os.family, 
+            )
+        logger.info("E-mail de login enviado com sucesso para %s", user.email)
+    except Exception as e:
+        logger.error("Falha ao enviar e-mail de login para %s: %s", user.email, str(e))
 
 
     set_auth_cookies(
@@ -326,7 +326,7 @@ async def verify_2fa(
     request: Request,
     body: Login2FARequest,
     session: Session,
-    # backgroundTasks: BackgroundTasks,
+    backgroundTasks: BackgroundTasks,
     _captcha: Claudflare_turnfile,
 ):
     """
@@ -518,22 +518,19 @@ async def verify_2fa(
             )
 
     user_agent_parsed = parse(user_agent)
-    # try:
-    #     # backgroundTasks.add_task(
-    #     #     email_sucesso_login_async, 
-    #     #     nome_completo=user.nome_completo, 
-    #     #     ip_address=ip_address, 
-    #     #     email_destino=user.email,
-    #     #     navegador=user_agent_parsed.browser.family, 
-    #     #     sistema_operacional=user_agent_parsed.os.family, 
-    #     #     )
-    #     logger.info("E-mail de login enviado com sucesso para %s", user.email)
-    # except Exception as e:
-    #     logger.error("Falha ao enviar e-mail de login para %s: %s", user.email, str(e))
-    #     raise HTTPException(
-    #         status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
-    #         detail="Falha ao enviar e-mail de login. Tente novamente mais tarde."
-    #     )
+    try:
+        backgroundTasks.add_task(
+            email_sucesso_login_async, 
+            nome_completo=user.nome_completo, 
+            ip_address=ip_address, 
+            email_destino=user.email,
+            navegador=user_agent_parsed.browser.family, 
+            sistema_operacional=user_agent_parsed.os.family, 
+            )
+        logger.info("E-mail de login enviado com sucesso para %s", user.email)
+    except Exception as e:
+        logger.error("Falha ao enviar e-mail de login para %s: %s", user.email, str(e))
+
     
     set_auth_cookies(
         response=response,
@@ -683,7 +680,7 @@ async def solicitar_recuperacao(
     payload: PedidoRecuperacao,
     session: Session,
     background_tasks: BackgroundTasks,
-    # _captcha: Claudflare_turnfile,
+    _captcha: Claudflare_turnfile,
     ):
     """Endpoint para solicitar a recuperação de senha. Recebe o e-mail do usuário, verifica se ele existe no banco de dados e, se existir, gera um token de recuperação e envia um e-mail com instruções para redefinir a senha.
     Args:

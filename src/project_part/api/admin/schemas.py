@@ -487,8 +487,8 @@ class SolicitacaoFundoResponse(BaseModel):
     moeda: str
     status: DespesaStatusEnum
     observacao: str | None
-    solicitado_por: uuid.UUID | None
-    aprovado_por: uuid.UUID | None
+    solicitado_por: str | None = None 
+    # aprovado_por: str | None = None
     data_solicitacao: datetime
     aprovado_em: datetime | None
     nome_provincia: str | None = None
