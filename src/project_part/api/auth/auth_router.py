@@ -212,10 +212,9 @@ async def login(
     ip_address = get_client_ip(request)
 
     if not ip_address:
-        ip_address = request.client.host if request.client else None
-
+        ip_address = request.client.host if request.client else "IP Desconhecido"
     # 3. Capturar o User-Agent (Navegador/Dispositivo)
-    user_agent = request.headers.get("user-agent")
+    user_agent = request.headers.get("user-agent", "")
 
     
     # --- Fluxo de Autenticação com Sucesso ---
@@ -287,14 +286,23 @@ async def login(
     #enviar email
 
     user_agent_parsed = parse(user_agent)
+    navegador_final = f"{user_agent_parsed.browser.family} {user_agent_parsed.browser.version_string}".strip()
+    sistema_final = f"{user_agent_parsed.os.family} {user_agent_parsed.os.version_string}".strip()
+
+    # Fallback amigável caso retorne vazio ou "Other" em ferramentas como Postman/Swagger
+    if "other" in navegador_final.lower() and user_agent_parsed.is_bot:
+        navegador_final = "Ferramenta de Automação/API Docs"
+    if "other" in sistema_final.lower():
+        sistema_final = "Sistema Desconhecido"
+
     try:
         backgroundTasks.add_task(
             email_sucesso_login_async, 
             nome_completo=user.nome_completo, 
             ip_address=ip_address, 
             email_destino=user.email,
-            navegador=user_agent_parsed.browser.family, 
-            sistema_operacional=user_agent_parsed.os.family, 
+            navegador=navegador_final, 
+            sistema_operacional=sistema_final, 
             )
         logger.info("E-mail de login enviado com sucesso para %s", user.email)
     except Exception as e:
