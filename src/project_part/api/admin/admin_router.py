@@ -2913,6 +2913,7 @@ async def listar_doacoes(
     result = await session.execute(
     base.options(
         selectinload(Doacao.doador).selectinload(User.provincia),
+        selectinload(Doacao.doador).selectinload(User.municipio),
         selectinload(Doacao.aprovador).selectinload(User.scope),
         )
         .order_by(Doacao.data_doacao.desc())
@@ -2988,7 +2989,10 @@ async def listar_quotas(
 
     result = await session.execute(
         base.options(selectinload(PagamentoQuota.militante),
-                     selectinload(PagamentoQuota.aprovador).selectinload(User.scope))
+                     selectinload(PagamentoQuota.aprovador).selectinload(User.scope),
+                     selectinload(PagamentoQuota.militante).selectinload(User.provincia),
+                    selectinload(PagamentoQuota.militante).selectinload(User.municipio)
+                     )
         .order_by(PagamentoQuota.data_pagamento.desc())
         .limit(limit)
         .offset(offset)

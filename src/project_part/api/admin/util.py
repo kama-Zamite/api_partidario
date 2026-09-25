@@ -5,12 +5,15 @@ from project_part.model.models import Doacao, PagamentoQuota, SolicitacaoFundo
 def to_doacao_response(doacao: Doacao) -> DoacaoResponse:
     # Acesso seguro: garante que doador E provincia existem antes de buscar o nome
     provincia_nome = None
+    municipio_nome = None
     if doacao.doador and doacao.doador.provincia:
         provincia_nome = doacao.doador.provincia.nome_provincia
+        municipio_nome = doacao.doador.municipio.nome_municipio
 
     return DoacaoResponse(
         id=doacao.id,
         provincia=provincia_nome,  # Passa uma string ou None com segurança
+        municipio=municipio_nome,
         user_id=doacao.user_id,
         quantia=doacao.quantia,
         moeda=doacao.moeda,
@@ -53,8 +56,17 @@ def to_doacao_response(doacao: Doacao) -> DoacaoResponse:
 
 
 def to_quota_response(pag: PagamentoQuota) -> QuotaResponse:
+
+    provincia_nome = None
+    municipio_nome = None
+    if pag.militante and pag.militante.provincia:
+        provincia_nome = pag.militante.provincia.nome_provincia
+        municipio_nome = pag.militante.municipio.nome_municipio
+
     return QuotaResponse(
         id=pag.id,
+        provincia=provincia_nome,  # Passa uma string ou None com segurança
+        municipio=municipio_nome,
         militante_numero= pag.militante.militante_numero if pag.militante and pag.militante.militante_numero else None,
         user_id=pag.user_id,
         quantia=pag.quantia,

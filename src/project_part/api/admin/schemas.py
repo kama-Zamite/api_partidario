@@ -312,6 +312,7 @@ class DoacaoResponse(BaseModel):
 
     nome_doador: str | None = None
     provincia: str | None = None
+    municipio: str | None = None
     nome_aprovador: str | None = None          # ← adicione este campo
     scope_aprovador: str | None = None
     model_config = ConfigDict(from_attributes=True, ser_json_circular_logic='ignore')
@@ -327,6 +328,17 @@ class DoacaoResponse(BaseModel):
             return getattr(v, 'nome_provincia')
         raise ValueError('Província inválida ou ausente')
 
+    @field_validator('municipio', mode='before')
+    @classmethod
+    def extrair_nome_municipio(cls, v: Any) -> Optional[str]:
+        if v is None:
+            return None
+        if isinstance(v, str):
+            return v
+        if hasattr(v, 'nome_municipio'):
+            return getattr(v, 'nome_municipio')
+        raise ValueError('Município inválido ou ausente')
+    
     @field_validator('nome_aprovador', mode='before')
     @classmethod
     def extrair_nome_aprovador(cls, v: Any) -> Optional[str]:
@@ -386,8 +398,33 @@ class QuotaResponse(BaseModel):
     nome_aprovador: str | None = None          # ← adicione este campo
     scope_aprovador: str | None = None
 
+    provincia: str | None = None
+    municipio: str | None = None
+
     model_config = ConfigDict(from_attributes=True)
 
+    @field_validator('provincia', mode='before')
+    @classmethod
+    def extrair_nome_provincia(cls, v: Any) -> Optional[str]:
+        if v is None:
+            return None
+        if isinstance(v, str):
+            return v
+        if hasattr(v, 'nome_provincia'):
+            return getattr(v, 'nome_provincia')
+        raise ValueError('Província inválida ou ausente')
+
+    @field_validator('municipio', mode='before')
+    @classmethod
+    def extrair_nome_municipio(cls, v: Any) -> Optional[str]:
+        if v is None:
+            return None
+        if isinstance(v, str):
+            return v
+        if hasattr(v, 'nome_municipio'):
+            return getattr(v, 'nome_municipio')
+        raise ValueError('Município inválido ou ausente')
+    
     @field_validator('nome_aprovador', mode='before')
     @classmethod
     def extrair_nome_aprovador(cls, v: Any) -> Optional[str]:
