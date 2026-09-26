@@ -263,6 +263,7 @@ class User(Base):
 
     image_url: Mapped[None|str] = mapped_column(TEXT, nullable=True)
     email: Mapped[str] = mapped_column(String(255), index=True, unique=True, nullable=False)
+    email_recuperacao: Mapped[str | None] = mapped_column(String(255), index=True, unique=True, nullable=True)
     password_hash: Mapped[str] = mapped_column(TEXT, nullable=False)
     data_nascimento: Mapped[date] = mapped_column(Date, nullable=False)
     nif: Mapped[str] = mapped_column(String(14), index=True, unique=True, nullable=False)

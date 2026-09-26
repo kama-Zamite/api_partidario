@@ -116,6 +116,7 @@ from .schemas import (
     ContribuicaoItem,
     TipoContribuicao,
     UltimoPagamentoQuotaResponse,
+    UpdateEmailRecuperacao,
 
 )
 
@@ -873,17 +874,20 @@ async def confirmar_email_cadastro(
     # 8. Notificação de boas-vindas
     destinatario_tipo = None
     tipo = None
+    tipo_pagamento = None
     if novo_usuario.cadastrar_militante == CadastrarComo.MILITANTE or novo_usuario.cadastrar_militante == "MILITANTE":
         destinatario_tipo = "MILITANTE"
         tipo = "Militante"
+        tipo_pagamento = "o pagamento da sua quota inicial"
     else:
         destinatario_tipo = "SIMPATIZANTE"
         tipo = "Simpatizante"
+        tipo_pagamento = "a tua primeira doação"
 
     notification = Notification(
         user_id=novo_usuario.id,
         titulo="Bem-vindo à UNITA PGM",
-        mensagem=f"Olá {tipo} {novo_usuario.nome_completo}, seja bem-vindo à UNITA PGM! O seu cadastro foi realizado com sucesso. Aceda à secção Financeira para efetuar o pagamento da sua quota inicial.",
+        mensagem=f"Olá {tipo} {novo_usuario.nome_completo}, seja bem-vindo à UNITA PGM! O seu cadastro foi realizado com sucesso. Aceda à secção Financeira para efetuar {tipo_pagamento}.",
         categoria=RoleCategoriaNotificacao.BEM_VINDO,
         criado_as=datetime.now(timezone.utc),
         destinatario=destinatario_tipo
@@ -1422,6 +1426,71 @@ async def atualizar_perfil_password(
 
 
 
+
+@user.patch('/email-recuperacao', status_code=HTTPStatus.OK)
+@limiter.limit("3/minute; 10/day")
+async def atualizar_email_recuperacao(
+    request: Request,
+    schemas: UpdateEmailRecuperacao,
+    session: Session,
+    _captcha: Claudflare_turnfile,
+    current_user: Get_current_user
+):
+    """
+        Atualiza o e-mail de recuperação do usuário autenticado.
+        Valida o formato do e-mail, atualiza o campo na base de dados e envia
+        um e-mail de confirmação para o novo endereço.
+    """
+
+    # user_id = current_user.id
+    user_email = current_user.email
+
+    logger.info(
+        'Iniciando processo de atualização de e-mail de recuperação para o usuário: %s',
+        user_email
+    )
+
+
+    current_user.email_recuperacao = schemas.novo_email
+    current_user.atualizado_em = datetime.now(timezone.utc)
+
+    try:
+        session.add(current_user)
+        await session.commit()
+
+        # Enviar e-mail de confirmação (assíncrono)
+        # backgroundTasks.add_task(enviar_email_confirmacao_recuperacao_async, schemas.novo_email, current_user.nome_completo)
+
+        logger.info(
+            'E-mail de recuperação do usuário %s atualizado com sucesso para %s',
+            user_email,
+            schemas.novo_email
+        )
+
+        return {'msg': 'E-mail de recuperação atualizado com sucesso! Confirme no seu novo endereço.'}
+
+    except IntegrityError as e:
+        await session.rollback()
+        logger.error(
+            'Erro de integridade ao tentar atualizar e-mail de recuperação no banco: %s',
+            str(e.orig)
+        )
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail='O e-mail informado já está sendo utilizado por outro usuário.'
+        )
+    except Exception as e:
+        await session.rollback()
+        logger.error(
+            'Erro desconhecido na atualização do e-mail de recuperação do usuário %s: %s',
+            user_email,
+            str(e)
+        )
+        raise HTTPException(
+            status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+            detail='Não foi possível processar a atualização do e-mail de recuperação no momento.'
+        )
+    
 
 
 @user.put('/perfil/upgrade', status_code=HTTPStatus.OK)

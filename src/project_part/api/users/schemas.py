@@ -25,6 +25,9 @@ from project_part.model.models import (
 
 EmailValided = Annotated[EmailStr, StringConstraints(to_lower=True, strip_whitespace=True)]
 
+class UpdateEmailRecuperacao(BaseModel):
+    novo_email: EmailValided = Field(max_length=255)
+
 class UserBase(BaseModel):
     nome_completo: str = Field(max_length=50)
     email: EmailValided = Field(max_length=255)
