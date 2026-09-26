@@ -266,7 +266,7 @@ class User(Base):
     password_hash: Mapped[str] = mapped_column(TEXT, nullable=False)
     data_nascimento: Mapped[date] = mapped_column(Date, nullable=False)
     nif: Mapped[str] = mapped_column(String(14), index=True, unique=True, nullable=False)
-    # codigo_verificacao_email: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, default=None)
+    codigo_verificacao_email: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, default=None)
     telefone: Mapped[str] = mapped_column(String(20), nullable=False)
     # whatsapp: Mapped[str | None] = mapped_column(String(20), nullable=True, default=None)
     genero: Mapped[Genero] = mapped_column(default=Genero.HOMEM, nullable=False)
@@ -590,7 +590,7 @@ class Noticia(Base):
     corpo: Mapped[str] = mapped_column(TEXT, nullable=False)
     image_url: Mapped[None | str] = mapped_column(TEXT, nullable=True)
 
-    categoria: Mapped[str] = mapped_column(String(20), default=CategoriaNoticiaEnum.DESTAQUE, nullable=False)
+    categoria: Mapped[str] = mapped_column(String(20), default=CategoriaNoticiaEnum.DESTAQUE, nullable=True)
     autor_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey('users.id'), nullable=False)
     provincia_id: Mapped[int] = mapped_column(
         ForeignKey('provincias.id', ondelete='CASCADE'), nullable=True

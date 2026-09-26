@@ -23,7 +23,7 @@ async def email_sucesso_login_async(
         sistema_operacional: str,
         # data_hora: str,
         ):
-    LOGO_URL = settings.URL_LOGO_WELLCOME
+    LOGO_URL = settings.CLAUDINARY_URL_CONFIRMACAO
     REDIRECT_URL = settings.URL_LOGIN
     try:
         content = env.get_template('emailLogin.html')

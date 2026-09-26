@@ -149,15 +149,373 @@ PREFIXO_ARQUIVO = "avatar"
 
 
 
-@user.post('/create', status_code=HTTPStatus.CREATED)
+# @user.post('/create', status_code=HTTPStatus.CREATED)
+# @limiter.limit("3/minute; 100/day")
+# async def create_user(
+#     request: Request,
+#     response: Response,
+#     caches: Redis,
+#     session: Session,
+#     backgroundTasks: BackgroundTasks,
+#     # _captcha: Claudflare_turnfile,
+#     nome_completo: str = Form(...),
+#     email: str = Form(...),
+#     password: str = Form(...),
+#     confirmar_password: str = Form(...),
+#     data_nascimento: date = Form(...),
+#     nif: str = Form(...),
+#     telefone: str = Form(...),
+#     militante_numero: str | None = Form(None),
+#     genero: Genero = Form(default=Genero.HOMEM),
+#     foi_militante: bool = Form(default=False),
+#     cadastrar_militante: CadastrarComo = Form(default=CadastrarComo.MILITANTE),
+#     estado_civil: EstadoCivil = Form(default=EstadoCivil.SOLTEIRO),
+#     nome_provincia: str = Form(...),
+#     nome_municipio: str = Form(...),
+#     foto_perfil: UploadFile = File(..., description="Foto de perfil obrigatória (JPEG/JPG, max 5MB)"),
+# ):
+#     """
+#     Cadastra um novo usuário no sistema aplicando validações estritas de negócio (NIF, Maioridade, Telefone).
+#     Executa upload assíncrono para o Cloudinary e invalida caches do Redis em O(1).
+#     """
+
+#     # --- 1. Validação do arquivo: extensão, timeout, tamanho e conteúdo real (magic bytes) ---
+#     if not foto_perfil.filename:
+#         raise HTTPException(
+#             status_code=HTTPStatus.BAD_REQUEST,
+#             detail="A foto de perfil é obrigatória."
+#         )
+
+#     extensao = foto_perfil.filename.split(".")[-1].lower()
+#     if extensao not in ALLOWED_EXTENSIONS:
+#         raise HTTPException(
+#             status_code=HTTPStatus.BAD_REQUEST,
+#             detail="Formato de imagem inválido. Use apenas JPG, JPEG."
+#         )
+
+#     async def _ler_arquivo_com_limite() -> bytes:
+#         buffer = bytearray()
+#         while True:
+#             chunk = await foto_perfil.read(1024 * 1024)  # 1MB por vez
+#             if not chunk:
+#                 break
+#             buffer.extend(chunk)
+#             if len(buffer) > MAX_FILE_SIZE:
+#                 raise HTTPException(
+#                     status_code=HTTPStatus.BAD_REQUEST,
+#                     detail="A foto de perfil não pode ser maior que 5MB."
+#                 )
+#         return bytes(buffer)
+
+#     try:
+#         conteudo_bytes = await asyncio.wait_for(
+#             _ler_arquivo_com_limite(),
+#             timeout=FILE_READ_TIMEOUT_SECONDS
+#         )
+#     except asyncio.TimeoutError:
+#         logger.warning("Timeout ao receber upload de foto de perfil (filename=%s).", foto_perfil.filename)
+#         raise HTTPException(
+#             status_code=HTTPStatus.REQUEST_TIMEOUT,
+#             detail="Tempo excedido ao receber o arquivo. Tente novamente com uma conexão mais estável."
+#         )
+#     except HTTPException:
+#         raise
+#     finally:
+#         await foto_perfil.close()
+
+#     if len(conteudo_bytes) == 0:
+#         raise HTTPException(
+#             status_code=HTTPStatus.BAD_REQUEST,
+#             detail="A foto de perfil enviada está vazia."
+#         )
+
+#     kind = filetype.guess(conteudo_bytes)
+#     if kind is None or kind.mime not in ALLOWED_CONTENT_TYPES:
+#         raise HTTPException(
+#             status_code=HTTPStatus.BAD_REQUEST,
+#             detail="O conteúdo do arquivo não corresponde a uma imagem válida."
+#         )
+
+#     # --- 2. Regras de negócio sobre militante ---
+#     num_militante_final = None
+
+#     if militante_numero and cadastrar_militante == CadastrarComo.SIMPATIZANTE:
+#         raise HTTPException(
+#             status_code=HTTPStatus.BAD_REQUEST,
+#             detail="O simpatizante nao deve ter número de militante."
+#         )
+
+#     if cadastrar_militante == CadastrarComo.MILITANTE:
+#         tentativas = 0
+#         while tentativas < 5:
+#             ano_atual = datetime.now(timezone.utc).year
+#             chave_aleatoria = secrets.token_hex(3).upper()
+#             num_militante_final = f'UNITA.{ano_atual}-{chave_aleatoria}'
+
+#             numero_exists = await session.scalar(
+#                 select(User.id).where(User.militante_numero == num_militante_final)
+#             )
+#             if not numero_exists:
+#                 break
+#             tentativas += 1
+#         else:
+#             logger.error("Falha crítica: Excedeu o limite de tentativas para gerar um número de cartão único.")
+#             raise HTTPException(
+#                 status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+#                 detail="Erro de infraestrutura ao gerar número de cartão."
+#             )
+
+#     #Gerar codigo de verificacao de email
+#     secret_number = secrets.randbelow(900000) + 100000  # Gera um número de 6 dígitos entre 100000 e 999999
+
+#     #enviar email
+#     # try:
+#     #     await enviar_email_confirmacao_cadastro_user_async(email_destino=email, secret_number=secret_number, nome_completo=nome_completo)
+#     #     logger.info("E-mail de confirmação enviado com sucesso para %s", email)
+#     # except Exception as e:
+#     #     logger.error("Falha ao enviar e-mail de confirmação para %s: %s", email, str(e))
+#     #     raise HTTPException(
+#     #         status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+#     #         detail="Falha ao enviar e-mail de confirmação. Tente novamente mais tarde."
+#     #     )
+
+#     # --- 3. Validação Pydantic ---
+#     try:
+#         dados_validados = UserBase(
+#             nome_completo=nome_completo,
+#             email=email,
+#             password=password,
+#             confirmar_password=confirmar_password,
+#             data_nascimento=data_nascimento,
+#             nif=nif,
+#             telefone=telefone,
+#             genero=genero,
+#             estado_civil=estado_civil,
+#             nome_provincia=nome_provincia,
+#             foi_militante=foi_militante,
+#             cadastrar_militante=cadastrar_militante,
+#             nome_municipio=nome_municipio,
+#             militante_numero=num_militante_final,
+#             codigo_verificacao_email=secret_number
+#         )
+#     except ValidationError as e:
+#         raise HTTPException(
+#             status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
+#             detail=e.errors(include_url=False, include_context=False)
+#         )
+
+#     # --- 4. Checagens de unicidade e integridade referencial ---
+#     condicoes = [
+#         User.email == dados_validados.email,
+#         User.nif == dados_validados.nif
+#     ]
+#     if dados_validados.militante_numero:
+#         condicoes.append(User.militante_numero == dados_validados.militante_numero)
+
+#     existent_user = await session.scalar(select(User).where(or_(*condicoes)))
+#     if existent_user:
+#         if existent_user.email == dados_validados.email:
+#             msg = "O e-mail informado já está cadastrado."
+#         elif existent_user.nif == dados_validados.nif:
+#             msg = "O NIF informado já está cadastrado."
+#         else:
+#             msg = "O número de militante gerado colidiu. Tente novamente."
+#         raise HTTPException(status_code=HTTPStatus.CONFLICT, detail=msg)
+
+#     provincia_banco = await session.scalar(
+#         select(Provincia).where(Provincia.nome_provincia == dados_validados.nome_provincia)
+#     )
+#     if not provincia_banco:
+#         raise HTTPException(
+#             status_code=HTTPStatus.NOT_FOUND,
+#             detail="Província não encontrada no território nacional."
+#         )
+
+#     municipio_banco = await session.scalar(
+#         select(Municipio).where(
+#             Municipio.nome_municipio == dados_validados.nome_municipio,
+#             Municipio.id_provincia == provincia_banco.id
+#         )
+#     )
+#     if not municipio_banco:
+#         raise HTTPException(
+#             status_code=HTTPStatus.NOT_FOUND,
+#             detail=f"O município '{dados_validados.nome_municipio}' não pertence à província '{dados_validados.nome_provincia}'."
+#         )
+
+#     id_role_alvo = ROLE_MILITANTE_ID if cadastrar_militante == CadastrarComo.MILITANTE else ROLE_SIMPATIZANTE_ID
+#     role_banco = await session.scalar(select(Role).where(Role.id == id_role_alvo))
+#     if not role_banco:
+#         raise HTTPException(
+#             status_code=HTTPStatus.NOT_FOUND,
+#             detail="A permissão de acesso especificada não está configurada no sistema."
+#         )
+
+#     # --- 5. Persistência ---
+#     password_hash = await asyncio.to_thread(hash_password, dados_validados.password)
+#     novo_usuario = User(
+#         nome_completo=dados_validados.nome_completo,
+#         email=dados_validados.email,
+#         password_hash=password_hash,
+#         data_nascimento=dados_validados.data_nascimento,
+#         nif=dados_validados.nif,
+#         militante_numero=dados_validados.militante_numero,
+#         telefone=dados_validados.telefone,
+#         foi_militante=dados_validados.foi_militante,
+#         cadastrar_militante=dados_validados.cadastrar_militante,
+#         provincia_id=provincia_banco.id,
+#         municipio_id=municipio_banco.id,
+#         role_id=role_banco.id,
+#         genero=dados_validados.genero,
+#         estado_civil=dados_validados.estado_civil.value,
+#         # codigo_verificacao_email=dados_validados.codigo_verificacao_email,
+#         image_url=None
+#     )
+#     novo_usuario.criado_em = datetime.now(timezone.utc)
+#     # --- 5a. Reserva o registro (sem tocar em serviço externo ainda) ---
+#     try:
+#         session.add(novo_usuario)
+#         await session.flush()
+#     except IntegrityError:
+#         await session.rollback()
+#         raise HTTPException(
+#             status_code=HTTPStatus.CONFLICT,
+#             detail="Erro de integridade relacional ao registrar documentos."
+#         )
+#     except Exception as e:
+#         await session.rollback()
+#         logger.critical("Erro catastrófico ao reservar usuário: %s", e)
+#         raise HTTPException(
+#             status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+#             detail="Erro interno de processamento no servidor."
+#         )
+    
+
+#     # --- 5b. Upload da imagem (efeito colateral externo) ---
+#     try:
+#         url_secure =await asyncio.wait_for(
+#             upload_imagem_geral(
+#                 file_bytes=conteudo_bytes,
+#                 identificador=str(novo_usuario.id),
+#                 pasta_alvo="perfis_usuarios",
+#                 prefixo_arquivo="avatar"
+#             ),
+#             timeout=30
+#         )
+#     except Exception as e:
+#         # Nada foi commitado ainda, então basta descartar a transação pendente.
+#         # Sem imagem órfã aqui, pois o upload em si falhou.
+#         await session.rollback()
+#         logger.error("Falha ao subir imagem para o Cloudinary: %s", e)
+#         raise HTTPException(
+#             status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+#             detail="Falha ao salvar imagem de perfil no serviço de nuvem."
+#         )
+
+#     novo_usuario.image_url = url_secure
+
+#     # --- 5c. Commit final. Se falhar aqui, a imagem JÁ foi enviada -> compensar. ---
+#     try:
+#         await session.commit()
+#     except IntegrityError:
+#         await session.rollback()
+#         # await _compensar_upload_orfao(str(novo_usuario.id))
+#         await compensar_upload_orfao(f"perfis_usuarios/avatar_{novo_usuario.id}")
+
+#         raise HTTPException(
+#             status_code=HTTPStatus.CONFLICT,
+#             detail="Erro de integridade relacional ao registrar documentos."
+#         )
+#     except Exception as e:
+#         await session.rollback()
+#         await compensar_upload_orfao(str(novo_usuario.id))
+#         logger.critical("Erro catastrófico ao commitar usuário após upload: %s", e)
+#         raise HTTPException(
+#             status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+#             detail="Erro interno de processamento no servidor."
+#         )
+
+#     # --- 6. Pós-commit: cache (não-bloqueante, nunca deve derrubar a resposta de sucesso) ---
+#     try:
+#         await caches.incr("v1:usuarios:lista:versao")
+#     except Exception as cache_err:
+#         logger.error("Falha não-bloqueante ao atualizar versão do cache no Redis: %s", cache_err)
+
+#     destinatario_tipo = None
+#     tipo = None
+#     if novo_usuario.cadastrar_militante == CadastrarComo.MILITANTE:
+#         destinatario_tipo = "MILITANTE"
+#         tipo = "Militante"
+#     elif novo_usuario.cadastrar_militante == CadastrarComo.SIMPATIZANTE:
+#         destinatario_tipo = "SIMPATIZANTE"
+#         tipo = "Simpatizante"
+
+#     notification = Notification(
+#         user_id=novo_usuario.id,
+#         titulo="Bem-vindo à UNITA PGM",
+#         mensagem=f"Olá {tipo} {novo_usuario.nome_completo}, seja bem-vindo à UNITA PGM! O seu cadastro foi realizado com sucesso. Aceda à secção Financeira para efetuar o pagamento da sua quota inicial.",
+#         categoria=RoleCategoriaNotificacao.BEM_VINDO,
+#         criado_as=datetime.now(timezone.utc),
+#         destinatario=destinatario_tipo
+#     )
+
+#     try:
+#         session.add(notification)
+#         await session.commit()
+#     except Exception as e:
+#         logger.error("Falha ao criar notificação de boas-vindas para o usuário %s: %s", novo_usuario.id, str(e))
+#         # Não interrompe o fluxo principal, apenas loga o erro.
+        
+    
+#     try:
+#         backgroundTasks.add_task(email_sucesso_cadastro_async, novo_usuario.nome_completo, novo_usuario.email)
+#     except Exception as e:
+#         logger.error("Falha ao enviar e-mail para %s: %s", novo_usuario.email, str(e))
+#         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Falha ao enviar e-mail de cadastro.")
+#     # agora = datetime.now(timezone.utc)
+#     token_gerado = emitir_access_token(novo_usuario.id, novo_usuario.password_alterado_em)
+
+#     ip_address = (
+#         request.headers.get("x-forwarded-for")
+#         or (
+#                 request.client.host
+#                 if request.client
+#                 else None
+#             )
+#         )
+#     if not ip_address:
+#         ip_address = request.client.host if request.client else None
+
+#     # 3. Capturar o User-Agent (Navegador/Dispositivo)
+#     user_agent = request.headers.get("user-agent")
+
+#     refresh_gerado = await gerar_e_registar_refresh_token(
+#         session=session,      # <-- Faltava este argumento!
+#         user_id=novo_usuario.id, 
+#         ip=ip_address, 
+#         user_agent=user_agent
+#     )
+#     set_auth_cookies(
+#             response=response,
+#             access_token=token_gerado,
+#             refresh_token=refresh_gerado,
+#         )
+#     response.headers["Cache-Control"] = "no-store"
+    
+#     return {
+#         "status": "success",
+#         "message": "Autenticação realizada com sucesso.",
+#     }
+    
+
+@user.post('/create', status_code=HTTPStatus.ACCEPTED)
 @limiter.limit("3/minute; 100/day")
 async def create_user(
     request: Request,
-    response: Response,
     caches: Redis,
     session: Session,
     backgroundTasks: BackgroundTasks,
-    # _captcha: Claudflare_turnfile,
+    _captcha: Claudflare_turnfile,
     nome_completo: str = Form(...),
     email: str = Form(...),
     password: str = Form(...),
@@ -175,11 +533,10 @@ async def create_user(
     foto_perfil: UploadFile = File(..., description="Foto de perfil obrigatória (JPEG/JPG, max 5MB)"),
 ):
     """
-    Cadastra um novo usuário no sistema aplicando validações estritas de negócio (NIF, Maioridade, Telefone).
-    Executa upload assíncrono para o Cloudinary e invalida caches do Redis em O(1).
+    Inicia o cadastro: valida dados, gera código de verificação e envia e-mail.
+    O usuário só é criado após confirmação do e-mail.
     """
-
-    # --- 1. Validação do arquivo: extensão, timeout, tamanho e conteúdo real (magic bytes) ---
+    # --- 1. Validação do arquivo ---
     if not foto_perfil.filename:
         raise HTTPException(
             status_code=HTTPStatus.BAD_REQUEST,
@@ -196,7 +553,7 @@ async def create_user(
     async def _ler_arquivo_com_limite() -> bytes:
         buffer = bytearray()
         while True:
-            chunk = await foto_perfil.read(1024 * 1024)  # 1MB por vez
+            chunk = await foto_perfil.read(1024 * 1024)
             if not chunk:
                 break
             buffer.extend(chunk)
@@ -238,7 +595,6 @@ async def create_user(
 
     # --- 2. Regras de negócio sobre militante ---
     num_militante_final = None
-
     if militante_numero and cadastrar_militante == CadastrarComo.SIMPATIZANTE:
         raise HTTPException(
             status_code=HTTPStatus.BAD_REQUEST,
@@ -251,7 +607,6 @@ async def create_user(
             ano_atual = datetime.now(timezone.utc).year
             chave_aleatoria = secrets.token_hex(3).upper()
             num_militante_final = f'UNITA.{ano_atual}-{chave_aleatoria}'
-
             numero_exists = await session.scalar(
                 select(User.id).where(User.militante_numero == num_militante_final)
             )
@@ -264,20 +619,6 @@ async def create_user(
                 status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
                 detail="Erro de infraestrutura ao gerar número de cartão."
             )
-
-    #Gerar codigo de verificacao de email
-    secret_number = secrets.randbelow(900000) + 100000  # Gera um número de 6 dígitos entre 100000 e 999999
-
-    #enviar email
-    # try:
-    #     await enviar_email_confirmacao_cadastro_user_async(email_destino=email, secret_number=secret_number, nome_completo=nome_completo)
-    #     logger.info("E-mail de confirmação enviado com sucesso para %s", email)
-    # except Exception as e:
-    #     logger.error("Falha ao enviar e-mail de confirmação para %s: %s", email, str(e))
-    #     raise HTTPException(
-    #         status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
-    #         detail="Falha ao enviar e-mail de confirmação. Tente novamente mais tarde."
-    #     )
 
     # --- 3. Validação Pydantic ---
     try:
@@ -296,7 +637,7 @@ async def create_user(
             cadastrar_militante=cadastrar_militante,
             nome_municipio=nome_municipio,
             militante_numero=num_militante_final,
-            codigo_verificacao_email=secret_number
+            codigo_verificacao_email=None  # ainda não precisamos
         )
     except ValidationError as e:
         raise HTTPException(
@@ -351,28 +692,119 @@ async def create_user(
             detail="A permissão de acesso especificada não está configurada no sistema."
         )
 
-    # --- 5. Persistência ---
+    # --- 5. Geração do código e envio do e-mail ---
+    secret_number = secrets.randbelow(900000) + 100000  # 6 dígitos
+
+    try:
+        backgroundTasks.add_task(
+            enviar_email_confirmacao_cadastro_user_async,
+            email_destino=email,
+            secret_number=secret_number,
+            nome_completo=nome_completo
+        )
+    except Exception as e:
+        logger.error("Falha ao injetar tarefa de e-mail para %s: %s", email, str(e))
+        raise HTTPException(
+            status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+            detail="Falha ao processar e-mail de confirmação."
+        )
+
+    # --- 6. Persistência temporária no Redis (15 minutos) ---
     password_hash = await asyncio.to_thread(hash_password, dados_validados.password)
+    foto_b64 = base64.b64encode(conteudo_bytes).decode('utf-8')
+
+    dados_temporarios = {
+        "nome_completo": dados_validados.nome_completo,
+        "email": dados_validados.email,
+        "password_hash": password_hash,
+        "data_nascimento": dados_validados.data_nascimento.isoformat(),
+        "nif": dados_validados.nif,
+        "telefone": dados_validados.telefone,
+        "genero": dados_validados.genero.value if hasattr(dados_validados.genero, "value") else dados_validados.genero,
+        "foi_militante": dados_validados.foi_militante,
+        "cadastrar_militante": dados_validados.cadastrar_militante.value if hasattr(dados_validados.cadastrar_militante, "value") else dados_validados.cadastrar_militante,
+        "estado_civil": dados_validados.estado_civil.value if hasattr(dados_validados.estado_civil, "value") else dados_validados.estado_civil,
+        "id_provincia": str(provincia_banco.id),
+        "id_municipio": str(municipio_banco.id),
+        "id_role": str(role_banco.id),
+        "militante_numero": num_militante_final,
+        "foto_perfil_b64": foto_b64,
+        "codigo_verificacao": secret_number
+    }
+
+    chave_redis = f"cadastro_pendente:{email}"
+    await caches.setex(chave_redis, 900, json.dumps(dados_temporarios))  # 15 minutos
+
+    return {
+        "status": "success",
+        "message": "Código de ativação enviado para o e-mail. Confirme em até 15 minutos."
+    }
+
+
+@user.post("/confirm-email", status_code=HTTPStatus.CREATED)
+@limiter.limit("3/minute; 10/day")
+async def confirmar_email_cadastro(
+    request: Request,
+    response: Response,
+    dados: ConfirmarEmailSchema,
+    caches: Redis,
+    session: Session,
+    _captcha: Claudflare_turnfile,
+    backgroundTasks: BackgroundTasks
+):
+    # 1. Recupera os dados temporários do Redis
+    chave_redis = f"cadastro_pendente:{dados.email}"
+    dados_cache = await caches.get(chave_redis)
+
+    if not dados_cache:
+        logger.warning("Tentativa de confirmação expirada ou inexistente para o e-mail: %s", dados.email)
+        raise HTTPException(
+            status_code=HTTPStatus.BAD_REQUEST,
+            detail="O tempo de validação (15 min) expirou ou o registo não existe. Por favor, registe-se novamente."
+        )
+
+    usuario_data = json.loads(dados_cache)
+
+    # 2. Validação do código
+    if usuario_data["codigo_verificacao"] != dados.codigo:
+        raise HTTPException(
+            status_code=HTTPStatus.BAD_REQUEST,
+            detail="Código de verificação inválido ou expirado."
+        )
+
+    # 3. Re-checagem de unicidade (proteção contra race condition)
+    usuario_duplicado = await session.scalar(
+        select(User.id).where(
+            (User.email == dados.email) | (User.nif == usuario_data["nif"])
+        )
+    )
+    if usuario_duplicado:
+        await caches.delete(chave_redis)
+        raise HTTPException(
+            status_code=HTTPStatus.CONFLICT,
+            detail="Estes dados de e-mail ou NIF já foram registados por outra conta ativa."
+        )
+
+    # 4. Cria o usuário (ainda sem commit)
     novo_usuario = User(
-        nome_completo=dados_validados.nome_completo,
-        email=dados_validados.email,
-        password_hash=password_hash,
-        data_nascimento=dados_validados.data_nascimento,
-        nif=dados_validados.nif,
-        militante_numero=dados_validados.militante_numero,
-        telefone=dados_validados.telefone,
-        foi_militante=dados_validados.foi_militante,
-        cadastrar_militante=dados_validados.cadastrar_militante,
-        provincia_id=provincia_banco.id,
-        municipio_id=municipio_banco.id,
-        role_id=role_banco.id,
-        genero=dados_validados.genero,
-        estado_civil=dados_validados.estado_civil.value,
-        # codigo_verificacao_email=dados_validados.codigo_verificacao_email,
+        nome_completo=usuario_data["nome_completo"],
+        email=usuario_data["email"],
+        password_hash=usuario_data["password_hash"],
+        data_nascimento=date.fromisoformat(usuario_data["data_nascimento"]),
+        nif=usuario_data["nif"],
+        militante_numero=usuario_data["militante_numero"],
+        telefone=usuario_data["telefone"],
+        foi_militante=usuario_data["foi_militante"],
+        cadastrar_militante=usuario_data["cadastrar_militante"],
+        provincia_id=usuario_data["id_provincia"],
+        municipio_id=usuario_data["id_municipio"],
+        role_id=usuario_data["id_role"],
+        genero=usuario_data["genero"],
+        estado_civil=usuario_data["estado_civil"],
         image_url=None
     )
     novo_usuario.criado_em = datetime.now(timezone.utc)
-    # --- 5a. Reserva o registro (sem tocar em serviço externo ainda) ---
+
     try:
         session.add(novo_usuario)
         await session.flush()
@@ -380,7 +812,7 @@ async def create_user(
         await session.rollback()
         raise HTTPException(
             status_code=HTTPStatus.CONFLICT,
-            detail="Erro de integridade relacional ao registrar documentos."
+            detail="Erro de integridade relacional ao registar documentos."
         )
     except Exception as e:
         await session.rollback()
@@ -389,11 +821,11 @@ async def create_user(
             status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
             detail="Erro interno de processamento no servidor."
         )
-    
 
-    # --- 5b. Upload da imagem (efeito colateral externo) ---
+    # 5. Upload da foto (só agora)
     try:
-        url_secure =await asyncio.wait_for(
+        conteudo_bytes = base64.b64decode(usuario_data["foto_perfil_b64"])
+        url_secure = await asyncio.wait_for(
             upload_imagem_geral(
                 file_bytes=conteudo_bytes,
                 identificador=str(novo_usuario.id),
@@ -403,10 +835,8 @@ async def create_user(
             timeout=30
         )
     except Exception as e:
-        # Nada foi commitado ainda, então basta descartar a transação pendente.
-        # Sem imagem órfã aqui, pois o upload em si falhou.
         await session.rollback()
-        logger.error("Falha ao subir imagem para o Cloudinary: %s", e)
+        logger.error("Falha ao subir imagem para o Cloudinary na confirmação: %s", e)
         raise HTTPException(
             status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
             detail="Falha ao salvar imagem de perfil no serviço de nuvem."
@@ -414,39 +844,39 @@ async def create_user(
 
     novo_usuario.image_url = url_secure
 
-    # --- 5c. Commit final. Se falhar aqui, a imagem JÁ foi enviada -> compensar. ---
+    # 6. Commit final
     try:
         await session.commit()
     except IntegrityError:
         await session.rollback()
-        # await _compensar_upload_orfao(str(novo_usuario.id))
         await compensar_upload_orfao(f"perfis_usuarios/avatar_{novo_usuario.id}")
-
         raise HTTPException(
             status_code=HTTPStatus.CONFLICT,
-            detail="Erro de integridade relacional ao registrar documentos."
+            detail="Erro de integridade relacional ao efetivar o registo."
         )
     except Exception as e:
         await session.rollback()
-        await compensar_upload_orfao(str(novo_usuario.id))
+        await compensar_upload_orfao(f"perfis_usuarios/avatar_{novo_usuario.id}")
         logger.critical("Erro catastrófico ao commitar usuário após upload: %s", e)
         raise HTTPException(
             status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
             detail="Erro interno de processamento no servidor."
         )
 
-    # --- 6. Pós-commit: cache (não-bloqueante, nunca deve derrubar a resposta de sucesso) ---
+    # 7. Limpeza do Redis + invalidação de cache
     try:
+        await caches.delete(chave_redis)
         await caches.incr("v1:usuarios:lista:versao")
     except Exception as cache_err:
-        logger.error("Falha não-bloqueante ao atualizar versão do cache no Redis: %s", cache_err)
+        logger.error("Falha não-bloqueante ao atualizar dados do Redis após sucesso: %s", cache_err)
 
+    # 8. Notificação de boas-vindas
     destinatario_tipo = None
     tipo = None
-    if novo_usuario.cadastrar_militante == CadastrarComo.MILITANTE:
+    if novo_usuario.cadastrar_militante == CadastrarComo.MILITANTE or novo_usuario.cadastrar_militante == "MILITANTE":
         destinatario_tipo = "MILITANTE"
         tipo = "Militante"
-    elif novo_usuario.cadastrar_militante == CadastrarComo.SIMPATIZANTE:
+    else:
         destinatario_tipo = "SIMPATIZANTE"
         tipo = "Simpatizante"
 
@@ -458,55 +888,47 @@ async def create_user(
         criado_as=datetime.now(timezone.utc),
         destinatario=destinatario_tipo
     )
-
     try:
         session.add(notification)
         await session.commit()
     except Exception as e:
         logger.error("Falha ao criar notificação de boas-vindas para o usuário %s: %s", novo_usuario.id, str(e))
-        # Não interrompe o fluxo principal, apenas loga o erro.
-        
-    
+
+    # 9. E-mail de sucesso
     try:
         backgroundTasks.add_task(email_sucesso_cadastro_async, novo_usuario.nome_completo, novo_usuario.email)
     except Exception as e:
-        logger.error("Falha ao enviar e-mail para %s: %s", novo_usuario.email, str(e))
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Falha ao enviar e-mail de cadastro.")
-    # agora = datetime.now(timezone.utc)
+        logger.error("Falha ao enviar e-mail de sucesso para %s: %s", novo_usuario.email, str(e))
+
+    # 10. Autenticação (mesmo estilo da rota nova)
     token_gerado = emitir_access_token(novo_usuario.id, novo_usuario.password_alterado_em)
 
     ip_address = (
         request.headers.get("x-forwarded-for")
-        or (
-                request.client.host
-                if request.client
-                else None
-            )
-        )
-    if not ip_address:
-        ip_address = request.client.host if request.client else None
-
-    # 3. Capturar o User-Agent (Navegador/Dispositivo)
+        or (request.client.host if request.client else None)
+    )
     user_agent = request.headers.get("user-agent")
 
     refresh_gerado = await gerar_e_registar_refresh_token(
-        session=session,      # <-- Faltava este argumento!
-        user_id=novo_usuario.id, 
-        ip=ip_address, 
+        session=session,
+        user_id=novo_usuario.id,
+        ip=ip_address,
         user_agent=user_agent
     )
+
     set_auth_cookies(
-            response=response,
-            access_token=token_gerado,
-            refresh_token=refresh_gerado,
-        )
+        response=response,
+        access_token=token_gerado,
+        refresh_token=refresh_gerado,
+    )
     response.headers["Cache-Control"] = "no-store"
-    
+
+    logger.info("Usuário %s confirmado e logado com sucesso.", novo_usuario.email)
+
     return {
         "status": "success",
-        "message": "Autenticação realizada com sucesso.",
+        "message": "E-mail confirmado e utilizador autenticado com sucesso."
     }
-    
 
 # @user.post("/confirm-email", status_code=status.HTTP_200_OK)
 # @limiter.limit("1/minute; 10/day")

@@ -35,6 +35,7 @@ class Settings(BaseSettings):
     CLOUDINARY_API_SECRET: str
     URL_LOGO_UNCLOCK: str
     URL_LOGO_WELLCOME: str
+    CLAUDINARY_URL_CONFIRMACAO: str
     URL_LOGIN: str
 
     SMTP_HOST: str
