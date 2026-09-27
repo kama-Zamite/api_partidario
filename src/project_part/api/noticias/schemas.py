@@ -98,7 +98,7 @@ class UpgradeNoticia(BaseModel):
     subtitulo: Optional[str] = Field(None, min_length=20, max_length=255)
     lead: Optional[str] = None
     corpo: str
-    categoria: CategoriaNoticiaEnum = Field(default=CategoriaNoticiaEnum.DESTAQUE)
+    # categoria: CategoriaNoticiaEnum = Field(default=CategoriaNoticiaEnum.DESTAQUE)
     nome_municipio: Optional[str] = None
     nome_provincia: Optional[str] = None
     status: str

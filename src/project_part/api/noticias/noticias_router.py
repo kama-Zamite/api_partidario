@@ -38,6 +38,8 @@ from project_part.core.secury import (
     verificar_permissao_global_pais,
 )
 from project_part.db.cache import get_redis
+from project_part.services.claudflare_turnfile import verificar_turnstile
+
 from project_part.db.session import get_session
 from project_part.model.models import (
     AdminScope,
@@ -60,7 +62,7 @@ from .schemas import (
 
 logger = logging.getLogger(__name__)
 
-
+Claudflare_turnfile = Annotated[bool, Depends(verificar_turnstile)]
 Redis = Annotated[AsyncRedis, Depends(get_redis)]
 Session = Annotated[AsyncSession, Depends(get_session)]
 Paginacao = Annotated[LimitNoticia, Depends()]
@@ -170,6 +172,7 @@ async def criar_noticia(
     caches: Redis,
     current_user: Get_current_user,
     scope: ScopeValid,
+    _captcha: Claudflare_turnfile,
     titulo: str = Form(..., min_length=10),
     subtitulo: Optional[str] = Form(None, min_length=20, max_length=255),
     lead: Optional[str] = Form(None),
@@ -403,6 +406,7 @@ async def listar_noticias(
     # ── 2. Busca no banco ──────────────────────────────────────────────────
     query = (
         select(Noticia)
+        .where(Noticia.status == NoticiasStatusEnum.PUBLICADO)
         .options(
             selectinload(Noticia.provincia),
             selectinload(Noticia.municipio),
@@ -439,12 +443,13 @@ async def listar_noticias(
     return noticias
 
 @news_router.get('/{id_news}', status_code=HTTPStatus.OK, response_model=NoticiaResponse)
-async def obter_noticia(id_news: int, session: Session):
+async def obter_noticia(id_news: uuid.UUID, session: Session):
     """ "
     Endpoint para obter os detalhes de uma notícia específica por ID.
     Retorna os detalhes da notícia solicitada ou um erro 404 se não for encontrada.
     """
-    noticia_banco = await session.scalar(select(Noticia).where(Noticia.id == id_news))
+    noticia_banco = await session.scalar(
+        select(Noticia).where(Noticia.id == id_news, Noticia.status == NoticiasStatusEnum.PUBLICADO))
     if not noticia_banco:
         raise HTTPException(status_code=HTTPStatus.NOT_FOUND, detail='Notícia não encontrada')
 
@@ -456,8 +461,9 @@ async def obter_noticia(id_news: int, session: Session):
 @limiter.limit('1/minute')
 async def atualizar_status_noticia(
     request: Request,
-    id_news: int,
+    id_news: uuid.UUID,
     status: UgradeStatusNoticia,
+    _captcha: Claudflare_turnfile,
     session: Session,
     caches: Redis,
     current_user: Get_current_user,
@@ -479,7 +485,7 @@ async def atualizar_status_noticia(
         )
 
     noticia_banco.status = status.nome
-    noticia_banco.atualizado_as = datetime.now(timezone.utc())
+    noticia_banco.atualizado_as = datetime.now(timezone.utc)
 
     try:
         await session.commit()
@@ -501,7 +507,8 @@ async def atualizar_status_noticia(
 @limiter.limit('1/minute')
 async def atualizar_noticia_completa(
     request: Request,
-    id_news: int,
+    id_news: uuid.UUID,
+    _captcha: Claudflare_turnfile,
     schemas: UpgradeNoticia,
     session: Session,
     caches: Redis,
@@ -533,9 +540,9 @@ async def atualizar_noticia_completa(
     noticia_banco.lead = schemas.lead
     noticia_banco.corpo = schemas.corpo
     noticia_banco.image_url = schemas.image_url
-    noticia_banco = schemas.categoria
+    noticia_banco.categoria = CategoriaNoticiaEnum.DESTAQUE
     noticia_banco.status = schemas.status
-    noticia_banco.atualizado_as = datetime.now(timezone.utc())
+    noticia_banco.atualizado_as = datetime.now(timezone.utc)
 
     pid = None
     if schemas.nome_provincia:

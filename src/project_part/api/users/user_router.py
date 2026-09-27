@@ -133,9 +133,7 @@ user = APIRouter(prefix='/user', tags=['User'])
 
 FILE_READ_TIMEOUT_SECONDS = 30.0
 MAX_FILE_SIZE = 5 * 1024 * 1024
-admin_id = 1
-ROLE_MILITANTE_ID = 2
-ROLE_SIMPATIZANTE_ID = 3
+
 
 ALLOWED_EXTENSIONS = {"jpg", "jpeg"}
 ALLOWED_CONTENT_TYPES = {
@@ -685,7 +683,7 @@ async def create_user(
             detail=f"O município '{dados_validados.nome_municipio}' não pertence à província '{dados_validados.nome_provincia}'."
         )
 
-    id_role_alvo = ROLE_MILITANTE_ID if cadastrar_militante == CadastrarComo.MILITANTE else ROLE_SIMPATIZANTE_ID
+    id_role_alvo = settings.ROLE_MILITANTE_ID if cadastrar_militante == CadastrarComo.MILITANTE else settings.ROLE_SIMPATIZANTE_ID
     role_banco = await session.scalar(select(Role).where(Role.id == id_role_alvo))
     if not role_banco:
         raise HTTPException(
@@ -912,20 +910,27 @@ async def confirmar_email_cadastro(
         or (request.client.host if request.client else None)
     )
     user_agent = request.headers.get("user-agent")
+    try:
+        refresh_gerado = await gerar_e_registar_refresh_token(
+            session=session,
+            user_id=novo_usuario.id,
+            ip=ip_address,
+            user_agent=user_agent
+        )
+        await session.commit()  # Commit para garantir que o refresh token é persistido
+        set_auth_cookies(
+            response=response,
+            access_token=token_gerado,
+            refresh_token=refresh_gerado,
+        )
+        response.headers["Cache-Control"] = "no-store"
+    except Exception as e:
+        logger.error("Falha ao gerar e registrar token de refresh para o usuário %s: %s", novo_usuario.id, str(e))
+        raise HTTPException(
+            status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+            detail="Erro interno de processamento no servidor."
+        )
 
-    refresh_gerado = await gerar_e_registar_refresh_token(
-        session=session,
-        user_id=novo_usuario.id,
-        ip=ip_address,
-        user_agent=user_agent
-    )
-
-    set_auth_cookies(
-        response=response,
-        access_token=token_gerado,
-        refresh_token=refresh_gerado,
-    )
-    response.headers["Cache-Control"] = "no-store"
 
     logger.info("Usuário %s confirmado e logado com sucesso.", novo_usuario.email)
 
@@ -1411,6 +1416,7 @@ async def atualizar_perfil_password(
             ip=get_client_ip(request),
             user_agent=request.headers.get('user-agent'),
         )
+        await session.commit()
         set_auth_cookies(
             response=response,
             access_token=novo_access,
@@ -1418,6 +1424,7 @@ async def atualizar_perfil_password(
         )
         response.headers['Cache-Control'] = 'no-store'
     except Exception as e:
+        await session.rollback()
         logger.warning(
             'Senha alterada, mas não foi possível reemitir a sessão do dispositivo actual (user %s): %s',
             user_id,
@@ -2171,7 +2178,7 @@ async def solicitar_militancia(request: Request, session: Session, current_user:
    
     solicitacao.status = StatusSolicitacao.APROVADO
     current_user.cadastrar_militante = CadastrarComo.MILITANTE
-    current_user.role_id = ROLE_MILITANTE_ID
+    current_user.role_id = settings.ROLE_MILITANTE_ID
     current_user.militante_numero = num_militante_final
     current_user.atualizado_em = agora
    
@@ -2312,7 +2319,7 @@ async def solicitar_cartao(
         select(User)
         .join(AdminScope, AdminScope.user_id == User.id)
         .where(
-            User.role_id == admin_id,
+            User.role_id == settings.ROLE_ADMIN_ID,
             (AdminScope.municipio_id == current_user.municipio_id) | 
             (AdminScope.provincia_id == current_user.provincia_id)
         )
@@ -2322,7 +2329,7 @@ async def solicitar_cartao(
 
     if not admin_alvo:
         logger.warning("Nenhum admin regional específico encontrado. Buscando Admin Geral...")
-        query_admin_geral = select(User).where(User.role_id == admin_id).limit(1)
+        query_admin_geral = select(User).where(User.role_id == settings.ROLE_ADMIN_ID).limit(1)
         admin_alvo = await session.scalar(query_admin_geral)
 
     if not admin_alvo:
