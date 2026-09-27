@@ -25,7 +25,11 @@ from project_part.model.models import (
 )
 
 from .setting import settings
+from cryptography.fernet import Fernet
+from project_part.core.setting import settings
 
+
+fernet = Fernet(settings.TOTP_ENCRYPTION_KEY.encode())
 logger = logging.getLogger(__name__)
 passHash = PasswordHash.recommended()
 Oauth_bearer = OAuth2PasswordBearer(tokenUrl='/auth/login')
@@ -551,3 +555,15 @@ def get_logged_user_id(request: Request) -> str:
 
     # CORREÇÃO: Se não houver token, usa o IP como identificador
     return f'rate_limit_ip:{get_remote_address(request)}'
+
+
+
+
+
+# Funções para criptografar e descriptografar segredos TOTP
+
+def encrypt_totp_secret(secret: str) -> str:
+    return fernet.encrypt(secret.encode()).decode()
+
+def decrypt_totp_secret(encrypted: str) -> str:
+    return fernet.decrypt(encrypted.encode()).decode()

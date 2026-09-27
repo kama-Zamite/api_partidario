@@ -29,6 +29,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from project_part.core.rate_limit import limiter
 from project_part.core.secury import (
+    decrypt_totp_secret,
+)
+from project_part.core.secury import (
     Get_current_user,
     check_refresh_token,
     check_token_recuperar_senha,
@@ -73,6 +76,7 @@ from project_part.services.two_factor_challenge import (
 )
 from project_part.api.auth.util import set_auth_cookies
 from project_part.services.claudflare_turnfile import verificar_turnstile
+
 from .schemas import (
     CreatePermissao,
     CreateRole,
@@ -390,10 +394,21 @@ async def verify_2fa(
  
 
     codigo_limpo = body.codigo.strip()
-    codigo_encontrado = None 
+    codigo_encontrado = None
 
     if len(codigo_limpo) == 6:
-        totp = pyotp.TOTP(user.two_factor_secret)
+        # ─── DESCRIPTOGRAFA O SEGREDO ───
+        try:
+            secret_claro = decrypt_totp_secret(user.two_factor_secret)
+        except Exception:
+            logger.exception("Falha ao desencriptar segredo 2FA do usuário %s", user.id)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Erro interno de segurança.",
+            )
+        
+
+        totp = pyotp.TOTP(secret_claro)
         logger.info('Verificando código 2FA')
         #valid_window=1 permite aceitar códigos válidos dentro de uma janela de tempo de 30 segundos antes ou depois do código atual.
         if not totp.verify(codigo_limpo, valid_window=1):

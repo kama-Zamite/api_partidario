@@ -24,12 +24,12 @@ class Settings(BaseSettings):
     CLOUDFLARE_VALIDATE_URL :  str
     ENV: str
 
-
+    # Configurações de roles
     ADMIN_ROLE_ID: int
     ROLE_MILITANTE_ID: int
     ROLE_SIMPATIZANTE_ID: int
 
-
+    # Configurações de Cloudinary para upload de imagens
     CLOUDINARY_CLOUD_NAME: str
     CLOUDINARY_API_KEY: str
     CLOUDINARY_API_SECRET: str
@@ -47,11 +47,14 @@ class Settings(BaseSettings):
     EMAIL_FROM: str
     RESEND_API_KEY: str
 
-
+    # Configurações de CORS e segurança
     ALLOWED_ORIGINS: list[str]
     ALLOWED_HOSTS: list[str]
 
+    # Chave de encriptação para os segredos TOTP
+    TOTP_ENCRYPTION_KEY: str
 
+    # Limite máximo de tamanho de conteúdo (10 MB)
     MAX_CONTENT_LENGTH: int = 10 * 1024 * 1024
 
     # Exemplo: ".meusite.com" (o ponto no início permite o domínio e todos os subdomínios)

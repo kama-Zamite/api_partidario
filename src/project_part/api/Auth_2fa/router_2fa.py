@@ -14,7 +14,12 @@ from fastapi import (
 from typing import Annotated
 from project_part.db.session import get_session  # Substitua pelo seu método de sessão
 from project_part.model.models import User, BackupCode  # Seu modelo SQLAlchemy de Usuário
-from project_part.core.secury import hash_password, verify_password
+from project_part.core.secury import (
+    hash_password, 
+    verify_password,
+    encrypt_totp_secret,
+    decrypt_totp_secret
+)
 from project_part.core.secury import Get_current_user  # Sua dependência de autenticação JWT
 from project_part.services.claudflare_turnfile import verificar_turnstile
 
@@ -32,6 +37,7 @@ Session = Annotated[AsyncSession, Depends(get_session)]
 
 @router_2FA.post("/setup")
 async def setup_2fa(
+    response: Response,
     current_user: Get_current_user,
     db: Session
     ):
@@ -43,22 +49,29 @@ async def setup_2fa(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="2FA já está ativado nesta conta.")
 
     secret = pyotp.random_base32()
+    encrypted_secret = encrypt_totp_secret(secret)
     try:
-        logger.info("Tentado adcionar segredo do 2FA")
-        current_user.two_factor_secret = secret
+        logger.info("A adicionar segredo 2FA cifrado para o utilizador %s", current_user.email)
+        current_user.two_factor_secret = encrypted_secret
         await db.commit()
+        logger.info("Segredo 2FA adicionado com sucesso para o utilizador %s", current_user.email)
     except Exception as e:
         await db.rollback()
-        logger.exception("erro ao tentar adcionar segredo do 2FA %s", str(e))
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="erro ao tentar atualizar o estudos do 2FA")
-    
-
+        logger.exception("Erro ao tentar adicionar segredo 2FA: %s", str(e))
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Erro ao tentar atualizar o estado do 2FA"
+        )
 
     totp = pyotp.TOTP(secret)
     provisioning_uri = totp.provisioning_uri(
         name=current_user.email,
-        issuer_name="UNITA PGM",
+        issuer_name="Espaço do Militante UNITA",
     )
+
+    # Impedir cache da resposta que contém o segredo
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, private"
+    response.headers["Pragma"] = "no-cache"
 
     # Retorna apenas dados puros em texto
     return {
@@ -77,6 +90,7 @@ async def setup_2fa(
 #     }
 # )
 # async def setup_2fa(
+#     response: Response,                    # ← necessário para Cache-Control
 #     current_user: Get_current_user,
 #     db: Session,
 # ):
@@ -84,7 +98,6 @@ async def setup_2fa(
 #     Gera o segredo TOTP e retorna o QR Code
 #     necessário para configurar o autenticador.
 #     """
-
 #     if current_user.two_factor_enabled:
 #         raise HTTPException(
 #             status_code=status.HTTP_400_BAD_REQUEST,
@@ -92,11 +105,12 @@ async def setup_2fa(
 #         )
 
 #     secret = pyotp.random_base32()
+#     encrypted_secret = encrypt_totp_secret(secret)   # ← cifra antes de gravar
 
 #     try:
-#         current_user.two_factor_secret = secret
+#         logger.info("A iniciar setup 2FA (cifrado) para o utilizador %s", current_user.id)
+#         current_user.two_factor_secret = encrypted_secret
 #         await db.commit()
-
 #     except Exception:
 #         await db.rollback()
 #         logger.exception(
@@ -108,11 +122,14 @@ async def setup_2fa(
 #             detail="Erro ao iniciar configuração do 2FA.",
 #         )
 
-#     totp = pyotp.TOTP(secret)
+#     # Auditoria recomendada
+#     # await registar_auditoria(db, user_id=current_user.id, acao="2FA_SETUP_INICIADO")
+
+#     totp = pyotp.TOTP(secret)   # usa o segredo em claro só para gerar o QR
 
 #     provisioning_uri = totp.provisioning_uri(
 #         name=current_user.email,
-#         issuer_name="UNITA Plataforma",
+#         issuer_name="Espaço do Militante UNITA",
 #     )
 
 #     qr = qrcode.QRCode(
@@ -120,7 +137,6 @@ async def setup_2fa(
 #         box_size=10,
 #         border=5,
 #     )
-
 #     qr.add_data(provisioning_uri)
 #     qr.make(fit=True)
 
@@ -130,22 +146,27 @@ async def setup_2fa(
 #     )
 
 #     buffer = io.BytesIO()
-
-#     img.save(
-#         buffer,
-#         format="PNG",
-#     )
-    
+#     img.save(buffer, format="PNG")
 #     buffer.seek(0)
+
+#     # Impedir qualquer cache da imagem que contém o segredo
+#     response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, private"
+#     response.headers["Pragma"] = "no-cache"
 
 #     return Response(
 #         content=buffer.getvalue(),
 #         media_type="image/png",
+#         headers={
+#             "Cache-Control": "no-store, no-cache, must-revalidate, private",
+#             "Pragma": "no-cache",
+#         }
 #     )
+
 
 
 @router_2FA.post("/verify-and-enable")
 async def verify_and_enable_2fa(
+    response: Response,
     body: Code2FA,
     _captcha: Claudflare_turnfile,
     current_user: Get_current_user,
@@ -166,15 +187,20 @@ async def verify_and_enable_2fa(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="O setup do 2FA não foi iniciado.",
         )
+    # ─── DESCRIPTOGRAFA O SEGREDO ───
+    try:
+        secret_claro = decrypt_totp_secret(current_user.two_factor_secret)
+    except Exception:
+        logger.exception("Falha ao desencriptar segredo 2FA do usuário %s", current_user.id)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Erro interno de segurança.",
+        )
+    
 
-    totp = pyotp.TOTP(current_user.two_factor_secret)
+    totp = pyotp.TOTP(secret_claro)
 
-    codigo_valido = totp.verify(
-        body.codigo,
-        valid_window=1,
-    )
-
-    if not codigo_valido:
+    if not totp.verify(body.codigo, valid_window=1):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Código inválido ou expirado.",
@@ -184,7 +210,7 @@ async def verify_and_enable_2fa(
     codigos_limpos = []
     objetos_backup = []
 
-     # Vamos gerar 5 códigos de 8 dígitos numéricos aleatórios
+    # Vamos gerar 5 códigos de 8 dígitos numéricos aleatórios
     for _ in range(5):
         # Gera algo como "48291053"
         codigo_aleatorio = "".join(secrets.choice("0123456789") for _ in range(8))
@@ -216,13 +242,17 @@ async def verify_and_enable_2fa(
 
         logger.exception(
             "Erro ao ativar 2FA e gerar códigos de backup para usuário ID=%s",
-            current_user.id,
+            current_user.email,
         )
 
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Erro interno ao ativar o 2FA.",
         )
+
+    # Impedir cache da resposta que contém códigos de backup
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, private"
+    response.headers["Pragma"] = "no-cache"
 
     return {
         "message": "Autenticação de Dois Fatores (2FA) ativada com sucesso!",
@@ -233,6 +263,7 @@ async def verify_and_enable_2fa(
 
 @router_2FA.post("/disable")
 async def disable_2fa(
+    response: Response,
     body: Code2FA,
     _captcha: Claudflare_turnfile,
     current_user: Get_current_user,
@@ -247,17 +278,25 @@ async def disable_2fa(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="O 2FA não está ativo nesta conta.",
         )
-
+    if not current_user.two_factor_secret:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Estado inconsistente do 2FA.",
+        )
+    try:
+        secret_claro = decrypt_totp_secret(current_user.two_factor_secret)
+    except Exception:
+        logger.exception("Falha ao desencriptar segredo 2FA do usuário %s", current_user.id)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Erro interno de segurança.",
+        )
+    
     # 2. Inicializa o validador com o segredo guardado
-    totp = pyotp.TOTP(current_user.two_factor_secret)
+    totp = pyotp.TOTP(secret_claro)
 
     # 3. Valida se o código enviado é correto
-    codigo_valido = totp.verify(
-        body.codigo,
-        valid_window=1,
-    )
-
-    if not codigo_valido:
+    if not totp.verify(body.codigo, valid_window=1):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Código de verificação inválido. Não foi possível desativar.",
