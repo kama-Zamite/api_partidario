@@ -1131,7 +1131,7 @@ async def refresh_token(
             "status": "success",
             "message": "Tokens de autenticação renovados com sucesso."
         }
-    except HTTPException:
+    except HTTPException as e:
         logger.warning(
             "Falha ao renovar refresh token para user_id=%s. Detalhes: %s",
             user_id,
@@ -1139,15 +1139,13 @@ async def refresh_token(
         )
         raise
 
-    except Exception:
+    except Exception as e:
+        await session.rollback()
         logger.warning(
             "Falha ao renovar refresh token para user_id=%s. Detalhes: %s",
             user_id,
             str(e)
         )
-
-        await session.rollback()
-
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Erro interno de autenticação.",

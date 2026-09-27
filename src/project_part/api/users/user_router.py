@@ -925,6 +925,7 @@ async def confirmar_email_cadastro(
         )
         response.headers["Cache-Control"] = "no-store"
     except Exception as e:
+        await session.rollback()
         logger.error("Falha ao gerar e registrar token de refresh para o usuário %s: %s", novo_usuario.id, str(e))
         raise HTTPException(
             status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
