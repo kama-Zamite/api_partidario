@@ -1,273 +1,332 @@
-# =============================================================================
-# /refresh — versão corrigida a partir do código que colaste
-#
-# Marcadores:
-#   # [REFRESH]  -> alteração desta versão
-#
-# Imports que TÊM de existir neste módulo (um em falta = NameError = 500 em TODOS
-# os refresh, apanhado pelo `except Exception` final):
-#   from project_part.<...>.sessions import revogar_todas_sessoes, emitir_access_token
-#   from project_part.<...>.two_factor_challenge import get_client_ip
-# =============================================================================
+#Aqui tens os endpoints de recuperação de senha **prontos para produção**, no mesmo estilo e padrão de segurança que tens no resto da aplicação.
 
-# [REFRESH] Constantes usadas pelo endpoint. Na versão que colaste elas não aparecem
-#           definidas nem importadas: `IP_MAX` e `UA_MAX` dão NameError no passo 8.
-IP_MAX = 45    # UserRefreshToken.ip_address = String(45)
-UA_MAX = 500   # UserRefreshToken.user_agent = String(500)
+### 1. Schema (coloca no teu ficheiro de schemas)
 
-# [REFRESH] Janela (segundos) em que um refresh token já rodado, se voltar a ser
-#           apresentado, é tratado como CORRIDA LEGÍTIMA (duas abas / vários pedidos
-#           a receber 401 ao mesmo tempo e a chamar /refresh em paralelo) e não como
-#           roubo. Fora da janela continua a ser reutilização real -> revoga tudo.
-REFRESH_REUSE_GRACE_SECONDS = 10
+#```python
+from pydantic import BaseModel, EmailStr, Field, field_validator
+import re
 
+class ForgotPasswordSchema(BaseModel):
+    email: EmailStr
 
-@auth.post(
-    "/refresh",
+class ResetPasswordSchema(BaseModel):
+    token: str = Field(..., min_length=20)
+    nova_senha: str = Field(..., min_length=8, max_length=128)
+    confirmacao_senha: str
+
+    @field_validator("nova_senha")
+    @classmethod
+    def validar_forca_senha(cls, v: str) -> str:
+        if not re.search(r"[A-Z]", v):
+            raise ValueError("A senha deve conter pelo menos uma letra maiúscula.")
+        if not re.search(r"[a-z]", v):
+            raise ValueError("A senha deve conter pelo menos uma letra minúscula.")
+        if not re.search(r"\d", v):
+            raise ValueError("A senha deve conter pelo menos um número.")
+        if not re.search(r"[!@#$%^&*(),.?\":{}|<>]", v):
+            raise ValueError("A senha deve conter pelo menos um caractere especial.")
+        return v
+
+    @field_validator("confirmacao_senha")
+    @classmethod
+    def senhas_iguais(cls, v: str, info) -> str:
+        if "nova_senha" in info.data and v != info.data["nova_senha"]:
+            raise ValueError("As senhas não coincidem.")
+        return v
+```
+
+---
+
+### 2. Modelo do Token (models.py)
+
+```python
+class PasswordResetToken(Base):
+    __tablename__ = "password_reset_tokens"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False)
+    token_hash: Mapped[str] = mapped_column(String(255), unique=True, index=True, nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    used: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        nullable=False
+    )
+    ip_address: Mapped[str | None] = mapped_column(String(45), nullable=True)
+    user_agent: Mapped[str | None] = mapped_column(String(500), nullable=True)
+
+    user = relationship("User", back_populates="password_reset_tokens")
+```
+
+Não te esqueças de adicionar a relação no modelo `User`:
+
+```python
+password_reset_tokens = relationship("PasswordResetToken", back_populates="user", cascade="all, delete-orphan")
+```
+
+---
+
+### 3. Funções auxiliares (podes colocar num `auth_utils.py` ou onde preferires)
+
+```python
+import secrets
+from datetime import datetime, timedelta, timezone
+
+def gerar_token_reset() -> tuple[str, str]:
+    """Retorna (token_em_claro, token_hash)"""
+    token_claro = secrets.token_urlsafe(32)
+    token_hash = hash_password(token_claro)
+    return token_claro, token_hash
+```
+
+---
+
+### 4. Endpoints (produção)
+
+```python
+from datetime import datetime, timedelta, timezone
+from fastapi import status, BackgroundTasks, Request, Response
+from sqlalchemy import select, update, delete
+from sqlalchemy.exc import IntegrityError
+
+# ============================================================
+# 1. PEDIDO DE RECUPERAÇÃO DE SENHA
+# ============================================================
+@user.post(
+    "/password/forgot",
     status_code=status.HTTP_200_OK,
+    summary="Solicitar recuperação de senha"
 )
-async def refresh_token(
+@limiter.limit("3/minute; 8/hour; 15/day")
+async def forgot_password(
     request: Request,
-    response: Response,
+    body: ForgotPasswordSchema,
     session: Session,
-    token_data: dict = Depends(check_refresh_token),
+    backgroundTasks: BackgroundTasks,
+    _captcha: Claudflare_turnfile,
 ):
+    """
+    Inicia o fluxo de recuperação de senha.
+    Sempre devolve a mesma resposta (anti-enumeração).
+    """
+    email = body.email.lower().strip()
+    ip = get_client_ip(request)
+    user_agent = request.headers.get("user-agent")
 
-    user_id = token_data["user_id"]
-    token_jti = token_data["jti"]
+    logger.info("Pedido de recuperação de senha para o e-mail: %s (ip=%s)", email, ip)
 
-    agora = datetime.now(timezone.utc)
+    user = await session.scalar(
+        select(User).where(User.email == email)
+    )
 
-    try:
-
-        # =====================================================
-        # 1. Buscar e BLOQUEAR o utilizador (antes do token)
-        # =====================================================
-        # [REFRESH] Na versão que colaste faltava o with_for_update: o comentário do
-        #           passo 6 dizia "bloqueado no passo 1" mas era um SELECT simples.
-        #           Sem o lock, um refresh a meio de uma troca/reset de senha podia
-        #           criar um refresh token que sobrevivia à revogação. Ordem de locks:
-        #           users -> user_refresh_tokens (igual à troca de senha e ao reset).
-        #           of=User bloqueia só a linha de users, mesmo com joins no modelo.
-        #           Se este SELECT FOR UPDATE der erro na tua base, envia-me o erro.
-
-        user = await session.scalar(
-            select(User)
-            .where(User.id == user_id)
-            .with_for_update(of=User)
-        )
-
-        if not user:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Sessão inválida.",
-            )
-
-        # =====================================================
-        # 2. LOCK DA LINHA DO TOKEN
-        # =====================================================
-
-        result = await session.execute(
-            select(UserRefreshToken)
-            .where(
-                UserRefreshToken.token_jti == token_jti
-            )
-            .with_for_update()
-        )
-
-        db_token = result.scalar_one_or_none()
-
-        if not db_token:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Sessão inválida.",
-            )
-
-        if str(db_token.user_id) != str(user_id):
-            logger.warning(
-                "Refresh token com jti de outro utilizador. jwt_user=%s",
-                user_id,
-            )
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Sessão inválida.",
-            )
-
-        # =====================================================
-        # 3. Verificar estado
-        # =====================================================
-
-        if db_token.revogado:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Sessão inválida.",
-            )
-
-        # =====================================================
-        # 4. Token já rodado: corrida legítima OU reutilização
-        # =====================================================
-
-        if db_token.utilizado:
-
-            utilizado_ha = (
-                (agora - db_token.utilizado_em).total_seconds()
-                if db_token.utilizado_em
-                else None
-            )
-
-            # [REFRESH] Corrida legítima: outro pedido acabou de rodar ESTE token
-            #           (o token novo já foi entregue ao browser pela outra resposta).
-            #           Antes: qualquer segundo pedido revogava TODAS as sessões do
-            #           utilizador -> "desloga sozinho" com duas abas / pedidos
-            #           paralelos. Agora respondemos 409 SEM revogar nada e SEM emitir
-            #           tokens; o cliente repete o pedido original com o cookie novo.
-            #           Um atacante com o token roubado não ganha nada nesta janela
-            #           (não recebe tokens), e depois dela cai na revogação total.
-            if utilizado_ha is not None and 0 <= utilizado_ha <= REFRESH_REUSE_GRACE_SECONDS:
-                logger.info(
-                    "Refresh concorrente tolerado (%.1fs após a rotação). user_id=%s",
-                    utilizado_ha,
-                    user_id,
-                )
-                raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail="Sessão em renovação. Repita o pedido.",
-                )
-
-            logger.warning(
-                "Reutilização de refresh token detectada. "
-                "user_id=%s",
-                user_id,
-            )
-
-            # Revoga todas as sessões do usuário.
-            await revogar_todas_sessoes(session, user_id, agora)
-
-            await session.commit()
-
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Sessão inválida.",
-            )
-
-        # =====================================================
-        # 5. Verificar expiração
-        # =====================================================
-
-        if db_token.expira_em <= agora:
-
-            db_token.revogado = True
-            db_token.revogado_em = agora
-
-            await session.commit()
-
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Sessão expirada.",
-            )
-
-        # =====================================================
-        # 6. Verificar estado da conta
-        # =====================================================
-        # Conta desativada ou bloqueada permanentemente: revoga TODAS as sessões.
-
-        if not user.ativo or user.bloqueado_permanente:
-
-            await revogar_todas_sessoes(session, user_id, agora)
-
-            await session.commit()
-
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Sessão inválida.",
-            )
-
-        # =====================================================
-        # 7. Consumir token antigo
-        # =====================================================
-
-        db_token.utilizado = True
-        db_token.utilizado_em = agora
-
-        # =====================================================
-        # 8. Informações da nova sessão
-        # =====================================================
-
-        ip_address = (get_client_ip(request) or "")[:IP_MAX] or None
-
-        user_agent = (
-            request.headers.get("user-agent") or ""
-        )[:UA_MAX] or None
-
-        # =====================================================
-        # 9. Criar NOVO refresh token
-        # =====================================================
-
-        novo_refresh_token = (
-            await gerar_e_registar_refresh_token(
-                session=session,
-                user_id=user.id,
-                ip=ip_address,
-                user_agent=user_agent,
-            )
-        )
-
-        # =====================================================
-        # 10. Criar novo access token (sub + type=access + pwv)
-        # =====================================================
-
-        novo_access_token = emitir_access_token(
-            user.id,
-            user.password_alterado_em,
-        )
-
-        # =====================================================
-        # 11. COMMIT ATÔMICO
-        # =====================================================
-
+    # Só processa se o utilizador existir e estiver ativo
+    if user and user.ativo and not user.bloqueado_permanente:
         try:
+            # 1. Invalida todos os tokens anteriores deste utilizador
+            await session.execute(
+                update(PasswordResetToken)
+                .where(
+                    PasswordResetToken.user_id == user.id,
+                    PasswordResetToken.used == False  # noqa: E712
+                )
+                .values(used=True)
+            )
+
+            # 2. Gera novo token
+            token_claro, token_hash = gerar_token_reset()
+            expires_at = datetime.now(timezone.utc) + timedelta(minutes=20)
+
+            novo_token = PasswordResetToken(
+                user_id=user.id,
+                token_hash=token_hash,
+                expires_at=expires_at,
+                ip_address=ip,
+                user_agent=(user_agent or "")[:500] or None,
+            )
+            session.add(novo_token)
             await session.commit()
-        except Exception:
+
+            # 3. Envia e-mail
+            link = f"{settings.FRONTEND_URL}/redefinir-senha?token={token_claro}"
+
+            backgroundTasks.add_task(
+                email_recuperacao_senha_async,
+                nome_completo=user.nome_completo,
+                email_destino=user.email,
+                link_reset=link,
+                minutos_validade=20,
+            )
+
+            logger.info(
+                "Token de recuperação gerado para o utilizador ID=%s",
+                user.id
+            )
+
+        except Exception as e:
             await session.rollback()
             logger.exception(
-                "Falha ao gravar refresh token no banco de dados."
+                "Erro ao processar pedido de recuperação de senha para %s: %s",
+                email, str(e)
             )
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Erro interno de autenticação.",
-            )
+            # Mesmo em erro interno, não revelamos nada ao cliente
 
-        # =====================================================
-        # 12. Atualizar cookies
-        # =====================================================
+    # Resposta sempre igual (anti-enumeração)
+    return {
+        "message": "Se o endereço de e-mail estiver associado a uma conta, receberá instruções para redefinir a senha."
+    }
 
-        set_auth_cookies(
-            response=response,
-            access_token=novo_access_token,
-            refresh_token=novo_refresh_token,
+
+# ============================================================
+# 2. REDEFINIÇÃO DE SENHA (com token)
+# ============================================================
+@user.post(
+    "/password/reset",
+    status_code=status.HTTP_200_OK,
+    summary="Redefinir senha com token de recuperação"
+)
+@limiter.limit("5/minute; 15/hour")
+async def reset_password(
+    request: Request,
+    body: ResetPasswordSchema,
+    session: Session,
+    _captcha: Claudflare_turnfile,
+):
+    """
+    Redefine a senha usando um token de recuperação válido.
+    Revoga todas as sessões existentes.
+    """
+    ip = get_client_ip(request)
+    agora = datetime.now(timezone.utc)
+
+    logger.info("Tentativa de redefinição de senha (ip=%s)", ip)
+
+    # 1. Busca tokens ainda válidos (não usados e não expirados)
+    tokens = await session.scalars(
+        select(PasswordResetToken).where(
+            PasswordResetToken.used == False,  # noqa: E712
+            PasswordResetToken.expires_at > agora
+        )
+    )
+    tokens_lista = tokens.all()
+
+    token_valido = None
+    for t in tokens_lista:
+        if verify_password(body.token, t.token_hash):
+            token_valido = t
+            break
+
+    if not token_valido:
+        logger.warning("Token de recuperação inválido ou expirado (ip=%s)", ip)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Token inválido ou expirado. Solicite um novo link de recuperação."
         )
 
-        response.headers["Cache-Control"] = "no-store"
+    # 2. Carrega o utilizador
+    user = await session.scalar(
+        select(User).where(User.id == token_valido.user_id)
+    )
 
-        return {
-            "status": "success",
-            "message": "Tokens de autenticação renovados com sucesso."
-        }
-    except HTTPException:
+    if not user or not user.ativo or user.bloqueado_permanente:
+        logger.warning(
+            "Tentativa de reset com token de utilizador inválido/inativo (user_id=%s)",
+            token_valido.user_id
+        )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Token inválido ou expirado. Solicite um novo link de recuperação."
+        )
 
-        raise
+    # 3. Verifica se a nova senha é diferente da atual (opcional mas recomendado)
+    if await asyncio.to_thread(verify_password, body.nova_senha, user.password_hash):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="A nova senha deve ser diferente da senha atual."
+        )
 
-    except Exception:
+    try:
+        # 4. Atualiza a senha
+        user.password_hash = await asyncio.to_thread(hash_password, body.nova_senha)
+        user.password_alterado_em = agora
+        user.atualizado_em = agora
 
+        # 5. Marca o token como usado
+        token_valido.used = True
+
+        # 6. Invalida TODOS os outros tokens de reset deste utilizador
+        await session.execute(
+            update(PasswordResetToken)
+            .where(
+                PasswordResetToken.user_id == user.id,
+                PasswordResetToken.id != token_valido.id
+            )
+            .values(used=True)
+        )
+
+        # 7. Revoga TODAS as sessões ativas (refresh tokens)
+        await revogar_todas_sessoes(session, user.id, agora)
+
+        # 8. (Opcional recomendado) Força reconfiguração do 2FA
+        # if user.two_factor_enabled:
+        #     user.two_factor_enabled = False
+        #     user.two_factor_secret = None
+        #     # Também apagar códigos de backup se quiseres
+        #     await session.execute(
+        #         delete(BackupCode).where(BackupCode.user_id == user.id)
+        #     )
+
+        session.add(user)
+        await session.commit()
+
+        logger.info(
+            "Senha redefinida com sucesso para o utilizador ID=%s (ip=%s)",
+            user.id, ip
+        )
+
+    except Exception as e:
         await session.rollback()
-
-        # logger.exception regista o traceback completo: é AQUI que aparece
-        # o NameError / TypeError que estiver a causar o 500.
         logger.exception(
-            "Erro interno durante refresh token."
+            "Erro ao redefinir senha do utilizador ID=%s: %s",
+            user.id, str(e)
         )
-
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Erro interno de autenticação.",
+            detail="Não foi possível redefinir a senha no momento. Tente novamente."
         )
+
+    return {
+        "message": "Senha redefinida com sucesso. Faça login com a nova senha."
+    }
+```
+
+---
+
+### Checklist de produção
+
+| Item | Status |
+|------|--------|
+| Token de alta entropia (`secrets.token_urlsafe(32)`) | ✅ |
+| Guarda apenas o **hash** do token | ✅ |
+| Validade curta (20 minutos) | ✅ |
+| Uso único | ✅ |
+| Rate limiting forte | ✅ |
+| Anti-enumeração (resposta sempre igual) | ✅ |
+| Revoga todas as sessões após reset | ✅ |
+| Impede reutilização da senha atual | ✅ |
+| Captcha | ✅ |
+| Logging adequado | ✅ |
+| Tratamento de erros sem vazar informação | ✅ |
+| Invalidação de tokens antigos | ✅ |
+
+---
+
+### Recomendações finais
+
+1. Cria a migration do modelo `PasswordResetToken`.
+2. Implementa a função `email_recuperacao_senha_async` (com template profissional).
+3. Decide se queres forçar a reconfiguração do 2FA após reset (está comentado no código).
+4. No frontend, o link deve ser algo como:  
+   `https://teu-dominio.com/redefinir-senha?token=...`
+
+Queres que eu também te forneça a versão da função de envio de e-mail e o template HTML?

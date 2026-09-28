@@ -2320,7 +2320,7 @@ async def solicitar_cartao(
         select(User)
         .join(AdminScope, AdminScope.user_id == User.id)
         .where(
-            User.role_id == settings.ROLE_ADMIN_ID,
+            User.role_id == settings.ADMIN_ROLE_ID,
             (AdminScope.municipio_id == current_user.municipio_id) | 
             (AdminScope.provincia_id == current_user.provincia_id)
         )
@@ -2330,7 +2330,7 @@ async def solicitar_cartao(
 
     if not admin_alvo:
         logger.warning("Nenhum admin regional específico encontrado. Buscando Admin Geral...")
-        query_admin_geral = select(User).where(User.role_id == settings.ROLE_ADMIN_ID).limit(1)
+        query_admin_geral = select(User).where(User.role_id == settings.ADMIN_ROLE_ID).limit(1)
         admin_alvo = await session.scalar(query_admin_geral)
 
     if not admin_alvo:
