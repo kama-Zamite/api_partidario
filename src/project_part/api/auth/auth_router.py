@@ -25,7 +25,11 @@ from fastapi.security import OAuth2PasswordRequestForm
 from pydantic import TypeAdapter
 import pyotp
 from redis.asyncio import Redis as AsyncRedis
-from sqlalchemy import select, update
+from sqlalchemy import (
+    select,
+    update,
+    or_,
+)
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -169,7 +173,10 @@ async def login(
         # Isolamento estrito da primeira query
         user = await session.scalar(
             select(User)
-            .where(User.email == token.username)
+            .where(or_(
+                User.email == token.username,
+                User.militante_numero == token.username
+            ))
             .with_for_update()
             )
     except Exception as query_err:
