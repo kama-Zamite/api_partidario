@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Conta Bloqueada Temporariamente</title>
+</head>
+<body style="margin: 0; padding: 0; background-color: #f4f4f4; font-family: Arial, Helvetica, sans-serif;">
+    <!-- Container principal -->
+    <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color: #f4f4f4; padding: 40px 5px;">
+        <tr>
+            <td align="center">
+                <!-- Card do e-mail -->
+                <table width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width: 500px; background-color: #ffffff; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 12px rgba(0,0,0,0.08);">
+                    
+                    <!-- Linha do Logótipo (URL Externa) -->
+                    <tr>
+                        <td style="padding: 15px 20px; text-align: center; background-color: #f0f1f3;">
+                            <img src="{{ logo_url }}" alt="Logo UNITA" style="max-width: 100px; height: auto; display: inline-block; border: 0;">
+                        </td>
+                    </tr>
+
+                    <!-- Conteúdo -->
+                    <tr>
+                        <td style="padding: 40px 30px 30px 30px;">
+                            <p align="center" style="margin: 0 0 20px 0; color: #d9534f; font-size: 15px; font-weight: 600; letter-spacing: 0.5px;">
+                                Olá {{ nome }}, a sua conta foi bloqueada temporariamente.
+                            </p>
+
+                            <p align="center" style="margin: 0 0 25px 0; color: #2d3748; font-size: 12px; line-height: 1.6;">
+                                Detetámos várias tentativas consecutivas de início de sessão incorretas. Por motivos de segurança dos seus dados, o acesso à sua conta foi suspenso.
+                            </p>
+
+                            <!-- Caixa de Alerta do Desbloqueio -->
+                            <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width: 100%; border-collapse: collapse; background-color: #fffaf0; border: 1px solid #feebc8; border-radius: 8px; margin-bottom: 30px;">
+                                <tr>
+                                    <td style="padding: 20px; text-align: center; font-size: 13px; color: #c05621; font-weight: 600;">
+                                        A sua conta será desbloqueada automaticamente após {{duracao}}.
+                                    </td>
+                                </tr>
+                            </table>
+
+                            <p align="center" style="font-size: 11px; color: #4b5563; line-height: 1.6; margin-bottom: 24px;">
+                                Se não se lembra das suas credenciais, poderá redefinir a sua palavra-passe após o término do período de bloqueio clica em <a href={{url_redifinir_senha}} class="btn">alterar senha</a>:
+                            </p>
+                                                            
+                            <!-- Botão de Ação
+                            <table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom: 20px;">
+                                <tr>
+                                    <td align="center">
+                                        <a href="{{ url_redefinir_senha }}" style="background-color: #1e6b37; color: #ffffff; padding: 12px 24px; text-decoration: none; border-radius: 6px; font-size: 13px; font-weight: 600; display: inline-block;">
+                                            Redefinir Palavra-passe
+                                        </a>
+                                    </td>
+                                </tr>
+                            </table> -->
+                        </td>
+                    </tr>
+
+                    <!-- Rodapé -->
+                    <tr>
+                        <td style="background-color: #f8f9fa; padding: 20px 40px; text-align: center; border-top: 1px solid #eeeeee;">
+                            <p style="margin: 0; color: #999999; font-size: 10px;">
+                                © 2026 UNITA PGM — Todos os direitos reservados.<br>
+                                Este é um e-mail automático, por favor não responda.
+                            </p>
+                        </td>
+                    </tr>
+
+                </table>
+            </td>
+        </tr>
+    </table>
+</body>
+</html>

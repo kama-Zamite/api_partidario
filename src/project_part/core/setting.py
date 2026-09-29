@@ -24,6 +24,16 @@ class Settings(BaseSettings):
     CLOUDFLARE_VALIDATE_URL :  str
     ENV: str
 
+    
+    # Regras de bloqueio de conta no processo de login
+    MAX_TENTATIVAS : int = 1440          # erros de senha antes de cada bloqueio
+    BLOQUEIO_BASE_MIN : int     # 1.º bloqueio: 5 min, depois 10, 15, 20, 25 30, 35, 40...
+    BLOQUEIO_MAX_MIN : int  # teto: 24 horas
+    MSG_CREDENCIAIS: str
+    DETAIL_CHALLENGE_INVALIDA: str
+   
+   
+   
     # Configurações de roles
     ADMIN_ROLE_ID: int
     ROLE_MILITANTE_ID: int

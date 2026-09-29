@@ -633,7 +633,7 @@ async def create_user(
             estado_civil=estado_civil,
             nome_provincia=nome_provincia,
             foi_militante=foi_militante,
-            cadastrar_militante=cadastrar_militante,
+            cadastrar_militante=cadastrar_militante.strip(),
             nome_municipio=nome_municipio,
             militante_numero=num_militante_final,
             codigo_verificacao_email=None  # ainda não precisamos

@@ -3,10 +3,11 @@ import logging
 from datetime import datetime, timedelta, timezone
 from http import HTTPStatus
 from typing import Annotated, List
+from fastapi.responses import JSONResponse
 from user_agents import parse
 import uuid
 import asyncio
-
+from fastapi.concurrency import run_in_threadpool
 
 from aiosmtplib import response
 from fastapi import (
@@ -19,6 +20,7 @@ from fastapi import (
     Request,
     status,
 )
+from starlette.background import BackgroundTask
 from fastapi.security import OAuth2PasswordRequestForm
 from pydantic import TypeAdapter
 import pyotp
@@ -52,6 +54,15 @@ from project_part.core.setting import settings
 from project_part.db import session
 from project_part.db.cache import get_redis
 from project_part.db.session import get_session
+from project_part.utils.security_helpers import (
+    mascarar_email,
+    como_utc,
+    duracao_bloqueio_min,
+    resposta_credenciais_invalidas,
+    erro_interno,
+    descrever_cliente
+)
+
 from project_part.model.models import (
     AdminScope,
     PasswordResetToken,
@@ -64,6 +75,9 @@ from project_part.model.models import (
 )
 from project_part.services.email_service.recuperar_senha import (
     enviar_email_real_async,
+)
+from project_part.services.email_service.email_bloqueio_temp import (
+    email_Bloqueado_temp_async
 )
 from project_part.services.email_service.loginEmail import email_sucesso_login_async
 from project_part.services.two_factor_challenge import (
@@ -100,6 +114,12 @@ logger = logging.getLogger(__name__)
 
 auth = APIRouter(prefix='/auth', tags=['Auth'])
 
+# ---------------------------------------------------------------------------
+# Configuração da política de bloqueio
+# ---------------------------------------------------------------------------
+# Mensagem ÚNICA para qualquer falha de autenticação (evita enumeração de contas).
+
+
 IP_MAX = 45
 UA_MAX = 500
 
@@ -110,8 +130,8 @@ TypeCacheBase = 'v4:permissao:listar'
 router_auth = APIRouter(prefix="/auth", tags=["Autenticação"])
 
 
-DETAIL_CHALLENGE_INVALIDA = 'Requisição de login inválida ou expirada. Faça login novamente.'
- 
+
+
 
 def get_client_ip(request: Request) -> str | None:
     xff = request.headers.get('x-forwarded-for')
@@ -135,183 +155,187 @@ async def login(
     session: Session,
     token: Access_token,
     backgroundTasks: BackgroundTasks,
-    _captcha: Claudflare_turnfile
+    # _captcha: Claudflare_turnfile
     ):
     """Endpoint para autenticação de usuário."""
 
-    logger.info('Tentativa de login para o usuário: %s', token.username)
+    email_log = mascarar_email(token.username)
+    logger.info('Tentativa de login para %s', email_log)
 
+
+        # -- 1. Carregar utilizador COM lock de linha --------------------------
+    # with_for_update() serializa pedidos simultâneos para a mesma conta,
+    # impedindo que contornem o contador de tentativas (race condition).
     try:
         # Isolamento estrito da primeira query
-        user = await session.scalar(select(User).where(User.email == token.username))
+        user = await session.scalar(
+            select(User)
+            .where(User.email == token.username)
+            .with_for_update()
+            )
     except Exception as query_err:
         await session.rollback()
         logger.error('Falha crítica ao consultar utilizador no banco: %s', str(query_err))
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail='Erro interno de processamento na base de dados.'
-        )
-
-    if user and not user.ativo:
-        logger.warning('Tentativa de login em conta desativada: %s', token.username)
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail='E-mail ou senha incorretos')
-
-    if not user:
-        logger.warning('Falha de login: usuario %s nao encontrado', token.username)
-        # Executa a verificação dummy para mitigar ataques de temporização (Timing Attacks)
-        verify_password(token.password, settings.DUMMY_HASH)
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail='E-mail ou senha incorretos',
-        )
+        raise erro_interno('Erro interno de processamento na base de dados.')
 
     agora = datetime.now(timezone.utc)
 
-    if user.bloqueado_permanente:
-        logger.warning('Tentativa de login em conta bloqueada permanentemente: %s', token.username)
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail='Conta bloqueada por segurança. Verifique seu e-mail para desbloquear.',
-        )
+    # Copiar o que vamos precisar já, para não depender de atributos expirados
+        # depois de commit/rollback (sessão assíncrona).
+    if user:
+        user_id = user.id
+        user_email = user.email
+        nome_completo = user.nome_completo
+        password_alterado_em = user.password_alterado_em
+        bloqueado_ate = como_utc(user.bloqueado_ate)
 
-    if user.bloqueado_ate and agora < user.bloqueado_ate:
-        tempo_restante = int((user.bloqueado_ate - agora).total_seconds() / 60)
-        logger.warning('Tentativa de login em conta temporariamente bloqueada: %s', token.username)
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=f'Muitas tentativas. Tente novamente em {tempo_restante} minutos.',
-        )
+    # -- 2. Decidir se a conta pode tentar autenticar ----------------------
+    motivo_recusa = None
+    if user is None:
+        motivo_recusa = 'utilizador inexistente'
+    elif not user.ativo:
+        motivo_recusa = 'conta desativada'
+    elif user.bloqueado_permanente:
+        motivo_recusa = 'bloqueio manual/legado'
+    elif bloqueado_ate and agora < bloqueado_ate:
+        motivo_recusa = 'bloqueio temporário'
 
-    # --- Fluxo de Senha Incorreta ---
-    if not verify_password(token.password, user.password_hash):
-        # CORREÇÃO 1: Evita quebra por NoneType caso os valores na BD estejam como NULL
-        tentativa_acertos = user.tentativa_acertos or 0
-        tentativas_apos_bloqueio = user.tentativas_apos_bloqueio or 0
 
-        if tentativa_acertos >= 5:
-            user.tentativas_apos_bloqueio = tentativas_apos_bloqueio + 1
-            logger.warning('Erro após desbloqueio temporário. Erro número: %d/2', user.tentativas_apos_bloqueio)
+    # -- 3. Verificação de senha SEMPRE executada --------------------------
+    # Tempo de resposta idêntico em todos os cenários (anti timing-attack).
+    # settings.DUMMY_HASH deve ter o mesmo algoritmo e custo dos hashes reais.
+    # O hash corre numa thread para não bloquear o event loop.
+    hash_alvo = user.password_hash if (user and not motivo_recusa) else settings.DUMMY_HASH
+    senha_ok = await run_in_threadpool(verify_password, token.password, hash_alvo)
+    
 
-            if user.tentativas_apos_bloqueio >= 2:
-                user.bloqueado_permanente = True
-                logger.error('Usuário %s atingiu o limite máximo e foi bloqueado PERMANENTEMENTE.', token.username)
-        else:
-            user.tentativa_acertos = tentativa_acertos + 1
-            if user.tentativa_acertos == 5:
-                user.bloqueado_ate = agora + timedelta(minutes=15)
-                logger.warning('Usuário %s atingiu 5 erros. Bloqueado por 15 minutos.', token.username)
+    # -- 4. Contas que não podem autenticar: mesma resposta genérica -------
+    if motivo_recusa:
+        await session.rollback()  # liberta o lock de linha
+        logger.warning('Login recusado (%s): %s', motivo_recusa, email_log)
+        return resposta_credenciais_invalidas()
 
+
+    # -- 5. Senha incorreta ------------------------------------------------
+    if not senha_ok:
+        bloqueou_agora = False
+        minutos_bloqueio = 0
+        token_recuperacao = None
         try:
+            user.tentativa_acertos = (user.tentativa_acertos or 0) + 1
+
+            if user.tentativa_acertos >= settings.MAX_TENTATIVAS:
+                bloqueou_agora = True
+                # tentativas_apos_bloqueio passa a contar o nº de bloqueios já aplicados
+                user.tentativas_apos_bloqueio = (user.tentativas_apos_bloqueio or 0) + 1
+                minutos_bloqueio = duracao_bloqueio_min(user.tentativas_apos_bloqueio)
+                user.bloqueado_ate = agora + timedelta(minutes=minutos_bloqueio)
+                user.tentativa_acertos = 0  # novo ciclo de tentativas após o desbloqueio
+
+                token_recuperacao = await create_token_recuperar_senha(
+                    user_id, user_email, session
+                )
+
             session.add(user)
             await session.commit()
-        except Exception as e:
+        except Exception:
             await session.rollback()
-            logger.error('Não foi possível atualizar as tentativas de acerto no DB: %s', str(e))
+            logger.exception('Não foi possível registar a tentativa falhada no DB')
+            raise erro_interno('Erro interno ao processar a autenticação.')
 
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail='E-mail ou senha incorretos')
+        if bloqueou_agora:
+            logger.warning(
+                'Conta %s bloqueada por %d minutos (bloqueio nº %d).',
+                email_log,
+                minutos_bloqueio,
+                user.tentativas_apos_bloqueio,
+            )
+            # O e-mail só é agendado DEPOIS de o commit ter sucesso.
+            backgroundTasks.add_task(
+                email_Bloqueado_temp_async,
+                nome_completo,
+                token_recuperacao,
+                user_email,
+                minutos_bloqueio,
+            )
+            # Devolver a resposta (em vez de raise) é o que anexa as
+            # BackgroundTasks e garante a execução do envio.
+            return resposta_credenciais_invalidas(background=backgroundTasks)
+
+        return resposta_credenciais_invalidas()
 
 
-    ip_address = get_client_ip(request)
 
-    if not ip_address:
-        ip_address = request.client.host if request.client else "IP Desconhecido"
-    # 3. Capturar o User-Agent (Navegador/Dispositivo)
-    user_agent = request.headers.get("user-agent", "")
+    # -- 6. Senha correta --------------------------------------------------
+    ip_address = get_client_ip(request) or (
+            request.client.host if request.client else 'IP Desconhecido'
+        )
+    user_agent = request.headers.get('user-agent', '')[:512]
 
-    
-    # --- Fluxo de Autenticação com Sucesso ---
-    logger.info('Senha validada. Resetando contadores de tentativas do usuario')
-
-    user.tentativas_apos_bloqueio = 0
+    logger.info('Senha validada para %s. A repor contadores.', email_log)
     user.tentativa_acertos = 0
+    user.tentativas_apos_bloqueio = 0
     user.bloqueado_ate = None
 
 
+
+    # -- 6a. Fluxo 2FA -----------------------------------------------------
     if user.two_factor_enabled:
-        logger.info('Usuário %s requer verificação de 2FA.', token.username)
-        # Aqui você pode implementar a lógica para enviar o código 2FA ou redirecionar para o endpoint de verificação.
+        logger.info('Utilizador %s requer verificação de 2FA.', email_log)
         try:
             challenge_token = await criar_challenge_2fa(
                 session=session,
-                user_id=user.id,
+                user_id=user_id,
                 ip=ip_address,
                 user_agent=user_agent,
             )
             session.add(user)
             await session.commit()
-            logger.info('Challenge 2FA criado com sucesso para o usuário %s', token.username)
-        except Exception as e:
+        except Exception:
             await session.rollback()
-            logger.error('Falha ao criar challenge 2FA: %s', str(e))
-            raise HTTPException(
-                        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                        detail='Erro interno de processamento.',
-                    )
+            logger.exception('Falha ao criar challenge 2FA')
+            raise erro_interno()
 
-        # return  {
-        #     "require_2fa": True,
-        #     "user_id": str(user.id),
-        #     "message": "Autenticação de dois fatores necessária. Verifique seu dispositivo.",
-        # }
         response.headers['Cache-Control'] = 'no-store'
         return {
-                'require_2fa': True,
-                'challenge_token': challenge_token,
-                'expires_in': int(CHALLENGE_TTL.total_seconds()),
-                'message': 'Autenticação de dois fatores necessária. Verifique seu dispositivo.',
-            }
-    
-    logger.info('Usuário %s autenticado com sucesso (Sem 2FA)', token.username)
+            'require_2fa': True,
+            'challenge_token': challenge_token,
+            'expires_in': int(CHALLENGE_TTL.total_seconds()),
+            'message': 'Autenticação de dois fatores necessária. Verifique seu dispositivo.',
+        }
+
+
+    # -- 6b. Login normal --------------------------------------------------
     user.ultimo_login = agora
-    token_gerado = emitir_access_token(user.id, user.password_alterado_em)
-
-
-    refresh_gerado = await gerar_e_registar_refresh_token(
-        session=session,      # <-- Faltava este argumento!
-        user_id=user.id, 
-        ip=ip_address, 
-        user_agent=user_agent
-    )
-
     try:
+        token_gerado = emitir_access_token(user_id, password_alterado_em)
+        refresh_gerado = await gerar_e_registar_refresh_token(
+            session=session,
+            user_id=user_id,
+            ip=ip_address,
+            user_agent=user_agent,
+        )
         session.add(user)
         await session.commit()
         logger.info('Sucesso na atualizacao do ultimo_login do usuario')
-    except Exception as e:
+    except Exception:
         await session.rollback()
-        logger.error('Nao foi possivel concluir o login no DB: %s', str(e))
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail='Erro interno de processamento.',
-        )
+        logger.exception('Não foi possível concluir o login no DB')
+        raise erro_interno()
+
+
+    logger.info('Utilizador %s autenticado com sucesso (sem 2FA).', email_log)
     
-    #enviar email
-
-    user_agent_parsed = parse(user_agent)
-    navegador_final = f"{user_agent_parsed.browser.family} {user_agent_parsed.browser.version_string}".strip()
-    sistema_final = f"{user_agent_parsed.os.family} {user_agent_parsed.os.version_string}".strip()
-
-    # Fallback amigável caso retorne vazio ou "Other" em ferramentas como Postman/Swagger
-    if "other" in navegador_final.lower() and user_agent_parsed.is_bot:
-        navegador_final = "Ferramenta de Automação/API Docs"
-    if "other" in sistema_final.lower():
-        sistema_final = "Sistema Desconhecido"
-
-    try:
-        backgroundTasks.add_task(
-            email_sucesso_login_async, 
-            nome_completo=user.nome_completo, 
-            ip_address=ip_address, 
-            email_destino=user.email,
-            navegador=navegador_final, 
-            sistema_operacional=sistema_final, 
-            )
-        logger.info("E-mail de login enviado com sucesso para %s", user.email)
-    except Exception as e:
-        logger.error("Falha ao enviar e-mail de login para %s: %s", user.email, str(e))
-
+    navegador, sistema = descrever_cliente(user_agent)
+    backgroundTasks.add_task(
+        email_sucesso_login_async,
+        nome_completo=nome_completo,
+        ip_address=ip_address,
+        email_destino=user_email,
+        navegador=navegador,
+        sistema_operacional=sistema,
+    )
+    logger.info('E-mail de aviso de login agendado para %s.', email_log)
 
     set_auth_cookies(
         response=response,
@@ -371,7 +395,7 @@ async def verify_2fa(
     )
     if not challenge:
         logger.warning('Challenge 2FA inválida, expirada, usada ou de origem diferente (ip=%s)', ip_address)
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=DETAIL_CHALLENGE_INVALIDA)
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=settings.DETAIL_CHALLENGE_INVALIDA)
      
     # if not user or not user.two_factor_enabled:
     #     raise HTTPException(
@@ -383,14 +407,14 @@ async def verify_2fa(
 
     if not await registrar_tentativa(session, challenge_id):
         logger.warning('Challenge %s sem tentativas restantes', challenge_id)
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=DETAIL_CHALLENGE_INVALIDA)
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=settings.DETAIL_CHALLENGE_INVALIDA)
 
     logger.info('Tentativa de verificação 2FA para o usuário: %s', user_id)
 
     user = await session.scalar(select(User).where(User.id == user_id))
 
     if not user or not user.ativo or user.bloqueado_permanente or not user.two_factor_enabled:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=DETAIL_CHALLENGE_INVALIDA)
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=settings.DETAIL_CHALLENGE_INVALIDA)
  
 
     codigo_limpo = body.codigo.strip()
@@ -471,7 +495,7 @@ async def verify_2fa(
             logger.warning('Challenge %s já consumida (possível replay)', challenge_id)
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail=DETAIL_CHALLENGE_INVALIDA
+                detail=settings.DETAIL_CHALLENGE_INVALIDA
                 )
  
         if codigo_encontrado is not None:
@@ -569,125 +593,6 @@ async def verify_2fa(
 
 
 
-
-
-#     Este endpoint recebe as credenciais do usuário, verifica a autenticidade e retorna um token de acesso e um refresh token.
-#     Args:
-#         response (Response): Objeto de resposta para configurar os cookies.
-#         session (Session): Sessão assíncrona do banco de dados (SQLAlchemy).
-#         token (OAuth2PasswordRequestForm): Formulário contendo as credenciais do usuário (username e password).
-#         Raises:
-#             HTTPException [401 UNAUTHORIZED]: Se o e-mail ou a senha estiverem incorretos.
-#             HTTPException [401 UNAUTHORIZED]: Se a conta do usuário estiver desativada (ativo=False).
-#             HTTPException [401 UNAUTHORIZED]: Se a conta estiver bloqueada permanentemente.
-#             HTTPException [401 UNAUTHORIZED]: Se a conta estiver bloqueada temporariamente (limite de erros atingido).
-#         Returns:
-#             TokenResponse: Um dicionário contendo o token de acesso, o token de atualização
-#             e o tipo de token (Bearer).
-#     """
-
-#     logger.info('Tentativa de login para o usuário: %s', token.username)
-#     user = await session.scalar(select(User).where(User.email == token.username))
-
-#     if user and not user.ativo:
-#         logger.warning('Tentativa de login em conta desativada: %s', token.username)
-#         raise HTTPException(status_code=HTTPStatus.UNAUTHORIZED, detail='E-mail ou senha incorretos')
-
-#     if not user:
-#         logger.warning('Falha de login: usuario %s nao encontrado', token.username)
-#         verify_password(token.password, settings.DUMMY_HASH)
-#         raise HTTPException(
-#             status_code=HTTPStatus.UNAUTHORIZED,
-#             detail='E-mail ou senha incorretos',
-#         )
-
-
-#     agora = datetime.now(timezone.utc)
-
-#     if user.bloqueado_permanente:
-#         logger.warning('Tentativa de login em conta bloqueada permanentemente: %s', token.username)
-#         raise HTTPException(
-#             status_code=HTTPStatus.UNAUTHORIZED,
-#             detail='Conta bloqueada por segurança. Verifique seu e-mail para desbloquear.'
-#         )
-
-#     if user.bloqueado_ate and agora < user.bloqueado_ate:
-#         tempo_restante = int((user.bloqueado_ate - agora).total_seconds() / 60)
-#         logger.warning('Tentativa de login em conta temporariamente bloqueada: %s', token.username)
-#         raise HTTPException(
-#             status_code=HTTPStatus.UNAUTHORIZED,
-#             detail=f'Muitas tentativas. Tente novamente em {tempo_restante} minutos.'
-#         )
-
-#     if not verify_password(token.password, user.password_hash):
-
-#         if user.tentativa_acertos >= 5:
-#             user.tentativas_apos_bloqueio += 1
-#             logger.warning('Erro após desbloqueio temporário. Erro número: %d/2', user.tentativas_apos_bloqueio)
-
-#             if user.tentativas_apos_bloqueio >= 2:
-#                 user.bloqueado_permanente = True
-#                 logger.error('Usuário %s atingiu o limite máximo e foi bloqueado PERMANENTEMENTE.', token.username)
-
-#                 #criacao da logica de envio de email aqui, responsabilidade do leonel
-#         else:
-#             user.tentativa_acertos += 1
-#             if user.tentativa_acertos == 5:
-#                 user.bloqueado_ate = agora + timedelta(minutes=15)
-#                 logger.warning('Usuário %s atingiu 5 erros. Bloqueado por 15 minutos.', token.username)
-
-#         try:
-#             session.add(user)
-#             await session.commit()
-#         except Exception as e:
-#             await session.rollback()
-#             logger.error('Não foi possível atualizar as tentativas de acerto no DB: %s', str(e))
-#         raise HTTPException(status_code=HTTPStatus.UNAUTHORIZED, detail='E-mail ou senha incorretos')
-
-#     logger.info('Tentando a tualizar o ultimo login do usuario')
-#     user.ultimo_login = agora
-#     user.tentativas_apos_bloqueio = 0
-#     user.tentativa_acertos = 0
-#     user.bloqueado_ate = None
-
-#     try:
-#         session.add(user)
-#         await session.commit()
-#         await session.refresh(user)
-#         logger.info('sucesso na atualizacao do ultimo_login do usuario')
-#     except Exception as e:
-#         await session.rollback()
-#         logger.error('Nao foi possivel atualizar a data de ultimo_login no DB: %s', str(e))
-
-#     logger.info('Usuário %s autenticado com sucesso', token.username)
-#     token_gerado = create_token({'sub': str(user.id)})
-#     refresh_gerado = create_refresh_token({'sub': str(user.id)})
-
-#     response.set_cookie(
-#         key='access_token',
-#         value=token_gerado,
-#         httponly=True,
-#         secure=True,
-#         samesite='none',
-#         max_age=60 * 15,
-#         path='/',
-#     )
-#     response.set_cookie(
-#         key="refresh_token",
-#         value=refresh_gerado,
-#         httponly=True,
-#         secure=True,
-#         samesite="none",
-#         max_age=60 * 60 * 24 * 7,
-#         path="/auth/refresh",
-#     )
-#     return {
-#         'access_token': token_gerado,
-#         'token_type': 'bearer'
-#     }
-
-
-
 async def get_token_recuperar_senha_from_cookie(
     token_recuperar_senha: Annotated[
         str | None, Cookie(alias="token_recuperar_senha")
@@ -769,7 +674,7 @@ async def redefinir_senha(
         payload.token,
         session
         )
-    pwd_hash = await asyncio.to_thread(hash_password, payload.password)
+    pwd_hash = await run_in_threadpool(hash_password, payload.password)
     try:
         user_banco = await session.scalar(select(User).where(User.email == email))
 
@@ -800,6 +705,9 @@ async def redefinir_senha(
         user_banco.password_hash = pwd_hash
         user_banco.atualizado_em = data_atualizacao
         user_banco.password_alterado_em = data_atualizacao
+        user_banco.tentativas_apos_bloqueio = 0
+        user_banco.tentativa_acertos = 0
+        user_banco.bloqueado_ate = None
 
         await session.flush()
 

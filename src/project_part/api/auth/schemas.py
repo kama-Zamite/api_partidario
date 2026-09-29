@@ -72,7 +72,7 @@ class ResponseRole(RoleBase):
 
 
 class PedidoRecuperacao(BaseModel):
-    email: EmailStr
+    email: EmailValided = Field(max_length=255)
 
 class RedefinirSenhaSchema(BaseModel):
     token: str
