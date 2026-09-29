@@ -17,6 +17,7 @@ class Settings(BaseSettings):
     ALGORITHM: str
     SECRET_KEY: str
     TIME_REFRESH_TOKEN: int
+    REFRESH_REUSE_GRACE_SECONDS: int
     TIME_TOKEN_EXPIRE: int
     SECRET_KEY_RECUPERAR_SENHA: str
     EXPIRE_TOKEN_RECUPERAR_SENHA: int

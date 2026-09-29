@@ -123,7 +123,6 @@ auth = APIRouter(prefix='/auth', tags=['Auth'])
 IP_MAX = 45
 UA_MAX = 500
 
-REFRESH_REUSE_GRACE_SECONDS = 10
 
 TypeCacheBase = 'v4:permissao:listar'
 
@@ -155,7 +154,7 @@ async def login(
     session: Session,
     token: Access_token,
     backgroundTasks: BackgroundTasks,
-    # _captcha: Claudflare_turnfile
+    _captcha: Claudflare_turnfile
     ):
     """Endpoint para autenticação de usuário."""
 
@@ -888,7 +887,7 @@ async def refresh_token(
                     else None
                         )
 
-            if utilizado_ha is not None and 0 <= utilizado_ha <= REFRESH_REUSE_GRACE_SECONDS:
+            if utilizado_ha is not None and 0 <= utilizado_ha <= settings.REFRESH_REUSE_GRACE_SECONDS:
                 logger.info(
                     "Refresh concorrente tolerado (%.1fs após a rotação). user_id=%s",
                     utilizado_ha,
