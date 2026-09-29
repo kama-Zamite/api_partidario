@@ -32,6 +32,9 @@ class Settings(BaseSettings):
     BLOQUEIO_MAX_MIN : int  # teto: 24 horas
     MSG_CREDENCIAIS: str
     DETAIL_CHALLENGE_INVALIDA: str
+
+    # armazena o tamanho das fotos
+    FILE_SIZE_LIMIT: int
    
    
    

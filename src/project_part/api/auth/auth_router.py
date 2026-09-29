@@ -633,7 +633,15 @@ async def solicitar_recuperacao(
     }
 
     logger.info("Procurar o e-mail ou numero '%s' de militante na Base de Dados", payload.email)
-    query = select(User).where(User.email == payload.email)
+    query = (
+        select(User)
+        .where(
+            or_(
+                User.email == payload.email,
+                User.email_recuperacao == payload.email
+            )
+        )
+    )
     usuario_banco = await session.scalar(query)
 
     # aqui nao irei fazer a checagem se o email nao existe porque e intencional

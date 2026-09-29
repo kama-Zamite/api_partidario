@@ -51,12 +51,13 @@ from project_part.model.models import (
 )
 
 from .schemas import (
-    CategoriaResponse,
-    CreateCategoria,
+    # CategoriaResponse,
+    # CreateCategoria,
+    CreateNoticia,
     LimitNoticia,
     NoticiaResponse,
     UgradeStatusNoticia,
-    UpgradeCategoria,
+    # UpgradeCategoria,
     UpgradeNoticia,
 )
 
@@ -76,7 +77,6 @@ CACHE_KEY_NOTICIAS = 'v1:noticias:lista'
 CACHE_TTL_NOTICIAS = 3600 
 
 ALLOWED_EXTENSIONS = {'jpg', 'jpeg'}
-MAX_FILE_SIZE = 50 * 1024 * 1024
 
 
 def gerar_slug_automatico(titulo: str) -> str:
@@ -181,7 +181,6 @@ async def criar_noticia(
     # categoria_id: int = Form(gt=0),
     nome_provincia: Optional[str] = Form(None, min_length=4),
     nome_municipio: Optional[str] = Form(None, min_length=4),
-    status: NoticiasStatusEnum = Form(default=NoticiasStatusEnum.RASCUNHO),
 ):
     """
     Publica uma nova notícia vinculando de forma geográfica e assíncrona a imagem à pasta noticias_portal no Cloudinary.
@@ -193,16 +192,16 @@ async def criar_noticia(
     slug_gerado = await gerar_slug_unico(slug_inicial, session)
 
     try:
-        dados_validos = UpgradeNoticia(
+        dados_validos = CreateNoticia(
             titulo=titulo,
             slug=slug_gerado,
             subtitulo=subtitulo,
             lead=lead,
             corpo=corpo,
+            image_url=image_news,
             # categoria_id=categoria_id,
             nome_provincia=nome_provincia,
             nome_municipio=nome_municipio,
-            status=status,
         )
     except ValidationError as e:
         raise HTTPException(
@@ -267,24 +266,25 @@ async def criar_noticia(
         autor_id=current_user.id,
         provincia_id=pid,
         municipio_id=mid,
-        status=dados_validos.status,
+        status=NoticiasStatusEnum.PUBLICADO,
     )
 
+    imagem_tratada = dados_validos.image_url
     try:
         # logger.info('')
         session.add(nova_noticia)
         await session.flush()
 
-        if image_news:
-            extensao = image_news.filename.split('.')[-1].lower()
+        if imagem_tratada:
+            extensao = imagem_tratada.filename.split('.')[-1].lower()
             if extensao not in {'jpg', 'jpeg'}:
                 raise HTTPException(
                     status_code=HTTPStatus.BAD_REQUEST,
                     detail='Formato de imagem inválido. Use apenas JPG, JPEG.',
                 )
 
-            conteudo_byte = await image_news.read()
-            if len(conteudo_byte) > 5 * 1024 * 1024:
+            conteudo_byte = await imagem_tratada.read()
+            if len(conteudo_byte) > settings.FILE_SIZE_LIMIT:
                 raise HTTPException(
                     status_code=HTTPStatus.BAD_REQUEST, detail='A foto de perfil não pode ser maior que 5MB.'
                 )
@@ -304,7 +304,7 @@ async def criar_noticia(
                     detail='Falha ao salvar imagem de perfil no serviço de nuvem.',
                 )
             finally:
-                await image_news.close()
+                await imagem_tratada.close()
 
         await session.commit()
         await caches.delete(CACHE_KEY_NOTICIAS)
@@ -457,50 +457,50 @@ async def obter_noticia(id_news: uuid.UUID, session: Session):
     return adapter.dump_python(noticia_banco, mode='json')
 
 
-@news_router.patch('/{id_news}/status', status_code=HTTPStatus.OK)
-@limiter.limit('1/minute')
-async def atualizar_status_noticia(
-    request: Request,
-    id_news: uuid.UUID,
-    status: UgradeStatusNoticia,
-    _captcha: Claudflare_turnfile,
-    session: Session,
-    caches: Redis,
-    current_user: Get_current_user,
-    scope: ScopeValid,
-):
-    noticia_banco = await session.scalar(select(Noticia).where(Noticia.id == id_news))
-    if not noticia_banco:
-        raise HTTPException(status_code=HTTPStatus.NOT_FOUND, detail='Notícia não encontrada')
+# @news_router.patch('/{id_news}/status', status_code=HTTPStatus.OK)
+# @limiter.limit('1/minute')
+# async def atualizar_status_noticia(
+#     request: Request,
+#     id_news: uuid.UUID,
+#     status: UgradeStatusNoticia,
+#     _captcha: Claudflare_turnfile,
+#     session: Session,
+#     caches: Redis,
+#     current_user: Get_current_user,
+#     scope: ScopeValid,
+# ):
+#     noticia_banco = await session.scalar(select(Noticia).where(Noticia.id == id_news))
+#     if not noticia_banco:
+#         raise HTTPException(status_code=HTTPStatus.NOT_FOUND, detail='Notícia não encontrada')
 
-    if scope.provincia_id and scope.provincia_id != noticia_banco.provincia_id:
-        logger.warning('Admin %s bloqueado de atualizar status de notícia de outro território.', current_user.id)
-        raise HTTPException(
-            status_code=HTTPStatus.FORBIDDEN, detail='Acesso negado: Você não gerencia o território desta notícia.'
-        )
-    if scope.municipio_id and scope.municipio_id != noticia_banco.municipio_id:
-        logger.warning('Admin %s bloqueado de atualizar status de notícia de outro território.', current_user.id)
-        raise HTTPException(
-            status_code=HTTPStatus.FORBIDDEN, detail='Acesso negado: Você não gerencia o território desta notícia.'
-        )
+#     if scope.provincia_id and scope.provincia_id != noticia_banco.provincia_id:
+#         logger.warning('Admin %s bloqueado de atualizar status de notícia de outro território.', current_user.id)
+#         raise HTTPException(
+#             status_code=HTTPStatus.FORBIDDEN, detail='Acesso negado: Você não gerencia o território desta notícia.'
+#         )
+#     if scope.municipio_id and scope.municipio_id != noticia_banco.municipio_id:
+#         logger.warning('Admin %s bloqueado de atualizar status de notícia de outro território.', current_user.id)
+#         raise HTTPException(
+#             status_code=HTTPStatus.FORBIDDEN, detail='Acesso negado: Você não gerencia o território desta notícia.'
+#         )
 
-    noticia_banco.status = status.nome
-    noticia_banco.atualizado_as = datetime.now(timezone.utc)
+#     noticia_banco.status = status.nome
+#     noticia_banco.atualizado_as = datetime.now(timezone.utc)
 
-    try:
-        await session.commit()
-        await caches.delete(CACHE_KEY_NOTICIAS)
-        logger.info(
-            'Status da notícia [%s] atualizado para [%s] por %s.', noticia_banco.titulo, status.nome, current_user.email
-        )
-        return {'msg': 'Status da notícia atualizado com sucesso!'}
-    except IntegrityError as e:
-        await session.rollback()
-        logger.error('Erro de integridade ao atualizar status da notícia: %s', str(e.orig))
-        raise HTTPException(
-            status_code=HTTPStatus.CONFLICT,
-            detail='Erro de integridade ao atualizar o status da notícia.',
-        )
+#     try:
+#         await session.commit()
+#         await caches.delete(CACHE_KEY_NOTICIAS)
+#         logger.info(
+#             'Status da notícia [%s] atualizado para [%s] por %s.', noticia_banco.titulo, status.nome, current_user.email
+#         )
+#         return {'msg': 'Status da notícia atualizado com sucesso!'}
+#     except IntegrityError as e:
+#         await session.rollback()
+#         logger.error('Erro de integridade ao atualizar status da notícia: %s', str(e.orig))
+#         raise HTTPException(
+#             status_code=HTTPStatus.CONFLICT,
+#             detail='Erro de integridade ao atualizar o status da notícia.',
+#         )
 
 
 @news_router.put('/{id_news}', status_code=HTTPStatus.OK)
@@ -534,14 +534,18 @@ async def atualizar_noticia_completa(
             status_code=HTTPStatus.FORBIDDEN, detail='Acesso negado: Você não gerencia o território desta notícia.'
         )
 
+    slug_inicial = gerar_slug_automatico(schemas.titulo)
+    slug_gerado = await gerar_slug_unico(slug_inicial, session)
+
+
     noticia_banco.titulo = schemas.titulo
-    noticia_banco.slug = schemas.slug
+    noticia_banco.slug = slug_gerado
     noticia_banco.subtitulo = schemas.subtitulo
     noticia_banco.lead = schemas.lead
     noticia_banco.corpo = schemas.corpo
-    noticia_banco.image_url = schemas.image_url
-    noticia_banco.categoria = CategoriaNoticiaEnum.DESTAQUE
-    noticia_banco.status = schemas.status
+    # noticia_banco.image_url = schemas.image_url
+    # noticia_banco.categoria = CategoriaNoticiaEnum.DESTAQUE
+    # noticia_banco.status = 
     noticia_banco.atualizado_as = datetime.now(timezone.utc)
 
     pid = None

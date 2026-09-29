@@ -11,10 +11,6 @@ class LimitNoticia(BaseModel):
     skip: int = Field(default=0, ge=0)
 
 
-class CreateCategoria(BaseModel):
-    name: str = Field(max_length=100)
-
-
 class UgradeStatusNoticia(BaseModel):
     nome: str = Field(min_length=5, max_length=20)
 
@@ -69,14 +65,14 @@ class NoticiaResponse(BaseModel):
     #         return None
 
 
-class CategoriaResponse(BaseModel):
-    id: int
-    name: str
-    noticias: list[NoticiaResponse] = []
-    model_config = ConfigDict(from_attributes=True)
+# class CategoriaResponse(BaseModel):
+#     id: int
+#     name: str
+#     noticias: list[NoticiaResponse] = []
+#     model_config = ConfigDict(from_attributes=True)
 
 
-class UpgradeCategoria(CreateCategoria): ...
+# class UpgradeCategoria(CreateCategoria): ...
 
 
 class CreateNoticia(BaseModel):
@@ -86,19 +82,16 @@ class CreateNoticia(BaseModel):
     lead: Optional[str] = None
     corpo: str
     image_url: Optional[str] = None
-    categoria_id: int
     nome_provincia: Optional[str] = None
     nome_municipio: Optional[str] = None
-    status: str = 'rascunho'
 
 
 class UpgradeNoticia(BaseModel):
     titulo: str = Field(min_length=10, max_length=200)
-    slug: str = Field(min_length=10, max_length=255)
     subtitulo: Optional[str] = Field(None, min_length=20, max_length=255)
     lead: Optional[str] = None
     corpo: str
     # categoria: CategoriaNoticiaEnum = Field(default=CategoriaNoticiaEnum.DESTAQUE)
     nome_municipio: Optional[str] = None
     nome_provincia: Optional[str] = None
-    status: str
+    # status: str

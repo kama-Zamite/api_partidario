@@ -30,6 +30,7 @@ from project_part.core.cloudinary_config import (
     compensar_upload_orfao,
 )
 from project_part.core.rate_limit import limiter
+from project_part.core.setting import settings
 from project_part.core.secury import (
     Get_current_user,
     garante_escopo_territorial,
@@ -69,7 +70,6 @@ CACHE_KEY_LISTA = 'v1:eventos:lista'
 CACHE_TTL_EVENTOS = 3600
 
 ALLOWED_EXTENSIONS = ['.jpg', '.jpeg']
-FILE_SIZE_LIMIT = 5 * 1024 * 1024  # 5 MB
 
 
 @event.post('/create', status_code=HTTPStatus.CREATED)
@@ -79,7 +79,7 @@ async def criar_evento(
     session: Session,
     caches: Redis,
     current_user: Get_current_user,
-    scope: ScopeValid,                                          # ← reativado
+    scope: ScopeValid,                                       
     titulo: str = Form(..., max_length=200),
     descricao: str = Form(...),
     localizacao: str = Form(..., max_length=255),
@@ -171,7 +171,7 @@ async def criar_evento(
                 )
 
             conteudo_byte = await image_event.read()
-            if len(conteudo_byte) > 5 * 1024 * 1024:
+            if len(conteudo_byte) > settings.FILE_SIZE_LIMIT:
                 raise HTTPException(
                     status_code=HTTPStatus.BAD_REQUEST,
                     detail='A imagem não pode ser maior que 5MB.',
@@ -530,7 +530,7 @@ async def atualizar_evento(
             )
 
         conteudo_byte = await image_event.read()
-        if len(conteudo_byte) > 5 * 1024 * 1024:
+        if len(conteudo_byte) > settings.FILE_SIZE_LIMIT:
             raise HTTPException(
                 status_code=HTTPStatus.BAD_REQUEST,
                 detail='A imagem não pode ser maior que 5MB.',
