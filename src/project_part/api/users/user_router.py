@@ -2408,8 +2408,7 @@ async def obter_cartao(session: Session, current_user: Get_current_user):
     ultima_solicitacao = await session.scalar(
         select(SolicitacaoCartao)
         .where(SolicitacaoCartao.user_id == current_user.id)
-        .order_by(asc(SolicitacaoCartao.id)) # Assumindo ID sequencial ou use coluna de data se houver
-        .limit(1)
+        .order_by(SolicitacaoCartao.criado_as()) # Assumindo ID sequencial ou use coluna de data se houver
     )
 
     # Se nunca solicitou ou se foi REJEITADO, não tem cartão ativo.
