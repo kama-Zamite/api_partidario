@@ -1,6 +1,6 @@
 import logging
 from zoneinfo import ZoneInfo
-from fastapi import FastAPI, Request, Depends
+from fastapi import FastAPI, Request, Depends, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import JSONResponse
@@ -146,10 +146,19 @@ async def bloquear_link_direto_render(request: Request, call_next):
         if request.url.path in ["/", "/health", "/docs", "/openapi.json"]:
             return await call_next(request)
         
-        # Bloqueia qualquer tentativa de login ou cadastro vinda do link do Render
-        raise HTTPException(
+        # LOG DE SEGURANÇA (Opcional): Regista quem tentou contornar o domínio oficial
+        logger.warning(
+            "Tentativa de acesso direto bloqueada. Rota: %s | Host: %s", 
+            request.url.path, 
+            host
+        )
+        
+        # CORREÇÃO: Retorna uma resposta JSON direta para evitar o Erro 500 do FastAPI
+        return JSONResponse(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Acesso direto pelo domínio da infraestrutura não é permitido. Utilize os canais oficiais."
+            content={
+                "detail": "Acesso direto pelo domínio da infraestrutura não é permitido. Utilize os canais oficiais."
+            }
         )
         
     return await call_next(request)
