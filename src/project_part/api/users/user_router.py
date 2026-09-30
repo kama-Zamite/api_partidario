@@ -4,6 +4,7 @@ import io
 import base64
 import time
 from jwt import PyJWTError, decode
+from fastapi.concurrency import run_in_threadpool
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from PIL import Image, ImageOps, UnidentifiedImageError
@@ -132,7 +133,6 @@ user = APIRouter(prefix='/user', tags=['User'])
 
 
 FILE_READ_TIMEOUT_SECONDS = 30.0
-MAX_FILE_SIZE = 5 * 1024 * 1024
 
 
 ALLOWED_EXTENSIONS = {"jpg", "jpeg"}
@@ -556,7 +556,7 @@ async def create_user(
             if not chunk:
                 break
             buffer.extend(chunk)
-            if len(buffer) > MAX_FILE_SIZE:
+            if len(buffer) > settings.FILE_SIZE_LIMIT:
                 raise HTTPException(
                     status_code=HTTPStatus.BAD_REQUEST,
                     detail="A foto de perfil não pode ser maior que 5MB."
@@ -709,7 +709,7 @@ async def create_user(
         )
 
     # --- 6. Persistência temporária no Redis (15 minutos) ---
-    password_hash = await asyncio.to_thread(hash_password, dados_validados.password)
+    password_hash = await run_in_threadpool(hash_password, dados_validados.password)
     foto_b64 = base64.b64encode(conteudo_bytes).decode('utf-8')
 
     dados_temporarios = {
@@ -1328,7 +1328,7 @@ async def atualizar_perfil_password(
         user_email
     )
 
-    if not await asyncio.to_thread(
+    if not await run_in_threadpool(
             verify_password,
             schemas.senha_atual,
             current_user.password_hash
@@ -1360,7 +1360,7 @@ async def atualizar_perfil_password(
     #             detail='A senha só pode ser alterada uma vez a cada 30 dias.'
     #         )
 
-    crypt_password = await asyncio.to_thread(
+    crypt_password = await run_in_threadpool(
         hash_password,
         schemas.nova_senha
     )
@@ -1830,7 +1830,7 @@ async def atualizar_foto_perfil(
             if not chunk:
                 break
             buffer.extend(chunk)
-            if len(buffer) > MAX_FILE_SIZE:
+            if len(buffer) > settings.FILE_SIZE_LIMIT:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="A imagem não pode ser maior do que 5MB."
@@ -2359,6 +2359,81 @@ async def solicitar_cartao(
 
     return {"detail": "Solicitação enviada com sucesso. Aguarde a aprovação do administrador."}
 
+
+@user.get('/card/solicitacao/status', summary='Estado da solicitação de cartão')
+async def status_solicitacao_cartao(
+    session: Session,
+    current_user: Get_current_user,
+):
+    """
+    Retorna o estado atual da solicitação de cartão do utilizador.
+    Usado pelo frontend para decidir se pode ou não solicitar um novo cartão.
+    """
+
+    # 1. Verifica se já tem cartão ativo
+    cartao_ativo = await session.scalar(
+        select(CartaoMilitante).where(
+            CartaoMilitante.user_id == current_user.id,
+            CartaoMilitante.activo == True,
+        )
+    )
+
+    if cartao_ativo:
+        return {
+            "pode_solicitar": False,
+            "motivo": "Já possui um cartão ativo.",
+            "tem_cartao_ativo": True,
+            "status_solicitacao": None,
+            "solicitacao_id": None,
+            "criado_em": None,
+        }
+
+    # 2. Busca a solicitação mais recente (qualquer status)
+    solicitacao = await session.scalar(
+        select(SolicitacaoCartao)
+        .where(SolicitacaoCartao.user_id == current_user.id)
+        .order_by(SolicitacaoCartao.criado_as.desc())  # ajusta o nome do campo se for diferente
+        .limit(1)
+    )
+
+    if not solicitacao:
+        return {
+            "pode_solicitar": True,
+            "motivo": "Nenhuma solicitação encontrada. Pode solicitar.",
+            "tem_cartao_ativo": False,
+            "status_solicitacao": None,
+            "solicitacao_id": None,
+            "criado_em": None,
+        }
+
+    # 3. Decide se pode solicitar com base no status
+    status = solicitacao.status
+
+    if status in (StatusSolicitacao.PENDENTE, StatusSolicitacao.APROVADO):
+        pode_solicitar = False
+        motivo = (
+            "Já possui uma solicitação em análise."
+            if status == StatusSolicitacao.PENDENTE
+            else "Já possui uma solicitação aprovada."
+        )
+    elif status == StatusSolicitacao.REJEITADO:
+        pode_solicitar = True
+        motivo = "A última solicitação foi rejeitada. Pode solicitar novamente."
+    else:
+        # fallback para outros status que possas ter
+        pode_solicitar = True
+        motivo = f"Status atual: {status}. Pode solicitar."
+
+    return {
+        "pode_solicitar": pode_solicitar,
+        "motivo": motivo,
+        "tem_cartao_ativo": False,
+        "status_solicitacao": status.value if hasattr(status, "value") else str(status),
+        "solicitacao_id": str(solicitacao.id),
+        "criado_em": solicitacao.criado_em.isoformat() if getattr(solicitacao, "criado_em", None) else None,
+    }
+
+
 # @user.get('/card', status_code=HTTPStatus.OK, response_model=CardBase)
 # async def obter_cartao(session: Session, current_user: Get_current_user):
 #     """
@@ -2408,7 +2483,7 @@ async def obter_cartao(session: Session, current_user: Get_current_user):
     ultima_solicitacao = await session.scalar(
         select(SolicitacaoCartao)
         .where(SolicitacaoCartao.user_id == current_user.id)
-        .order_by(SolicitacaoCartao.criado_as()) # Assumindo ID sequencial ou use coluna de data se houver
+        .order_by(SolicitacaoCartao.criado_as.desc())
     )
 
     # Se nunca solicitou ou se foi REJEITADO, não tem cartão ativo.
