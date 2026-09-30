@@ -135,6 +135,24 @@ async def audit_context_middleware(request: Request, call_next):
     user_agent_ctx.set(request.headers.get('user-agent'))
     return await call_next(request)
 
+# 2. SEGUNDO (Colocado depois): O middleware que bloqueia o link da Render
+@app.middleware("http")
+async def bloquear_link_direto_render(request: Request, call_next):
+    host = request.headers.get("host", "")
+    
+    # Se o pedido vier pelo link direto da infraestrutura da Render
+    if "onrender.com" in host:
+        # Libera apenas as rotas de sobrevivência/documentação da API
+        if request.url.path in ["/", "/health", "/docs", "/openapi.json"]:
+            return await call_next(request)
+        
+        # Bloqueia qualquer tentativa de login ou cadastro vinda do link do Render
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Acesso direto pelo domínio da infraestrutura não é permitido. Utilize os canais oficiais."
+        )
+        
+    return await call_next(request)
 
 @app.get('/')
 @limiter.limit('5/minute')
