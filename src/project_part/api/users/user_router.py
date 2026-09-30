@@ -2381,11 +2381,7 @@ async def status_solicitacao_cartao(
     if cartao_ativo:
         return {
             "pode_solicitar": False,
-            "motivo": "Já possui um cartão ativo.",
-            "tem_cartao_ativo": True,
             "status_solicitacao": None,
-            "solicitacao_id": None,
-            "criado_em": None,
         }
 
     # 2. Busca a solicitação mais recente (qualquer status)
@@ -2399,11 +2395,7 @@ async def status_solicitacao_cartao(
     if not solicitacao:
         return {
             "pode_solicitar": True,
-            "motivo": "Nenhuma solicitação encontrada. Pode solicitar.",
-            "tem_cartao_ativo": False,
             "status_solicitacao": None,
-            "solicitacao_id": None,
-            "criado_em": None,
         }
 
     # 3. Decide se pode solicitar com base no status
@@ -2411,26 +2403,15 @@ async def status_solicitacao_cartao(
 
     if status in (StatusSolicitacao.PENDENTE, StatusSolicitacao.APROVADO):
         pode_solicitar = False
-        motivo = (
-            "Já possui uma solicitação em análise."
-            if status == StatusSolicitacao.PENDENTE
-            else "Já possui uma solicitação aprovada."
-        )
     elif status == StatusSolicitacao.REJEITADO:
         pode_solicitar = True
-        motivo = "A última solicitação foi rejeitada. Pode solicitar novamente."
     else:
         # fallback para outros status que possas ter
         pode_solicitar = True
-        motivo = f"Status atual: {status}. Pode solicitar."
 
     return {
         "pode_solicitar": pode_solicitar,
-        "motivo": motivo,
-        "tem_cartao_ativo": False,
         "status_solicitacao": status.value if hasattr(status, "value") else str(status),
-        "solicitacao_id": str(solicitacao.id),
-        "criado_em": solicitacao.criado_em.isoformat() if getattr(solicitacao, "criado_em", None) else None,
     }
 
 
