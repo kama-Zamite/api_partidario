@@ -6,9 +6,10 @@ from typing import Annotated, List
 from fastapi.responses import JSONResponse
 from user_agents import parse
 import uuid
+import math
 import asyncio
+import os
 from fastapi.concurrency import run_in_threadpool
-
 from aiosmtplib import response
 from fastapi import (
     APIRouter,
@@ -35,13 +36,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from project_part.core.rate_limit import limiter
 from project_part.core.secury import (
-    decrypt_totp_secret,
-)
-from project_part.core.secury import (
+    consumir_token_recuperar_senha,
+    invalidar_tokens_do_utilizador,
     Get_current_user,
     check_refresh_token,
     check_token_recuperar_senha,
     create_token,
+    decrypt_totp_secret,
     create_token_recuperar_senha,
     garante_escopo_territorial,
     hash_password,
@@ -53,7 +54,8 @@ from jwt import decode, PyJWTError
 from project_part.core.revocar_token_apos_alterar_passWord import (
     emitir_access_token,
     revogar_todas_sessoes,
-)  
+)
+from project_part.utils.recuperacao_de_senha import segundos_de_bloqueio_restantes
 from project_part.core.setting import settings
 from project_part.db import session
 from project_part.db.cache import get_redis
@@ -66,6 +68,7 @@ from project_part.utils.security_helpers import (
     erro_interno,
     descrever_cliente
 )
+from project_part.utils.crypto import HASH_SEM
 
 from project_part.model.models import (
     AdminScope,
@@ -94,7 +97,7 @@ from project_part.services.two_factor_challenge import (
 )
 from project_part.api.auth.util import set_auth_cookies
 from project_part.services.claudflare_turnfile import verificar_turnstile
-
+from project_part.tasks.email_tasks import enviar_email_bloqueio, enviar_email_login
 from .schemas import (
     CreatePermissao,
     CreateRole,
@@ -127,6 +130,7 @@ auth = APIRouter(prefix='/auth', tags=['Auth'])
 IP_MAX = 45
 UA_MAX = 500
 
+MSG_LINK_INVALIDO = 'Link inválido ou expirado.'
 
 TypeCacheBase = 'v4:permissao:listar'
 
@@ -143,7 +147,6 @@ def get_client_ip(request: Request) -> str | None:
     else:
         valor = request.client.host if request.client else None
     return valor[:45] if valor else None  # [HARDENING] era: return xff.split(',')[0].strip()
-
 
 
 
@@ -212,8 +215,8 @@ async def login(
     # settings.DUMMY_HASH deve ter o mesmo algoritmo e custo dos hashes reais.
     # O hash corre numa thread para não bloquear o event loop.
     hash_alvo = user.password_hash if (user and not motivo_recusa) else settings.DUMMY_HASH
-    senha_ok = await run_in_threadpool(verify_password, token.password, hash_alvo)
-    
+    async with HASH_SEM:
+        senha_ok = await run_in_threadpool(verify_password, token.password, hash_alvo)
 
     # -- 4. Contas que não podem autenticar: mesma resposta genérica -------
     if motivo_recusa:
@@ -239,7 +242,10 @@ async def login(
                 user.tentativa_acertos = 0  # novo ciclo de tentativas após o desbloqueio
 
                 token_recuperacao = await create_token_recuperar_senha(
-                    user_id, user_email, session
+                    user_id,
+                    session,
+                    ttl_minutos=minutos_bloqueio + settings.MARGEM_TOKEN_MIN,
+                    commit=False,          # o commit do login grava tudo de forma atómica
                 )
 
             session.add(user)
@@ -257,13 +263,20 @@ async def login(
                 user.tentativas_apos_bloqueio,
             )
             # O e-mail só é agendado DEPOIS de o commit ter sucesso.
-            backgroundTasks.add_task(
-                email_Bloqueado_temp_async,
-                nome_completo,
-                token_recuperacao,
-                user_email,
-                minutos_bloqueio,
+            await enviar_email_bloqueio(
+                backgroundTasks,
+                nome_completo=nome_completo,
+                token=token_recuperacao,
+                email_destino=user_email,
+                minutos=minutos_bloqueio,
             )
+            # backgroundTasks.add_task(
+            #     email_Bloqueado_temp_async,
+            #     nome_completo,
+            #     token_recuperacao,
+            #     user_email,
+            #     minutos_bloqueio,
+            # )
             # Devolver a resposta (em vez de raise) é o que anexa as
             # BackgroundTasks e garante a execução do envio.
             return resposta_credenciais_invalidas(background=backgroundTasks)
@@ -333,14 +346,22 @@ async def login(
     logger.info('Utilizador %s autenticado com sucesso (sem 2FA).', email_log)
     
     navegador, sistema = descrever_cliente(user_agent)
-    backgroundTasks.add_task(
-        email_sucesso_login_async,
+    await enviar_email_login(
+        backgroundTasks,
         nome_completo=nome_completo,
         ip_address=ip_address,
         email_destino=user_email,
         navegador=navegador,
         sistema_operacional=sistema,
     )
+    # backgroundTasks.add_task(
+    #     email_sucesso_login_async,
+    #     nome_completo=nome_completo,
+    #     ip_address=ip_address,
+    #     email_destino=user_email,
+    #     navegador=navegador,
+    #     sistema_operacional=sistema,
+    # )
     logger.info('E-mail de aviso de login agendado para %s.', email_log)
 
     set_auth_cookies(
@@ -572,14 +593,22 @@ async def verify_2fa(
 
     user_agent_parsed = parse(user_agent)
     try:
-        backgroundTasks.add_task(
-            email_sucesso_login_async, 
-            nome_completo=user.nome_completo, 
-            ip_address=ip_address, 
+        # backgroundTasks.add_task(
+        #     email_sucesso_login_async, 
+        #     nome_completo=user.nome_completo, 
+        #     ip_address=ip_address, 
+        #     email_destino=user.email,
+        #     navegador=user_agent_parsed.browser.family, 
+        #     sistema_operacional=user_agent_parsed.os.family, 
+        #     )
+        await enviar_email_login(
+            backgroundTasks,
+            nome_completo=user.nome_completo,
+            ip_address=ip_address,
             email_destino=user.email,
-            navegador=user_agent_parsed.browser.family, 
-            sistema_operacional=user_agent_parsed.os.family, 
-            )
+            navegador=user_agent_parsed.browser.family,
+            sistema_operacional=user_agent_parsed.os.family,
+        )
         logger.info("E-mail de login enviado com sucesso para %s", user.email)
     except Exception as e:
         logger.error("Falha ao enviar e-mail de login para %s: %s", user.email, str(e))
@@ -627,6 +656,7 @@ async def solicitar_recuperacao(
     Returns:
         dict: Mensagem informando que, se o e-mail existir no sistema, o usuário receberá um link de redefinição.
     """
+
     mensagem_padrao = {
         "status": "success",
         "message": "Se o e-mail estiver cadastrado, você receberá um link para redefinir a senha.",
@@ -649,7 +679,6 @@ async def solicitar_recuperacao(
     if usuario_banco:
         token = await create_token_recuperar_senha(
             usuario_banco.id,
-            payload.email, 
             session
             )
         # background_tasks.add_task(enviar_email_falso, payload.email, token)
@@ -661,7 +690,6 @@ async def solicitar_recuperacao(
             )
     else:
         logger.info('Tentativa de recuperação para e-mail inexistente: %s', payload.email)
-
     return mensagem_padrao
 
 
@@ -672,61 +700,83 @@ async def redefinir_senha(
     request: Request,
     payload: RedefinirSenhaSchema,
     _captcha: Claudflare_turnfile,
-    session: Session):
-    """Endpoint para redefinir a senha do usuário. Recebe o token de recuperação e a nova senha, verifica a validade do token e atualiza a senha no banco de dados.
-    Args:
-        payload (RedefinirSenhaSchema): Objeto contendo o token de recuperação e a nova senha.
-        session (Session): Sessão assíncrona do banco de dados (SQLAlchemy).
-    Raises:
-        HTTPException [404 NOT FOUND]: Se o usuário não for encontrado no banco de dados.
-        HTTPException [400 BAD REQUEST]: Se houver erro de integridade ao salvar os dados.
-    Returns:
-        dict: Mensagem informando que a senha foi atualizada com sucesso.
+    session: Session
+    ):
+    """
+        Redefine a senha a partir do token de recuperação.
+
+        Raises:
+            400: link inválido, expirado ou já utilizado (ou utilizador inexistente/inativo).
+            401: token malformado, expirado ou com escopo incorreto.
+            403: conta bloqueada manualmente/permanentemente.
+            423: conta temporariamente bloqueada (o token continua válido para depois).
+            500: erro interno.
     """
 
-    email, token_id = await check_token_recuperar_senha(
+    # 1. Valida o token (não grava nada nem o consome).
+    user_id_str, token_id = await check_token_recuperar_senha(
         payload.token,
         session
         )
-    pwd_hash = await run_in_threadpool(hash_password, payload.password)
+
     try:
-        user_banco = await session.scalar(select(User).where(User.email == email))
+        user_id = uuid.UUID(str(user_id_str))
+    except ValueError:
+        logger.warning('Token de recuperação com sub que não é um UUID.')
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, MSG_LINK_INVALIDO)
 
-        if not user_banco:
-            logger.info('Usuário associado ao token de recuperação não encontrado: %s', email)
-            raise HTTPException(status_code=HTTPStatus.NOT_FOUND, detail='Usuário associado ao token não encontrado.')
+    # 2. Hash fora do lock: não segura a linha do utilizador durante o cálculo.
+    async with HASH_SEM:
+        pwd_hash = await run_in_threadpool(hash_password, payload.password)
 
-        user_id = user_banco.id
-        logger.info('Consumindo token de recuperação: %s', token_id)
-        resultado_token = await session.execute(
-            update(PasswordResetToken)
-            .where(
-                PasswordResetToken.id == token_id,
-                PasswordResetToken.usado.is_(False),
-            )
-            .values(usado=True)
-            .execution_options(synchronize_session=False)
+    try:
+        user_banco = await session.scalar(
+            select(User).where(User.id == user_id)
+            .with_for_update()
         )
-        if resultado_token.rowcount != 1:
+
+        if user_banco is None or not user_banco.ativo:
+            logger.warning('Utilizador inexistente ou inativo na redefinição: %s', user_id)
+            raise HTTPException(400, 'Link inválido ou expirado.')
+
+        agora = datetime.now(timezone.utc)
+
+        # 3. Conta bloqueada: recusa SEM consumir o token (serve depois do bloqueio).
+        if user_banco.bloqueado_permanente:
             raise HTTPException(
-                status_code=HTTPStatus.BAD_REQUEST,
-                detail="Este link de recuperação já foi utilizado ou é inválido.",
+                status.HTTP_403_FORBIDDEN,
+                'Conta bloqueada. Contacte o suporte.',
             )
-        logger.info('Token de recuperação consumido com sucesso: %s', token_id)
 
+        segundos = segundos_de_bloqueio_restantes(user_banco, agora)
+        if segundos > 0:
+            raise HTTPException(
+                status_code=status.HTTP_423_LOCKED,
+                detail=f'A conta está bloqueada. Tente novamente em {math.ceil(segundos / 60)} minutos.',
+                headers={'Retry-After': str(segundos)},
+            )
+        
+        # 4. Consumo ATÓMICO e ÚNICO do token (UPDATE condicional).
+        if not await consumir_token_recuperar_senha(session, token_id, user_id):
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, MSG_LINK_INVALIDO)
+        logger.info('Token de recuperação consumido: %s', token_id)
 
-        data_atualizacao = datetime.now(timezone.utc)
         user_banco.password_hash = pwd_hash
-        user_banco.atualizado_em = data_atualizacao
-        user_banco.password_alterado_em = data_atualizacao
+        user_banco.atualizado_em = agora
+        user_banco.password_alterado_em = agora
         user_banco.tentativas_apos_bloqueio = 0
         user_banco.tentativa_acertos = 0
         user_banco.bloqueado_ate = None
 
         await session.flush()
 
-        revogados = await revogar_todas_sessoes(session, user_id, data_atualizacao)
+        # 6. Termina sessões ativas e anula outros tokens pendentes.
+        #   (revogar_todas_sessoes NÃO deve fazer commit por dentro.)
+        revogados = await revogar_todas_sessoes(session, user_id, agora)
+
+        await invalidar_tokens_do_utilizador(session, user_id)
         await session.commit()
+
         logger.info(
                 'Senha atualizada com sucesso para o usuário %s. Sessões revogadas: %d',
                 user_id,  # [HARDENING] id em vez do e-mail nos logs
@@ -734,6 +784,7 @@ async def redefinir_senha(
             )
 
     except HTTPException:
+        await session.rollback() 
         raise
     except Exception as e:
         await session.rollback()
@@ -743,7 +794,7 @@ async def redefinir_senha(
             str(e),
         )
         raise HTTPException(
-            status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Erro interno ao processar a redefinição de senha.",
         )
     # [SEC-008] Não emitimos sessão aqui: o utilizador tem de fazer login com a nova
@@ -752,57 +803,6 @@ async def redefinir_senha(
         "status": "success",
         "message": "Senha redefinida com sucesso!",
     }
-        
-        
-    # try:
-    #     logger.info('Busca o token com condição de ainda não ter sido usado')
-    #     query_token = select(PasswordResetToken).where(
-    #         PasswordResetToken.id == token_id,
-    #         PasswordResetToken.usado.is_(False),
-    #     )
-    #     token_banco = await session.scalar(query_token)
-
-    #     if not token_banco:
-    #         raise HTTPException(
-    #             status_code=HTTPStatus.BAD_REQUEST,
-    #             detail="Este link de recuperação já foi utilizado ou é inválido.",
-    #         )
-    #     logger.info('Token de recuperação encontrado e válido: %s', token_id)
-    #     query = select(User).where(
-    #         User.email == email).options(selectinload(User.provincia), selectinload(User.municipio))
-
-    #     user_banco = await session.scalar(query)
-
-    #     if not user_banco:
-    #         raise HTTPException(status_code=HTTPStatus.NOT_FOUND, detail='Usuário associado ao token não encontrado.')
-
-    #     token_banco.usado = True
-    #     pwd_hash = hash_password(payload.password)
-    #     user_banco.password_hash = pwd_hash
-    #     data_atualizacao = datetime.now(timezone.utc)
-    #     user_banco.atualizado_em = data_atualizacao
-
-
-    #     await session.commit()
-    #     logger.info('Senha atualizada com sucesso para o usuário: %s', email)
-    # except HTTPException:
-    #     raise
-    # except Exception as e:
-    #     await session.rollback()
-    #     logger.error(
-    #         "Erro crítico ao redefinir senha (token_id=%s): %s",
-    #         token_id,
-    #         str(e),
-    #     )
-    #     raise HTTPException(
-    #         status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
-    #         detail="Erro interno ao processar a redefinição de senha.",
-    #     )
-    # return {
-    #     "status": "success",
-    #     "message": "Senha redefinida com sucesso!",
-    # }
-
 
 
 @auth.post(

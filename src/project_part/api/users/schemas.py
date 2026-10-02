@@ -45,7 +45,16 @@ class UserBase(BaseModel):
     cadastrar_militante: CadastrarComo = Field(default=CadastrarComo.MILITANTE)
 
     estado_civil: EstadoCivil = Field(default=EstadoCivil.SOLTEIRO)
+
+    aceitou_termos: bool = Field(..., description="O utilizador deve aceitar as políticas de segurança.")
     # ativo: Optional[bool] = Field(default=True)
+
+    @field_validator('aceitou_termos')
+    @classmethod
+    def validar_aceitacao_termos(cls, termos: bool) -> bool:
+        if termos is not True:
+            raise ValueError("O utilizador deve aceitar as políticas de segurança.")
+        return termos
 
     @field_validator('nome_completo')
     @classmethod

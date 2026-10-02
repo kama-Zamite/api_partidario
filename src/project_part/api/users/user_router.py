@@ -98,6 +98,7 @@ from project_part.model.models import (
     QuotaStatusEnum,
     PagamentoQuota,
 )
+from project_part.utils.crypto import HASH_SEM
 
 from .schemas import (
     UserBase,
@@ -515,6 +516,7 @@ async def create_user(
     session: Session,
     backgroundTasks: BackgroundTasks,
     _captcha: Claudflare_turnfile,
+    aceitou_termos: bool,
     nome_completo: str = Form(...),
     email: str = Form(...),
     password: str = Form(...),
@@ -629,6 +631,7 @@ async def create_user(
             data_nascimento=data_nascimento,
             nif=nif,
             telefone=telefone,
+            aceitou_termos = aceitou_termos,
             genero=genero,
             estado_civil=estado_civil,
             nome_provincia=nome_provincia,
@@ -709,12 +712,15 @@ async def create_user(
         )
 
     # --- 6. Persistência temporária no Redis (15 minutos) ---
-    password_hash = await run_in_threadpool(hash_password, dados_validados.password)
-    foto_b64 = base64.b64encode(conteudo_bytes).decode('utf-8')
 
+    async with HASH_SEM:
+        password_hash = await run_in_threadpool(hash_password, dados_validados.password)
+
+    foto_b64 = base64.b64encode(conteudo_bytes).decode('utf-8')
     dados_temporarios = {
         "nome_completo": dados_validados.nome_completo,
         "email": dados_validados.email,
+        "aceitou_termos": dados_validados.aceitou_termos,
         "password_hash": password_hash,
         "data_nascimento": dados_validados.data_nascimento.isoformat(),
         "nif": dados_validados.nif,
@@ -1328,42 +1334,43 @@ async def atualizar_perfil_password(
         user_email
     )
 
-    if not await run_in_threadpool(
-            verify_password,
-            schemas.senha_atual,
-            current_user.password_hash
-        ):
-        logger.warning(
-            'Falha na alteração de senha: senha atual incorreta para o usuário ID: %s',
-            user_id
+    async with HASH_SEM:
+        if not await run_in_threadpool(
+                verify_password,
+                schemas.senha_atual,
+                current_user.password_hash
+            ):
+            logger.warning(
+                'Falha na alteração de senha: senha atual incorreta para o usuário ID: %s',
+                user_id
+            )
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail='A senha atual inserida está incorreta.'
+            )
+
+        agora = datetime.now(timezone.utc)
+        # ultima_alteracao = 60 * 60 * 24 * 30
+
+        # if current_user.password_alterado_em is not None:
+        #     if (
+        #         agora.timestamp()
+        #         - current_user.password_alterado_em.timestamp()
+        #         < ultima_alteracao
+        #     ):
+        #         logger.warning(
+        #             'Tentativa de alteração de senha muito frequente para o usuário ID: %s',
+        #             current_user.id
+        #         )
+        #         raise HTTPException(
+        #             status_code=HTTPStatus.TOO_MANY_REQUESTS,
+        #             detail='A senha só pode ser alterada uma vez a cada 30 dias.'
+        #         )
+
+        crypt_password = await run_in_threadpool(
+            hash_password,
+           schemas.nova_senha
         )
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail='A senha atual inserida está incorreta.'
-        )
-
-    agora = datetime.now(timezone.utc)
-    # ultima_alteracao = 60 * 60 * 24 * 30
-
-    # if current_user.password_alterado_em is not None:
-    #     if (
-    #         agora.timestamp()
-    #         - current_user.password_alterado_em.timestamp()
-    #         < ultima_alteracao
-    #     ):
-    #         logger.warning(
-    #             'Tentativa de alteração de senha muito frequente para o usuário ID: %s',
-    #             current_user.id
-    #         )
-    #         raise HTTPException(
-    #             status_code=HTTPStatus.TOO_MANY_REQUESTS,
-    #             detail='A senha só pode ser alterada uma vez a cada 30 dias.'
-    #         )
-
-    crypt_password = await run_in_threadpool(
-        hash_password,
-        schemas.nova_senha
-    )
 
     current_user.password_hash = crypt_password
     current_user.atualizado_em = agora

@@ -86,8 +86,46 @@ services:
     depends_on:
       database_project:
         condition: service_healthy
+  
+  redis_queue:
+    image: redis:7-alpine
+    container_name: redis_queue_broker
+    command: >
+      redis-server --appendonly yes --appendfsync everysec
+      --requirepass ${REDIS_QUEUE_PASSWORD}
+    volumes:
+      - redis_queue_data:/data
+    restart: unless-stopped
+    networks:
+      - app_network
+
+  worker:
+    build: .
+    container_name: taskiq_worker_app
+    entrypoint: []
+    # Usamos aspas normais no comando para evitar que o Docker confunda as flags com variáveis
+    command: "taskiq worker project_part.core.tk_broker:broker project_part.tasks.email_tasks --workers 2"
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    environment:
+      - PYTHONPATH=/app/src
+    env_file:
+      - .env
+    networks:
+      - app_network
+    depends_on:
+      redis_queue:
+        condition: service_started
+      database_project:
+        condition: service_healthy
+    
+    restart: unless-stopped
 
 volumes:
+  redis_queue_data:
   app_src_volume:
   postgres_volume:
   redis_volume:

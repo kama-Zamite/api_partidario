@@ -302,6 +302,13 @@ class User(Base):
     noticias_partido: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
 
+    # Registos cruciais para auditoria da APD caso necessário
+    # consentimento_lpd = Column(Boolean, default=False, nullable=False)
+    # concedido_em = Column(DateTime, nullable=True)  # Data e hora exata da concessão
+    # versao_politica_apd = Column(String, nullable=True)
+
+
+
     # Relacionamentos
     scope: Mapped[Optional['AdminScope']] = relationship(
         uselist=False, back_populates='user', cascade='all, delete-orphan'

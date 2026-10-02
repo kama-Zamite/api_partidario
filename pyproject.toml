@@ -35,7 +35,9 @@ dependencies = [
     "apscheduler (>=3.11.3,<4.0.0)",
     "psycopg2-binary (>=2.9.13,<3.0.0)",
     "gunicorn (>=26.2.0,<27.0.0)",
-    "cryptography (>=42.0.0)"
+    "cryptography (>=42.0.0)",
+    "taskiq (>=0.13.0,<0.14.0)",
+    "taskiq-redis (>=1.2.4,<2.0.0)"
 ]
 
 [tool.poetry]

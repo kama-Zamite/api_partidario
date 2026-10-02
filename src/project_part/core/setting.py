@@ -10,22 +10,34 @@ class Settings(BaseSettings):
         case_sensitive=True,
     )
     BASE_URL: str
-    DATABASE_REDIS_URL: str
     DUMMY_HASH: str
     EXPIRE_TOKEN: int
     REFRESH_TOKEN: int
+
+    # Configurações de autenticação e segurança
     ALGORITHM: str
     SECRET_KEY: str
     TIME_REFRESH_TOKEN: int
     REFRESH_REUSE_GRACE_SECONDS: int
     TIME_TOKEN_EXPIRE: int
+
+    #   Configurações de recuperação de senha
     SECRET_KEY_RECUPERAR_SENHA: str
     EXPIRE_TOKEN_RECUPERAR_SENHA: int
+    MARGEM_TOKEN_MIN: int
+
+    # Configurações de Cloudflare Turnstile
     CLOUDFLARE_TURNSTILE_SECRET: str
     CLOUDFLARE_VALIDATE_URL :  str
     ENV: str
 
-    
+
+
+    # Configurações de banco de dados
+    DATABASE_REDIS_URL: str
+    REDIS_QUEUE_URL: str = 'redis://localhost:6379/0'
+    TASKIQ_ENABLED: bool = False
+
     # Regras de bloqueio de conta no processo de login
     MAX_TENTATIVAS : int = 1440          # erros de senha antes de cada bloqueio
     BLOQUEIO_BASE_MIN : int     # 1.º bloqueio: 5 min, depois 10, 15, 20, 25 30, 35, 40...
@@ -60,6 +72,8 @@ class Settings(BaseSettings):
 
     EMAIL_FROM: str
     RESEND_API_KEY: str
+
+
 
     # Configurações de CORS e segurança
     ALLOWED_ORIGINS: list[str]

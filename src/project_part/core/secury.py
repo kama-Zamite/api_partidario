@@ -57,33 +57,64 @@ def create_token(data: dict):
 
 async def create_token_recuperar_senha(
         user_uuid: uuid.UUID,
-        email: str,
-        session: Session
+        # email: str,
+        session: Session,
+        ttl_minutos: int | None = None,
+        *,
+        commit: bool = True,
         ) -> str:
-    """Cria o token no banco e retorna o JWT (para ser setado no cookie)."""
-    expire = datetime.now(timezone.utc) + timedelta(minutes=int(settings.EXPIRE_TOKEN_RECUPERAR_SENHA))
+    """
+        Cria o token no banco e retorna o JWT (para ser setado no cookie).
+        
+        ttl_minutos: 
+                validade do token. Se None, usa settings.EXPIRE_TOKEN_RECUPERAR_SENHA.
+                No fluxo de bloqueio passe (duração do bloqueio + margem), senão o token
+                expira antes de o utilizador poder usá-lo.
+        commit:     
+                True mantém o comportamento antigo (outras rotas continuam iguais).
+                False faz só flush, para quem chama controlar a transação
+                (no login, o commit único fica atómico com o bloqueio da conta).
+    """
+    agora = datetime.now(timezone.utc)
+    minutos = ttl_minutos if ttl_minutos is not None else int(settings.EXPIRE_TOKEN_RECUPERAR_SENHA)
+    expire = agora + timedelta(minutes=minutos)
 
     token_id = str(uuid.uuid4())
 
-    db_token = PasswordResetToken(
-        id=token_id,
-        user_id=user_uuid,
-        usado=False
-        )
+    # db_token = PasswordResetToken(
+    #     id=token_id,
+    #     user_id=user_uuid,
+    #     usado=False
+    #     )
     try:
-        session.add(db_token)
-        await session.commit()
-    except Exception as e:
-        logger.error("Erro ao adicionar token de recuperação de senha: %s", str(e.args))
+        # Só o token mais recente deve funcionar: invalida os anteriores ainda por usar.
+        await session.execute(
+            update(PasswordResetToken)
+            .where(
+                    PasswordResetToken.user_id == user_uuid,
+                    PasswordResetToken.usado.is_(False),
+                )
+                .values(usado=True)
+            )
+        session.add(PasswordResetToken(id=token_id, user_id=user_uuid, usado=False))
+        if commit:
+            await session.commit()
+        else:
+            await session.flush()
+
+    except Exception:
+        await session.rollback()
+        logger.exception('Erro ao criar token de recuperação de senha')
         raise HTTPException(
             status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
-            detail="Erro ao criar token de recuperação de senha!",
+            detail='Erro ao criar token de recuperação de senha!',
         )
 
     dados_token = {
-        'sub': str(email),
+        'sub': str(user_uuid),
         'jti': str(token_id),
         'scope': 'recuperacao_senha',
+        'iat': int(agora.timestamp()),
         'exp': int(expire.timestamp()),
     }
     return encode(
@@ -93,75 +124,15 @@ async def create_token_recuperar_senha(
         )
 
 
-# async def check_token_recuperar_senha(token: str, session: Session) -> str:
-#     try:
-#         payload = decode(
-#             token, settings.SECRET_KEY_RECUPERAR_SENHA, algorithms=[settings.ALGORITHM]
-#         )
-#         email = payload.get('sub')
-#         scope = payload.get('scope')
-#         token_id = payload.get('jti')
-
-#         if not email or scope != 'recuperacao_senha' or not token_id:
-#             logger.warning("Token de recuperação de senha inválido ou com escopo incorreto.")
-#             raise HTTPException(
-#                 status_code=HTTPStatus.UNAUTHORIZED,
-#                 detail='Token de recuperação de senha inválido!',
-#                 headers={'WWW-Authenticate': 'Bearer'},
-#             )
-#     except PyJWTError as e:
-#         logger.error("Erro ao decodificar o token de recuperação de senha: %s", str(e.args))
-#         raise HTTPException(
-#             status_code=HTTPStatus.UNAUTHORIZED,
-#             detail='Token de recuperação de senha inválido!',
-#             headers={'WWW-Authenticate': 'Bearer'},
-#         )
-
-#     query_token = select(PasswordResetToken).where(PasswordResetToken.id == token_id)
-#     token_banco = await session.scalar(query_token)
-
-#     if not token_banco or token_banco.usado:
-#         logger.warning(f"Tentativa de reutilização do token ID {token_id} para o e-mail: {email}")
-#         raise HTTPException(
-#             status_code=HTTPStatus.UNAUTHORIZED,
-#             detail="Este link de recuperação já foi utilizado e foi anulado!"
-#         )
-
-#     user_banco = await session.scalar(select(User).where(User.email == email))
-
-#     # NOVO: valida se o usuário ainda existe antes de usar user_banco.id
-#     if not user_banco:
-#         logger.warning("Usuário com e-mail %s não encontrado ao validar token de recuperação.", email)
-#         raise HTTPException(status_code=HTTPStatus.NOT_FOUND, detail="Utilizador não encontrado.")
-
-#     try:
-#         token_banco.usado = True
-#         session.add(token_banco)
-
-#         # CORRIGIDO: o update precisa ser executado via session.execute(), não passado para commit()
-#         await session.execute(
-#             update(PasswordResetToken)
-#             .where(
-#                 PasswordResetToken.user_id == user_banco.id,
-#                 PasswordResetToken.usado == False,
-#                 PasswordResetToken.id != token_id
-#             )
-#             .values(usado=True)
-#         )
-
-#         await session.commit()
-#     except IntegrityError:
-#         await session.rollback()
-#         raise HTTPException(HTTPStatus.BAD_REQUEST, detail='Erro ao salvar os dados.')
-
-#     return email
-
-
 async def check_token_recuperar_senha(
         token: str | None,
         session: Session
         ) -> tuple[str, str]:
-    """Valida o token e retorna (email, token_id) sem gravar nada no banco."""
+    """
+        Valida o token e retorna (user_id, token_id) sem gravar nada no banco.
+        Atenção: validar NÃO consome o token. O consumo tem de ser feito de forma atómica
+        pela rota de redefinição, com consumir_token_recuperar_senha().
+    """
 
     if not token:
         raise HTTPException(
@@ -174,22 +145,31 @@ async def check_token_recuperar_senha(
         payload = decode(
             token,
             settings.SECRET_KEY_RECUPERAR_SENHA,
-            algorithms=[settings.ALGORITHM]
-            )
-        
-        email = payload.get('sub')
-        scope = payload.get('scope')
-        token_id = payload.get('jti')
-
-        if not email or scope != 'recuperacao_senha' or not token_id:
-            logger.warning('Token de recuperação de senha inválido ou com escopo incorreto.')
-            raise HTTPException(
-                status_code=HTTPStatus.UNAUTHORIZED,
-                detail='Token de recuperação de senha inválido!',
-                headers={'WWW-Authenticate': 'Bearer'},
-            )
+            algorithms=[settings.ALGORITHM],
+            # Sem isto, um token sem 'exp' seria aceite para sempre.
+            options={'require': ['exp', 'sub', 'jti', 'scope']},
+        )
+    except ExpiredSignatureError:
+        logger.warning('Token de recuperação de senha expirado.')
+        raise HTTPException(
+            status_code=HTTPStatus.UNAUTHORIZED,
+            detail='Este link de recuperação expirou. Peça um novo link.',
+            headers={'WWW-Authenticate': 'Bearer'},
+        )
     except PyJWTError as e:
-        logger.error('Erro ao decodificar o token de recuperação de senha: %s', str(e.args))
+        logger.warning('Token de recuperação de senha inválido: %s', type(e).__name__)
+        raise HTTPException(
+            status_code=HTTPStatus.UNAUTHORIZED,
+            detail='Token de recuperação de senha inválido!',
+            headers={'WWW-Authenticate': 'Bearer'},
+        )
+        
+    user_id = payload.get('sub')
+    scope = payload.get('scope')
+    token_id = payload.get('jti')
+
+    if not user_id or scope != 'recuperacao_senha' or not token_id:
+        logger.warning('Token de recuperação de senha inválido ou com escopo incorreto.')
         raise HTTPException(
             status_code=HTTPStatus.UNAUTHORIZED,
             detail='Token de recuperação de senha inválido!',
@@ -200,12 +180,46 @@ async def check_token_recuperar_senha(
     token_banco = await session.scalar(query_token)
 
     if not token_banco or token_banco.usado:
-        logger.warning('Tentativa de reutilização do token ID %s para o e-mail: %s', token_id, email)
+        logger.warning('Tentativa de reutilização do token ID %s.', token_id)
         raise HTTPException(
             status_code=HTTPStatus.UNAUTHORIZED, detail='Este link de recuperação já foi utilizado e foi anulado!'
         )
 
-    return email, token_id
+    return str(token_banco.user_id), token_id
+
+
+async def consumir_token_recuperar_senha(
+    session: Session,
+    token_id: str,
+    user_id: uuid.UUID,
+) -> bool:
+    """Marca o token como usado de forma ATÓMICA. Não faz commit.
+
+    O UPDATE condicional garante que, se dois pedidos chegarem ao mesmo tempo com o mesmo
+    token, só um vê rowcount == 1. Também confirma que o token pertence a este utilizador.
+    """
+    resultado = await session.execute(
+        update(PasswordResetToken)
+        .where(
+            PasswordResetToken.id == token_id,
+            PasswordResetToken.user_id == user_id,
+            PasswordResetToken.usado.is_(False),
+        )
+        .values(usado=True)
+    )
+    return resultado.rowcount == 1
+
+
+async def invalidar_tokens_do_utilizador(session: Session, user_id: uuid.UUID) -> None:
+    """Anula todos os tokens pendentes (chamar depois de a senha ser alterada). Não faz commit."""
+    await session.execute(
+        update(PasswordResetToken)
+        .where(
+            PasswordResetToken.user_id == user_id,
+            PasswordResetToken.usado.is_(False),
+        )
+        .values(usado=True)
+    )
 
 
 # def create_refresh_token(data: dict):

@@ -20,6 +20,7 @@ from project_part.api.finance.finance_router import finance
 from project_part.api.Auth_2fa.router_2fa import router_2FA
 from project_part.api.users.user_router import user
 from project_part.api.privacy.privacy_router import privacy
+from project_part.core.tk_broker import broker
 from project_part.core.context import client_ip_ctx, user_agent_ctx
 from project_part.core.health import health_router
 from project_part.core.logging_config import setup_logging
@@ -50,34 +51,80 @@ logging.getLogger('uvicorn.access').setLevel(settings.LOG_LEVEL)
 Session = Annotated[AsyncSession, Depends(get_session)]
 Redis = Annotated[AsyncRedis, Depends(get_redis)]
 
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # ------------------------------------------------------------------
+    # 1) Taskiq: só liga quando TASKIQ_ENABLED=true (e só na API, não no worker)
+    # ------------------------------------------------------------------
+    taskiq_iniciado = False
+    if settings.TASKIQ_ENABLED and not broker.is_worker_process:
+        try:
+            await broker.startup()
+            taskiq_iniciado = True
+            logger.info('Taskiq (broker) iniciado.')
+        except Exception:
+            # A API arranca na mesma: os e-mails seguem pelo plano B (BackgroundTasks).
+            logger.exception('Falha ao iniciar o Taskiq; a usar BackgroundTasks.')
+ 
+    # ------------------------------------------------------------------
+    # 2) Scheduler das quotas (o seu código, com pequenos ajustes)
+    # ------------------------------------------------------------------
     scheduler = AsyncIOScheduler()
-
+ 
     async def job_quotas():
-
         await verificar_e_notificar_quotas_vencidas(async_session, redis_client)
-
+ 
     fuso_horario = ZoneInfo('Africa/Luanda')
     scheduler.add_job(
         job_quotas,
-        CronTrigger(
-            day=1, 
-            hour=2,
-            minute=0,
-            timezone=fuso_horario
-            ),  # dia 15, 02:00 (fuso do scheduler!)
+        CronTrigger(day=1, hour=2, minute=0, timezone=fuso_horario),  # dia 1, 02:00 (Luanda)
         id='job_verificar_quotas',
         replace_existing=True,
-        max_instances=1,  # por processo; o Redis cobre multi-processo
-        coalesce=True,    # se atrasar, não empilha execuções
+        max_instances=1,           # por processo; o lock no Redis cobre vários processos
+        coalesce=True,             # se atrasar, não empilha execuções
+        misfire_grace_time=3600,   # aceita arrancar até 1 h depois da hora marcada
     )
     scheduler.start()
     logger.info('Scheduler iniciado (lock Redis ativo).')
+ 
+    try:
+        yield
+    finally:
+        scheduler.shutdown(wait=False)
+        if taskiq_iniciado:
+            await broker.shutdown()
+ 
 
-    yield
+# @asynccontextmanager
+# async def lifespan(app: FastAPI):
+#     scheduler = AsyncIOScheduler()
 
-    scheduler.shutdown(wait=False)
+#     async def job_quotas():
+
+#         await verificar_e_notificar_quotas_vencidas(async_session, redis_client)
+
+#     fuso_horario = ZoneInfo('Africa/Luanda')
+#     scheduler.add_job(
+#         job_quotas,
+#         CronTrigger(
+#             day=1, 
+#             hour=2,
+#             minute=0,
+#             timezone=fuso_horario
+#             ),  # dia 15, 02:00 (fuso do scheduler!)
+#         id='job_verificar_quotas',
+#         replace_existing=True,
+#         max_instances=1,  # por processo; o Redis cobre multi-processo
+#         coalesce=True,    # se atrasar, não empilha execuções
+#     )
+#     scheduler.start()
+#     logger.info('Scheduler iniciado (lock Redis ativo).')
+
+#     yield
+
+#     scheduler.shutdown(wait=False)
 
 app = FastAPI(title='Uniao', lifespan=lifespan, description='uma api de povo para povo', version='1.0.0')
 
