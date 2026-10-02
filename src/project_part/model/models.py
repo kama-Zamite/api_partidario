@@ -303,9 +303,9 @@ class User(Base):
 
 
     # Registos cruciais para auditoria da APD caso necessário
-    # consentimento_lpd = Column(Boolean, default=False, nullable=False)
-    # concedido_em = Column(DateTime, nullable=True)  # Data e hora exata da concessão
-    # versao_politica_apd = Column(String, nullable=True)
+    consentimento_lpd = Column(Boolean, default=False, nullable=True) #colocar False o not null em producao
+    concedido_em = Column(DateTime, nullable=True)  # Data e hora exata da concessão
+    versao_politica_apd = Column(String, nullable=True)
 
 
 

@@ -713,15 +713,13 @@ async def create_user(
 
     # --- 6. Persistência temporária no Redis (15 minutos) ---
 
-    async with HASH_SEM:
-        password_hash = await run_in_threadpool(hash_password, dados_validados.password)
 
     foto_b64 = base64.b64encode(conteudo_bytes).decode('utf-8')
     dados_temporarios = {
         "nome_completo": dados_validados.nome_completo,
         "email": dados_validados.email,
         "aceitou_termos": dados_validados.aceitou_termos,
-        "password_hash": password_hash,
+        "password": dados_validados.password,
         "data_nascimento": dados_validados.data_nascimento.isoformat(),
         "nif": dados_validados.nif,
         "telefone": dados_validados.telefone,
@@ -761,6 +759,9 @@ async def confirmar_email_cadastro(
     chave_redis = f"cadastro_pendente:{dados.email}"
     dados_cache = await caches.get(chave_redis)
 
+    agora = datetime.now(timezone.utc)
+    versao_politica_apd = settings.VERSAO_POLITICA_APD
+
     if not dados_cache:
         logger.warning("Tentativa de confirmação expirada ou inexistente para o e-mail: %s", dados.email)
         raise HTTPException(
@@ -777,6 +778,10 @@ async def confirmar_email_cadastro(
             detail="Código de verificação inválido ou expirado."
         )
 
+    async with HASH_SEM:
+        password_hash = await run_in_threadpool(hash_password, usuario_data["password"])
+
+
     # 3. Re-checagem de unicidade (proteção contra race condition)
     usuario_duplicado = await session.scalar(
         select(User.id).where(
@@ -790,11 +795,15 @@ async def confirmar_email_cadastro(
             detail="Estes dados de e-mail ou NIF já foram registados por outra conta ativa."
         )
 
+
     # 4. Cria o usuário (ainda sem commit)
     novo_usuario = User(
         nome_completo=usuario_data["nome_completo"],
         email=usuario_data["email"],
-        password_hash=usuario_data["password_hash"],
+        password_hash=password_hash,
+        consentimento_lpd=usuario_data["aceitou_termos"],
+        concedido_em=agora,
+        versao_politica_apd=versao_politica_apd,
         data_nascimento=date.fromisoformat(usuario_data["data_nascimento"]),
         nif=usuario_data["nif"],
         militante_numero=usuario_data["militante_numero"],

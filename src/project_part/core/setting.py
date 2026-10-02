@@ -89,6 +89,10 @@ class Settings(BaseSettings):
     # Em desenvolvimento local (localhost), deixe como None ou "localhost"
     # COOKIE_DOMAIN: str = ".meusite.com" if ENV == "production" else None
 
+
+    # Versão da política de proteção de dados
+    VERSAO_POLITICA_APD: str
+
     @computed_field
     def SECURE_COOKIES(self) -> bool:
         """Retorna True apenas se o ambiente for produção."""
