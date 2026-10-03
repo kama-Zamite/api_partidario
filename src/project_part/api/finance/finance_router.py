@@ -2,9 +2,18 @@ from datetime import datetime, timezone
 from http import HTTPStatus
 from decimal import Decimal
 
-from typing import Any, Optional, Annotated
+from typing import Annotated
 import logging
-from fastapi import APIRouter, Request, Query, HTTPException, Depends, status
+from fastapi import (
+    APIRouter,
+    Request,
+    Query,
+    HTTPException,
+    Depends,
+    status,
+    BackgroundTasks,
+)
+
 from project_part.core.rate_limit import limiter
 from dateutil.relativedelta import relativedelta  # Garante manipulação exata de meses
 from sqlalchemy import select, func
@@ -126,7 +135,7 @@ async def criar_doacao(
         notificacao_admin = Notification(
             admin_id=admin_alvo.id,
             user_id=current_user.id,
-            titulo="Doacao",
+            titulo="Doação",
             mensagem=f"O {tipo_user} {current_user.nome_completo} (Nº {current_user.militante_numero or 'Pendente'}) fez uma doacao.",
             destinatario="ADMIN",
             categoria=RoleCategoriaNotificacao.DOACAO

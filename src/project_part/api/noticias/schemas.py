@@ -92,6 +92,7 @@ class UpgradeNoticia(BaseModel):
     slug: str = Field(..., max_length=255)
     lead: str | None = None
     corpo: str
+    image_url: UploadFile | None = None
     # categoria: CategoriaNoticiaEnum = Field(default=CategoriaNoticiaEnum.DESTAQUE)
     nome_municipio: str | None = None
     nome_provincia: str | None = None

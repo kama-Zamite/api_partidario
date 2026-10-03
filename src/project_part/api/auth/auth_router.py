@@ -21,7 +21,6 @@ from fastapi import (
     Request,
     status,
 )
-from starlette.background import BackgroundTask
 from fastapi.security import OAuth2PasswordRequestForm
 from pydantic import TypeAdapter
 import pyotp
@@ -161,7 +160,7 @@ async def login(
     session: Session,
     token: Access_token,
     backgroundTasks: BackgroundTasks,
-    _captcha: Claudflare_turnfile
+    # _captcha: Claudflare_turnfile
     ):
     """Endpoint para autenticação de usuário."""
 
