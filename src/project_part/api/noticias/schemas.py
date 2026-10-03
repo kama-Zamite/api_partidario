@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 from typing import Any, Optional
-
+from fastapi import UploadFile
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from project_part.model.models import CategoriaNoticiaEnum
 
@@ -78,20 +78,21 @@ class NoticiaResponse(BaseModel):
 class CreateNoticia(BaseModel):
     titulo: str = Field(..., max_length=200)
     slug: str = Field(..., max_length=255)
-    subtitulo: Optional[str] = Field(None, max_length=255)
-    lead: Optional[str] = None
+    subtitulo: str | None = Field(None, max_length=255)
+    lead: str | None = None
     corpo: str
-    image_url: Optional[str] = None
-    nome_provincia: Optional[str] = None
-    nome_municipio: Optional[str] = None
+    image_url: UploadFile | None = None 
+    nome_provincia: str | None = None
+    nome_municipio: str | None = None
 
 
 class UpgradeNoticia(BaseModel):
-    titulo: str = Field(min_length=10, max_length=200)
-    subtitulo: Optional[str] = Field(None, min_length=20, max_length=255)
-    lead: Optional[str] = None
+    titulo: str = Field(..., max_length=200)
+    subtitulo: str | None = Field(None, max_length=255)
+    slug: str = Field(..., max_length=255)
+    lead: str | None = None
     corpo: str
     # categoria: CategoriaNoticiaEnum = Field(default=CategoriaNoticiaEnum.DESTAQUE)
-    nome_municipio: Optional[str] = None
-    nome_provincia: Optional[str] = None
+    nome_municipio: str | None = None
+    nome_provincia: str | None = None
     # status: str

@@ -585,30 +585,110 @@ async def criar_pagamento_quota(
         detalhe={'periodo_inicial': pagamento.periodo, 'meses_pagar': pagamento.meses_pagar},
     )
 
-    # 4. Envio de Notificação para Administradores
-    query_admin_regional = (
-        select(User)
-        .join(AdminScope, AdminScope.user_id == User.id)
-        .where(
-            User.role_id == settings.ADMIN_ROLE_ID,
-            (AdminScope.municipio_id == current_user.municipio_id) | 
-            (AdminScope.provincia_id == current_user.provincia_id)
-        )
-        .limit(1)
-    )
-    admin_alvo = await session.scalar(query_admin_regional)
-    
-    if not admin_alvo:
-        logger.warning("Nenhum admin regional específico encontrado. Buscando Admin Geral...")
-        query_admin_geral = select(User).where(User.role_id == settings.ADMIN_ROLE_ID).limit(1)
-        admin_alvo = await session.scalar(query_admin_geral)
 
+
+    # 4. Envio de Notificação para Administradores
+    # -------------------------------------------------
+    # Descobre se o pagador é Superadmin ou Admin Provincial
+    # -------------------------------------------------
+    scope_pagador = await session.scalar(
+        select(AdminScope).where(AdminScope.user_id == current_user.id)
+    )
+
+    is_superadmin = (
+        current_user.role_id == settings.ADMIN_ROLE_ID
+        and scope_pagador is not None
+        and scope_pagador.provincia_id is None
+        and scope_pagador.municipio_id is None
+    )
+
+    is_admin_provincial = (
+        current_user.role_id == settings.ADMIN_ROLE_ID
+        and scope_pagador is not None
+        and scope_pagador.provincia_id is not None
+    )
+
+    admin_alvo = None
+    titulo_notif = "Pagamento de Quota"
+    mensagem_notif = (
+        f"O militante {current_user.nome_completo} solicitou pagamento de "
+        f"{body.meses_pagar} meses iniciando em {periodo_inicial_str}."
+    )
+
+    if is_superadmin:
+        if current_user.provincia_id:
+            admin_alvo = await session.scalar(
+                select(User)
+                .join(AdminScope, AdminScope.user_id == User.id)
+                .where(
+                    User.role_id == settings.ADMIN_ROLE_ID,
+                    User.ativo.is_(True),
+                    User.deletado_em.is_(None),
+                    AdminScope.provincia_id == current_user.provincia_id,
+                    AdminScope.municipio_id.is_(None),  # admin provincial (não municipal)
+                )
+                .limit(1)
+            )
+        titulo_notif = "Pagamento de Quota (Superadmin)"
+        mensagem_notif = (
+            f"O Superadmin {current_user.nome_completo} registou um pagamento de quota "
+            f"de {body.meses_pagar} meses (período {periodo_inicial_str}) no valor de {valor_total_quota} AOA."
+        )
+    elif is_admin_provincial:
+        # Admin Provincial pagou → notifica o Superadmin
+        admin_alvo = await session.scalar(
+            select(User)
+            .join(AdminScope, AdminScope.user_id == User.id)
+            .where(
+                User.role_id == settings.ADMIN_ROLE_ID,
+                User.ativo.is_(True),
+                User.deletado_em.is_(None),
+                AdminScope.provincia_id.is_(None),
+                AdminScope.municipio_id.is_(None),
+            )
+            .limit(1)
+        )
+        titulo_notif = "Pagamento de Quota (Admin Provincial)"
+        mensagem_notif = (
+            f"O Admin Provincial {current_user.nome_completo} registou um pagamento de quota "
+            f"de {body.meses_pagar} meses (período {periodo_inicial_str}) no valor de {valor_total_quota} AOA."
+        )
+    else:
+        
+        query_admin_regional = (
+            select(User)
+            .join(AdminScope, AdminScope.user_id == User.id)
+            .where(
+                User.role_id == settings.ADMIN_ROLE_ID,
+                (AdminScope.municipio_id == current_user.municipio_id) | 
+                (AdminScope.provincia_id == current_user.provincia_id)
+            )
+            .limit(1)
+        )
+        admin_alvo = await session.scalar(query_admin_regional)
+    
+        if not admin_alvo:
+            logger.warning("Nenhum admin regional específico encontrado. Buscando Admin Geral...")
+            admin_alvo = await session.scalar(
+                select(User)
+                .join(AdminScope, AdminScope.user_id == User.id)
+                .where(
+                    User.role_id == settings.ADMIN_ROLE_ID,
+                    User.ativo.is_(True),
+                    User.deletado_em.is_(None),
+                    AdminScope.provincia_id.is_(None),
+                    AdminScope.municipio_id.is_(None),
+                )
+                .limit(1)
+            )
+
+    # cria a notificação apenas se houver um admin alvo válido
     if admin_alvo:
         notificacao_admin = Notification(
             admin_id=admin_alvo.id,
             user_id=current_user.id,
-            titulo="Pagamento de Quota",
-            mensagem=f"O militante {current_user.nome_completo} solicitou pagamento de {body.meses_pagar} meses iniciando em {periodo_inicial_str}.",
+            titulo=titulo_notif,
+            mensagem=mensagem_notif,
             destinatario="ADMIN",
             categoria=RoleCategoriaNotificacao.QUOTA
         )

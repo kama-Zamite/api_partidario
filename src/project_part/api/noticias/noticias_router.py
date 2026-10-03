@@ -173,14 +173,14 @@ async def criar_noticia(
     current_user: Get_current_user,
     scope: ScopeValid,
     _captcha: Claudflare_turnfile,
-    titulo: str = Form(..., min_length=10),
-    subtitulo: Optional[str] = Form(None, min_length=20, max_length=255),
-    lead: Optional[str] = Form(None),
-    corpo: str = Form(min_length=20),
-    image_news: Optional[UploadFile] = File(None, description='Foto de perfil opcional (JPEG/JPG, max 5MB)'),
+    titulo: str = Form(..., min_length=5, max_length=200),
+    subtitulo: str | None = Form(None, min_length=5, max_length=255),
+    lead: str | None = Form(None),
+    corpo: str = Form(min_length=5),
+    image_news: UploadFile | None = File(None, description='Foto de perfil opcional (JPEG/JPG, max 5MB)'),
     # categoria_id: int = Form(gt=0),
-    nome_provincia: Optional[str] = Form(None, min_length=4),
-    nome_municipio: Optional[str] = Form(None, min_length=4),
+    nome_provincia: str | None = Form(None, min_length=3),
+    nome_municipio: str | None = Form(None, min_length=3),
 ):
     """
     Publica uma nova notícia vinculando de forma geográfica e assíncrona a imagem à pasta noticias_portal no Cloudinary.
@@ -192,7 +192,7 @@ async def criar_noticia(
     slug_gerado = await gerar_slug_unico(slug_inicial, session)
 
     try:
-        dados_validos = CreateNoticia(
+        dados_validos = UpgradeNoticia(
             titulo=titulo,
             slug=slug_gerado,
             subtitulo=subtitulo,
@@ -442,8 +442,13 @@ async def listar_noticias(
     logger.info("Notícias [%d] carregadas do banco e cache atualizado.", len(noticias))
     return noticias
 
+
+
 @news_router.get('/{id_news}', status_code=HTTPStatus.OK, response_model=NoticiaResponse)
-async def obter_noticia(id_news: uuid.UUID, session: Session):
+async def obter_noticia(
+    id_news: uuid.UUID,
+    session: Session
+    ):
     """ "
     Endpoint para obter os detalhes de uma notícia específica por ID.
     Retorna os detalhes da notícia solicitada ou um erro 404 se não for encontrada.
@@ -509,11 +514,18 @@ async def atualizar_noticia_completa(
     request: Request,
     id_news: uuid.UUID,
     _captcha: Claudflare_turnfile,
-    schemas: UpgradeNoticia,
     session: Session,
     caches: Redis,
     current_user: Get_current_user,
     scope: ScopeValid,
+    titulo: str = Form(..., min_length=5, max_length=200),
+    subtitulo: str | None = Form(None, min_length=5, max_length=255),
+    lead: str | None = Form(None),
+    corpo: str = Form(min_length=5),
+    image_news: UploadFile | None = File(None, description='Foto de perfil opcional (JPEG/JPG, max 5MB)'),
+    # categoria_id: int = Form(gt=0),
+    nome_provincia: str | None = Form(None, min_length=3),
+    nome_municipio: str | None = Form(None, min_length=3),
 ):
     """Endpoint para atualizar completamente os detalhes de uma notícia específica.
     Verifica se a notícia existe, se o administrador tem permissão para atualizar a notícia com base no território e se as novas amarrações de província/município são válidas.
@@ -533,25 +545,41 @@ async def atualizar_noticia_completa(
         raise HTTPException(
             status_code=HTTPStatus.FORBIDDEN, detail='Acesso negado: Você não gerencia o território desta notícia.'
         )
-
-    slug_inicial = gerar_slug_automatico(schemas.titulo)
+    
+    slug_inicial = gerar_slug_automatico(titulo)
     slug_gerado = await gerar_slug_unico(slug_inicial, session)
 
+    try:
+        dados_validos = CreateNoticia(
+            titulo=titulo,
+            slug=slug_gerado,
+            subtitulo=subtitulo,
+            lead=lead,
+            corpo=corpo,
+            image_url=image_news,
+            # categoria_id=categoria_id,
+            nome_provincia=nome_provincia,
+            nome_municipio=nome_municipio,
+        )
+    except ValidationError as e:
+        raise HTTPException(
+            status_code=HTTPStatus.UNPROCESSABLE_ENTITY, detail=e.errors(include_url=False, include_context=False)
+        )
 
-    noticia_banco.titulo = schemas.titulo
-    noticia_banco.slug = slug_gerado
-    noticia_banco.subtitulo = schemas.subtitulo
-    noticia_banco.lead = schemas.lead
-    noticia_banco.corpo = schemas.corpo
+    noticia_banco.titulo = dados_validos.titulo
+    noticia_banco.slug = dados_validos.slug
+    noticia_banco.subtitulo = dados_validos.subtitulo
+    noticia_banco.lead = dados_validos.lead
+    noticia_banco.corpo = dados_validos.corpo
     # noticia_banco.image_url = schemas.image_url
     # noticia_banco.categoria = CategoriaNoticiaEnum.DESTAQUE
     # noticia_banco.status = 
     noticia_banco.atualizado_as = datetime.now(timezone.utc)
 
     pid = None
-    if schemas.nome_provincia:
+    if dados_validos.nome_provincia:
         provincia_banco = await session.scalar(
-            select(Provincia).where(Provincia.nome_provincia == schemas.nome_provincia)
+            select(Provincia).where(Provincia.nome_provincia == dados_validos.nome_provincia)
         )
         if not provincia_banco:
             raise HTTPException(status_code=HTTPStatus.NOT_FOUND, detail='Província informada não encontrada')
@@ -564,14 +592,14 @@ async def atualizar_noticia_completa(
                 detail='Acesso negado: Nova província informada está fora da sua zona permitida.',
             )
     mid = None
-    if schemas.nome_municipio:
+    if dados_validos.nome_municipio:
         municipio_banco = await session.scalar(
-            select(Municipio).where(Municipio.nome_municipio == schemas.nome_municipio, Municipio.id_provincia == pid)
+            select(Municipio).where(Municipio.nome_municipio == dados_validos.nome_municipio, Municipio.id_provincia == pid)
         )
         if not municipio_banco:
             raise HTTPException(
                 status_code=HTTPStatus.NOT_FOUND,
-                detail=f'O município "{schemas.nome_municipio}" não pertence à província "{schemas.nome_provincia}".',
+                detail=f'O município "{dados_validos.nome_municipio}" não pertence à província "{dados_validos.nome_provincia}".',
             )
 
         mid = municipio_banco.id
@@ -586,7 +614,7 @@ async def atualizar_noticia_completa(
     try:
         await session.commit()
         await caches.delete(CACHE_KEY_NOTICIAS)
-        logger.info('Notícia [%s] modificada com sucesso por %s.', schemas.titulo, current_user.email)
+        logger.info('Notícia [%s] modificada com sucesso por %s.', dados_validos.titulo, current_user.email)
         return {'msg': 'Notícia atualizada com sucesso!'}
     except IntegrityError as e:
         await session.rollback()
@@ -605,6 +633,7 @@ async def eliminar_noticia(
     session: Session,
     caches: Redis,
     current_user: Get_current_user,
+    # _captcha: Claudflare_turnfile,
     scope: ScopeValid,
 ):
     """Endpoint para deletar uma notícia específica.
@@ -648,5 +677,9 @@ async def eliminar_noticia(
     if imagem_para_apagar:
         await apagar_imagem_noticia_cloudinary(imagem_para_apagar)
 
-    await caches.delete(CACHE_KEY_NOTICIAS)
+    try:
+        await caches.delete(CACHE_KEY_NOTICIAS)
+    except Exception as e:
+        logger.critical('Erro ao limpar o cache: %s', str(e))
+
     return {'msg': 'Notícia deletada com sucesso!'}
