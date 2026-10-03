@@ -10,10 +10,10 @@ from fastapi import (
     Query,
     HTTPException,
     Depends,
+    Form,
     status,
     BackgroundTasks,
 )
-
 from project_part.core.rate_limit import limiter
 from dateutil.relativedelta import relativedelta  # Garante manipulação exata de meses
 from sqlalchemy import select, func
@@ -48,6 +48,11 @@ from project_part.model.models import (
     QuotaStatusEnum,
     MetodoPagamentoEnum,
 )
+from project_part.tasks.email_tasks import (
+    enviar_notificacao_quota_admin,
+    enviar_notificacao_doacao_admin,
+)
+
 from project_part.core.secury import Get_current_user
 from project_part.db.session import get_session
 from project_part.services.finance_audit import registar_movimento
@@ -69,6 +74,9 @@ QUOTA_PENDENTE_UQ = 'uq_pagamento_quota_user_pending'
 DETAIL_QUOTA_PENDENTE = 'Você já possui um pagamento de quota pendente aguardando aprovação.'
 MAX_MESES_PAGAR = 120
 
+
+
+
 @finance.post('/doacao', status_code=HTTPStatus.CREATED)
 async def criar_doacao(
     request: Request,
@@ -76,6 +84,7 @@ async def criar_doacao(
     session: Session,
     _captcha: Claudflare_turnfile,
     current_user: Get_current_user,
+    background: BackgroundTasks,
 ):
     doacao = Doacao(
         user_id=current_user.id,
@@ -126,11 +135,14 @@ async def criar_doacao(
 
     # --- CORREÇÃO DO BUG AQUI ---
     # Usamos a foreign key direta 'role_id' do current_user em vez da relação de objeto 'role'
+    doador = None
     if current_user.role_id == settings.ADMIN_ROLE_ID or current_user.role_id == settings.ROLE_MILITANTE_ID:
         tipo_user = 'militante'
+        doador = 'Militante'
     else:
         tipo_user = 'simpatizante'
-    
+        doador = 'Simpatizante'
+
     if admin_alvo:
         notificacao_admin = Notification(
             admin_id=admin_alvo.id,
@@ -149,6 +161,18 @@ async def criar_doacao(
         await session.rollback()
         raise HTTPException(HTTPStatus.CONFLICT, detail='Referência ou ID de transação já existe.')
 
+
+    await enviar_notificacao_doacao_admin(
+        background,
+        nome_completo=current_user.nome_completo,
+        numero_militante=current_user.militante_numero if current_user.militante_numero else None,
+        email_admin=admin_alvo.email if admin_alvo else None,
+        nome_admin=admin_alvo.nome_completo if admin_alvo else None,
+        quantia=doacao.quantia,
+        referencia=doacao.referencia,
+        id_transacao=doacao.id_transacao,
+        doador=doador,
+    )
     return {
         "msg": "doacao enviada com sucesso, aguarde a aprovação do admin.",
     }
@@ -164,7 +188,8 @@ async def criar_doacao_anonimo(
     request: Request,
     body: DoacaoCreate,
     session: Session,
-    _captcha: Claudflare_turnfile
+    _captcha: Claudflare_turnfile,
+    background: BackgroundTasks,
 
 ):
     """Doação sem conta. Notifica apenas superadmin."""
@@ -199,46 +224,44 @@ async def criar_doacao_anonimo(
         },
     )
 
-    # Só superadmin (sem território)
-    superadmin_ids = (
-        await session.scalars(
-            select(User.id)
-            .join(AdminScope, AdminScope.user_id == User.id)
-            .where(
-                User.role_id == settings.ADMIN_ROLE_ID,
-                User.ativo.is_(True),
-                AdminScope.provincia_id.is_(None),
-                AdminScope.municipio_id.is_(None),
-            )
+        # 1. Ajustado para trazer o OBJETO do User completo e não apenas o ID
+    superadmin_alvo = await session.scalar(
+        select(User)
+        .join(AdminScope, AdminScope.user_id == User.id)
+        .where(
+            User.role_id == settings.ADMIN_ROLE_ID,
+            User.ativo.is_(True),
+            AdminScope.provincia_id.is_(None),
+            AdminScope.municipio_id.is_(None),
         )
-    ).all()
+    )
 
-    if not superadmin_ids:
+    if not superadmin_alvo:
         logger.warning(
             'Doação anónima %s criada sem superadmin para notificar',
             doacao.id,
         )
     else:
-        for admin_id in superadmin_ids:
-            session.add(
-                Notification(
-                    admin_id=admin_id,
-                    user_id=None,
-                    titulo='Doação anónima',
-                    mensagem=(
-                        f'Recebida doação anónima de {doacao.quantia} AOA '
-                        f'via {doacao.metodo_pagamento.value}'
-                        + (
-                            f' (ref: {doacao.referencia}).'
-                            if doacao.referencia
-                            else '.'
-                        )
-                        + ' Aguarda aprovação.'
-                    ),
-                    destinatario='ADMIN',
-                    categoria=RoleCategoriaNotificacao.DOACAO,
-                )
+        # Criação direta da notificação interna usando superadmin_alvo.id
+        session.add(
+            Notification(
+                admin_id=superadmin_alvo.id,
+                user_id=None,
+                titulo='Doação anónima',
+                mensagem=(
+                    f'Recebida doação anónima de {doacao.quantia} AOA '
+                    f'via {doacao.metodo_pagamento.value}'
+                    + (
+                        f' (ref: {doacao.referencia}).'
+                        if doacao.referencia
+                        else '.'
+                    )
+                    + ' Aguarda aprovação.'
+                ),
+                destinatario='ADMIN',
+                categoria=RoleCategoriaNotificacao.DOACAO,
             )
+        )
 
     try:
         await session.commit()
@@ -248,6 +271,21 @@ async def criar_doacao_anonimo(
             HTTPStatus.CONFLICT,
             detail='Referência ou ID de transação já existe.',
         )
+    
+    # 2. Envio do e-mail corrigido com o e-mail e nome reais do Superadmin encontrado
+    if superadmin_alvo:
+        await enviar_notificacao_doacao_admin(
+            background,
+            nome_completo='Anónimo',
+            numero_militante=None,
+            email_admin=superadmin_alvo.email,           # <- CORRIGIDO: Agora passa o e-mail real
+            nome_admin=superadmin_alvo.nome_completo,     # <- CORRIGIDO: Agora passa o nome real
+            quantia=doacao.quantia,
+            referencia=doacao.referencia,
+            id_transacao=doacao.id_transacao,
+            doador='Anónimo',
+        )
+
 
     logger.info('Doação anónima %s criada (PENDING)', doacao.id)
     return {
@@ -446,20 +484,20 @@ def _erro_integridade_quota(exc: IntegrityError, user_id) -> HTTPException:
     )
 
 
-
 @finance.post('/quota', status_code=HTTPStatus.CREATED)
 @limiter.limit('5/minute')
 async def criar_pagamento_quota(
     request: Request,
-    quantia: Decimal,
-    metodo_pagamento: MetodoPagamentoEnum,
-    _captcha: Claudflare_turnfile,
-    referencia: str | None,
-    id_transacao: str | None,
-    meses_pagar: int,
-    observacao: str | None,
+    backgroundTasks: BackgroundTasks,
     session: Session,
     current_user: Get_current_user,
+    _captcha: Claudflare_turnfile,          # descomenta se precisares
+    quantia: Decimal = Form(..., description='Valor da quota (mínimo 200 AOA)'),
+    metodo_pagamento: MetodoPagamentoEnum = Form(..., description='Método de pagamento'),
+    meses_pagar: int = Form(..., description='Número de meses a pagar (1 a 24)'),
+    referencia: str | None = Form(None, description='Referência/telefone opcional (9 dígitos)'),
+    id_transacao: str | None = Form(None, description='ID de transação opcional (8 dígitos)'),
+    observacao: str | None = Form(None, description='Observação opcional sobre o pagamento'),
 ):
     user_id = current_user.id
 
@@ -486,6 +524,7 @@ async def criar_pagamento_quota(
             HTTPStatus.BAD_REQUEST,
             detail='A quantia deve ser um valor positivo.'
         )
+
     get_referencia = referencia if referencia else current_user.telefone
 
     try:
@@ -513,7 +552,6 @@ async def criar_pagamento_quota(
     )
     if await session.scalar(query_pendente) is not None:
         logger.warning("Usuário %s já possui um pagamento de quota pendente.", user_id)
-        logger.warning("Usuário %s já possui um pagamento de quota pendente.", user_id)
         raise HTTPException(
             status_code=HTTPStatus.CONFLICT,
             detail=DETAIL_QUOTA_PENDENTE
@@ -523,10 +561,14 @@ async def criar_pagamento_quota(
     data_atual = datetime.now(timezone.utc).date()
 
     if current_user.data_expiracao_quota:
-       logger.info("Usuário %s tem data de expiração de quota: %s", user_id, current_user.data_expiracao_quota)
+        logger.info(
+            "Usuário %s tem data de expiração de quota: %s",
+            user_id,
+            current_user.data_expiracao_quota,
+        )
         # Em dia: começa no mês seguinte à expiração.
         # Expirado: força a regularização a partir do mês em atraso (mesma conta).
-       data_inicio = current_user.data_expiracao_quota + relativedelta(months=1)
+        data_inicio = current_user.data_expiracao_quota + relativedelta(months=1)
     else:
         # Se nunca pagou uma quota na vida, começa a contar a partir do mês atual
         data_inicio = data_atual
@@ -535,9 +577,13 @@ async def criar_pagamento_quota(
     periodo_inicial_str = data_inicio.strftime('%Y-%m')
 
     # 3. Calcula o valor total proporcional
-    valor_bruto  = body.quantia * body.meses_pagar
+    valor_bruto = body.quantia * body.meses_pagar
     if valor_bruto >= Decimal('10000000000000'):  # 10^13 = limite de Numeric(15,2)
-        logger.warning("Valor total da quota fora do intervalo permitido para o usuário %s: %s", user_id, valor_bruto)
+        logger.warning(
+            "Valor total da quota fora do intervalo permitido para o usuário %s: %s",
+            user_id,
+            valor_bruto,
+        )
         raise HTTPException(
             HTTPStatus.BAD_REQUEST,
             detail='Valor total da quota fora do intervalo permitido.'
@@ -549,13 +595,13 @@ async def criar_pagamento_quota(
             HTTPStatus.BAD_REQUEST,
             detail='Valor total da quota fora do intervalo permitido.'
         )
-    
+
     pagamento = PagamentoQuota(
         user_id=user_id,
         quantia=valor_total_quota,
         moeda='AOA',
         meses_pagar=body.meses_pagar,
-        periodo=periodo_inicial_str, 
+        periodo=periodo_inicial_str,
         metodo_pagamento=body.metodo_pagamento,
         referencia=(body.referencia or '').strip() or None,
         id_transacao=(body.id_transacao or '').strip() or None,
@@ -568,18 +614,25 @@ async def criar_pagamento_quota(
         session.add(pagamento)
         await session.flush()
     except IntegrityError as e:
-            logger.warning("IntegrityError ao criar pagamento de quota para o usuário %s: %s", user_id, e)
-            await session.rollback()
-            raise _erro_integridade_quota(e, user_id)
+        logger.warning(
+            "IntegrityError ao criar pagamento de quota para o usuário %s: %s",
+            user_id,
+            e,
+        )
+        await session.rollback()
+        raise _erro_integridade_quota(e, user_id)
     except Exception as e:
         await session.rollback()
-        # [HARDENING] logger.exception guarda o traceback; falha inesperada = 500 (era 400).
-        logger.exception("Erro no flush ao criar pagamento de quota (user %s): %s", user_id, e)
+        logger.exception(
+            "Erro no flush ao criar pagamento de quota (user %s): %s", user_id, e
+        )
         raise HTTPException(
             status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
-            detail='Erro ao armazenar o pagamento de quota'
-       )
-    pagamento_id = pagamento.id  # [HARDENING] guardado antes do commit (objecto expira)
+            detail='Erro ao armazenar o pagamento de quota',
+        )
+
+    pagamento_id = pagamento.id  # guardado antes do commit (objecto expira)
+
     # Registo de histórico de movimentos
     await registar_movimento(
         session,
@@ -591,15 +644,13 @@ async def criar_pagamento_quota(
         acao=AcaoMovimentoEnum.CRIADA,
         status_novo=QuotaStatusEnum.PENDING.value,
         ator_id=current_user.id,
-        detalhe={'periodo_inicial': pagamento.periodo, 'meses_pagar': pagamento.meses_pagar},
+        detalhe={
+            'periodo_inicial': pagamento.periodo,
+            'meses_pagar': pagamento.meses_pagar,
+        },
     )
 
-
-
     # 4. Envio de Notificação para Administradores
-    # -------------------------------------------------
-    # Descobre se o pagador é Superadmin ou Admin Provincial
-    # -------------------------------------------------
     scope_pagador = await session.scalar(
         select(AdminScope).where(AdminScope.user_id == current_user.id)
     )
@@ -634,14 +685,15 @@ async def criar_pagamento_quota(
                     User.ativo.is_(True),
                     User.deletado_em.is_(None),
                     AdminScope.provincia_id == current_user.provincia_id,
-                    AdminScope.municipio_id.is_(None),  # admin provincial (não municipal)
+                    AdminScope.municipio_id.is_(None),  # admin provincial
                 )
                 .limit(1)
             )
         titulo_notif = "Pagamento de Quota (Superadmin)"
         mensagem_notif = (
             f"O Superadmin {current_user.nome_completo} registou um pagamento de quota "
-            f"de {body.meses_pagar} meses (período {periodo_inicial_str}) no valor de {valor_total_quota} AOA."
+            f"de {body.meses_pagar} meses (período {periodo_inicial_str}) "
+            f"no valor de {valor_total_quota} AOA."
         )
     elif is_admin_provincial:
         # Admin Provincial pagou → notifica o Superadmin
@@ -660,24 +712,26 @@ async def criar_pagamento_quota(
         titulo_notif = "Pagamento de Quota (Admin Provincial)"
         mensagem_notif = (
             f"O Admin Provincial {current_user.nome_completo} registou um pagamento de quota "
-            f"de {body.meses_pagar} meses (período {periodo_inicial_str}) no valor de {valor_total_quota} AOA."
+            f"de {body.meses_pagar} meses (período {periodo_inicial_str}) "
+            f"no valor de {valor_total_quota} AOA."
         )
     else:
-        
         query_admin_regional = (
             select(User)
             .join(AdminScope, AdminScope.user_id == User.id)
             .where(
                 User.role_id == settings.ADMIN_ROLE_ID,
-                (AdminScope.municipio_id == current_user.municipio_id) | 
-                (AdminScope.provincia_id == current_user.provincia_id)
+                (AdminScope.municipio_id == current_user.municipio_id)
+                | (AdminScope.provincia_id == current_user.provincia_id),
             )
             .limit(1)
         )
         admin_alvo = await session.scalar(query_admin_regional)
-    
+
         if not admin_alvo:
-            logger.warning("Nenhum admin regional específico encontrado. Buscando Admin Geral...")
+            logger.warning(
+                "Nenhum admin regional específico encontrado. Buscando Admin Geral..."
+            )
             admin_alvo = await session.scalar(
                 select(User)
                 .join(AdminScope, AdminScope.user_id == User.id)
@@ -699,14 +753,14 @@ async def criar_pagamento_quota(
             titulo=titulo_notif,
             mensagem=mensagem_notif,
             destinatario="ADMIN",
-            categoria=RoleCategoriaNotificacao.QUOTA
+            categoria=RoleCategoriaNotificacao.QUOTA,
         )
-    
         session.add(notificacao_admin)
     else:
         logger.error(
             "Nenhum administrador encontrado para notificar o pagamento de quota %s (user %s)",
-            pagamento_id, user_id,
+            pagamento_id,
+            user_id,
         )
 
     try:
@@ -716,17 +770,35 @@ async def criar_pagamento_quota(
         raise _erro_integridade_quota(e, user_id)
     except Exception as e:
         await session.rollback()
-        logger.exception("Erro no commit do pagamento de quota (user %s): %s", user_id, e)
+        logger.exception(
+            "Erro no commit do pagamento de quota (user %s): %s", user_id, e
+        )
         raise HTTPException(
             status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
-            detail='Erro ao armazenar o pagamento de quota'
+            detail='Erro ao armazenar o pagamento de quota',
         )
-    logger.info("Pagamento de quota %s finalizado com sucesso para o usuário %s", pagamento_id, user_id)
+
+    # Só envia email se existir admin_alvo
+    if admin_alvo:
+        await enviar_notificacao_quota_admin(
+            backgroundTasks,
+            nome_completo=current_user.nome_completo,
+            nome_admin=admin_alvo.nome_completo,
+            numero_militante=current_user.militante_numero,
+            email_admin=admin_alvo.email,
+            quantia=valor_total_quota,
+            meses_pagar=body.meses_pagar,
+            referencia=body.referencia,
+            id_transacao=body.id_transacao,
+        )
+
+    logger.info(
+        "Pagamento de quota %s finalizado com sucesso para o usuário %s",
+        pagamento_id,
+        user_id,
+    )
     return {
         "msg": "Pagamento de quota enviado com sucesso, aguarde a aprovação do admin.",
     }
-
-
-
 
 

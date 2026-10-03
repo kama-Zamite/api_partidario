@@ -323,55 +323,77 @@ async def criar_noticia(
         )
 
 
-# @news_router.get('/list', status_code=HTTPStatus.OK)
-# async def listar_noticias(response: Response, session: Session, caches: Redis, pagin: Paginacao):
-#     """
-#     Endpoint para listar notícias com paginação.
-#     - **limit**: Número máximo de notícias a serem retornadas (padrão: 10).
-#     - **skip**: Número de notícias a serem ignoradas (padrão: 0).
-#     Retorna uma lista de notícias com base nos parâmetros fornecidos.
-#     """
-#     chave_cache = f"{CACHE_KEY_NOTICIAS}:lm:{pagin.limit}:sk:{pagin.skip}"
+@news_router.get(
+    '/list',
+    status_code=HTTPStatus.OK,
+    response_model=List[NoticiaResponse],
+)
+async def listar_noticias(
+    response: Response,
+    session: Session,
+    redes: Redis,
+    pagin: Paginacao,
+):
+    """
+    Endpoint de alta performance para listar notícias com paginação.
+    Utiliza cache Redis com chave parametrizada por skip/limit.
+    """
+    cache_key = f"{CACHE_KEY_NOTICIAS}:skip={pagin.skip}:limit={pagin.limit}"
+    response.headers['X-Cache-Hit'] = 'false'
 
-#     try:
-#         cache_salvo = await caches.get(chave_cache)
-#         if cache_salvo:
-#             response.headers['X-Cache-Hit'] = 'true'
-#             return json.loads(cache_salvo)
-#     except Exception as err:
-#         logger.error("Falha ao ler cache de notícias: %s", str(err))
+    # ── 1. Tenta ler do cache ──────────────────────────────────────────────
+    try:
+        cached = await redes.get(cache_key)
+        if cached:
+            response.headers['X-Cache-Hit'] = 'true'
+            logger.info("Cache de notícias [%s] encontrado e retornado.", cache_key)
+            return TypeAdapter(List[NoticiaResponse]).validate_python(
+                json.loads(cached)
+            )
+    except Exception as err:
+        logger.error("Falha ao ler cache de notícias [%s]: %s", cache_key, err)
+
+    # ── 2. Busca no banco ──────────────────────────────────────────────────
+    query = (
+        select(Noticia)
+        .where(Noticia.status == NoticiasStatusEnum.PUBLICADO)
+        .options(
+            selectinload(Noticia.provincia),
+            selectinload(Noticia.municipio),
+        )
+        .order_by(Noticia.publicado_as.desc())
+        .limit(pagin.limit)
+        .offset(pagin.skip)
+    )
+
+    result = await session.execute(query)
+    noticias = result.scalars().all()
+
+    if not noticias:
+        return []
+
+    # ── 3. Serializa e grava no cache ──────────────────────────────────────
+    try:
+        # 1. Converte ORM → Pydantic (com from_attributes=True)
+        noticias_response = TypeAdapter(List[NoticiaResponse]).validate_python(noticias)
+
+        # 2. Gera dicts JSON-serializáveis
+        payload = TypeAdapter(List[NoticiaResponse]).dump_python(
+            noticias_response, mode='json'
+        )
+
+        await redes.set(
+            cache_key,
+            json.dumps(payload),
+            ex=CACHE_TTL_NOTICIAS,
+        )
+    except Exception as err:
+        logger.error("Falha ao gravar cache de notícias [%s]: %s", cache_key, err)
+    logger.info("Notícias [%d] carregadas do banco e cache atualizado.", len(noticias))
+    return noticias
 
 
-#     query = select(
-#             Noticia
-#         ).options(
-#             selectinload(Noticia.provincia),
-#             selectinload(Noticia.municipio)
-#         ).order_by(
-#             Noticia.creado_as.desc()
-#         ).limit(
-#             pagin.limit
-#         ).offset(
-#             pagin.skip
-#         )
 
-
-#     resultado = await session.scalars(query)
-#     noticias = resultado.all()
-
-#     if not noticias:
-#         raise HTTPException(status_code=HTTPStatus.NOT_FOUND, detail='Nenhuma notícia encontrada no sistema.')
-
-#     adapter = TypeAdapter(List[NoticiaResponse])
-#     dados_serializados = adapter.dump_python(noticias, mode='json')
-
-#     try:
-#         await caches.setex(chave_cache, 60, json.dumps(dados_serializados))
-#         response.headers['X-Cache-Hit'] = 'false'
-#     except Exception as err:
-#         logger.error("Falha ao salvar cache de notícias: %s", str(err))
-
-#     return dados_serializados
 
 @news_router.get(
     '/list',

@@ -3233,11 +3233,19 @@ async def delete_user(
             detail='Erro na confirmação de delete da conta do utilizador',
         )
 
+    tipo_user = None
+    if current_user.cadastrar_militante == CadastrarComo.MILITANTE:
+        tipo_user = 'Militante'
+    elif current_user.cadastrar_militante == CadastrarComo.SIMPATIZANTE:
+        tipo_user = 'Simpatizante'
+
     logger.info('Utilizador %s executou auto-exclusão da conta.', current_user.id)
 
     current_user.deletado_em = datetime.now(timezone.utc)
     current_user.ativo = False
     session.add(current_user)
+
+
 
     # ── Admins a notificar ───────────────────────────────────────
        # ── Admins a notificar: só superadmin + provincial da sua província ──
@@ -3286,8 +3294,9 @@ async def delete_user(
                     user_id=current_user.id,
                     titulo='Delete de Conta',
                     mensagem=(
-                        f'O militante {current_user.nome_completo} eliminou a sua conta.'
+                        f'O {tipo_user} {current_user.nome_completo} eliminou a sua conta.'
                     ),
+                    tipo_usuario=tipo_user,
                     destinatario='ADMIN',
                     categoria=RoleCategoriaNotificacao.DELETE_CONTA,
                 )

@@ -122,6 +122,7 @@ class NotificationResponse(BaseModel):
     criado_as: datetime
     motivo: str | None
     lido_as: datetime | None
+    tipo_usuario: str | None = None
     categoria: RoleCategoriaNotificacao | None = None
 
     # Aqui acontece a magia: injetamos o schema do utilizador dentro da resposta
@@ -394,6 +395,7 @@ class QuotaResponse(BaseModel):
     aprovado_em: datetime | None
     atualizado_em: datetime
     nome_militante: str | None = None
+    meses_pagar: int | None = None
 
     nome_aprovador: str | None = None          # ← adicione este campo
     scope_aprovador: str | None = None

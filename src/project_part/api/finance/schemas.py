@@ -31,29 +31,40 @@ class DoacaoRejeitar(BaseModel):
 
 
 class QuotaCreate(BaseModel):
-    quantia: Decimal = Field(..., ge=200, decimal_places=2, description='Valor mínimo de 200 AOA')
+    quantia: Decimal = Field(
+        ...,
+        ge=200,
+        decimal_places=2,
+        description='Valor mínimo de 200 AOA'
+    )
     metodo_pagamento: MetodoPagamentoEnum
     referencia: str | None = Field(
         default=None,
-        min_length=9,
-        max_length=9,
-        pattern=r"^\d+$",
-        description="Referência numérica obrigatória com exatamente 9 dígitos"
+        description="Número de telefone angolano (9 dígitos ou com +244). Se omitido, usa o telefone do utilizador."
     )
     id_transacao: str | None = Field(
-        default=None, 
-        min_length=8, 
-        max_length=8, 
+        default=None,
+        min_length=8,
+        max_length=8,
         pattern=r"^\d+$",
-        description="Identificador da transação (máx 8 dígitos)"
+        description="Identificador da transação (exatamente 8 dígitos)"
     )
-    meses_pagar: int = Field(..., gt=0, le=24, description='Número de meses a pagar (deve ser maior que 0)')
-    observacao: str | None = None  
+    meses_pagar: int = Field(
+        ...,
+        gt=0,
+        le=24,
+        description='Número de meses a pagar (1 a 24)'
+    )
+    observacao: str | None = None
 
     @field_validator('referencia')
     @classmethod
-    def validar_numero_telefone(cls, tel_number: str) -> str:
+    def validar_numero_telefone(cls, tel_number: str | None) -> str | None:
+        if tel_number is None:
+            return None
+
         numero_limpo = re.sub(r'[^\d+]', '', tel_number.strip())
+
         if numero_limpo.startswith('+244'):
             filtrar_numero = numero_limpo[4:]
         elif numero_limpo.startswith('244'):

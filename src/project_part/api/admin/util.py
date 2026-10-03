@@ -71,6 +71,7 @@ def to_quota_response(pag: PagamentoQuota) -> QuotaResponse:
         user_id=pag.user_id,
         quantia=pag.quantia,
         moeda=pag.moeda,
+        meses_pagar=pag.meses_pagar,
         periodo=pag.periodo,
         metodo_pagamento=pag.metodo_pagamento,
         referencia=pag.referencia,

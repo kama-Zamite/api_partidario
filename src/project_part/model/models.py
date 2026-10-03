@@ -717,6 +717,7 @@ class Notification(Base):
         index=True,
         nullable=True,
     )
+    tipo_usuario: Mapped[str | None] = mapped_column(String(20), default='ADMIN', index=True, nullable=True)
     titulo: Mapped[str] = mapped_column(String(150), nullable=False)
     mensagem: Mapped[str] = mapped_column(TEXT, nullable=False)
     motivo: Mapped[str | None] = mapped_column(TEXT, nullable=True)

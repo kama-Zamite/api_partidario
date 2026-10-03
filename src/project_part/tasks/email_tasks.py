@@ -9,8 +9,9 @@ from project_part.core.tk_broker import broker
 
 # [ADAPTAR] caminho real das suas funções de e-mail
 from project_part.services.email_service.email_bloqueio_temp import email_Bloqueado_temp_async
+from project_part.services.email_service.pagamento_quota import email_notificacao_quota_admin_async
 from project_part.services.email_service.loginEmail import email_sucesso_login_async
-
+from project_part.services.email_service.doacao import email_notificacao_doacao_admin_async
 
 logger = logging.getLogger(__name__)
 
@@ -62,8 +63,53 @@ async def tarefa_email_login(
         raise EnvioEmailFalhou('Falha ao enviar o e-mail de aviso de login')
 
 
+@broker.task(task_name='email.notificacao_quota_admin', retry_on_error=True, max_retries=3)
+async def tarefa_notificacao_quota_admin(
+    nome_completo: str,
+    numero_militante: str,
+    email_admin: str,
+    nome_admin: str,
+    quantia: float,
+    meses_pagar: int,
+    referencia: str,
+    id_transacao: str,
+) -> None:
+    resultado = await email_notificacao_quota_admin_async(
+        nome_completo=nome_completo,
+        numero_militante=numero_militante,
+        nome_admin=nome_admin,
+        quantia=quantia,
+        meses_pagar=meses_pagar,
+        referencia=referencia,
+        id_transacao=id_transacao,
+    )
+    if resultado is None:
+        await asyncio.sleep(RETRY_ESPERA_S)
+        raise EnvioEmailFalhou('Falha ao enviar o e-mail de notificação de quota')
 
-
+@broker.task(task_name='email.notificacao_doacao_admin', retry_on_error=True, max_retries=3)
+async def tarefa_notificacao_doacao_admin(
+    nome_completo: str,
+    numero_militante: str | None,
+    email_admin: str,
+    nome_admin: str,
+    quantia: float,
+    referencia: str,
+    id_transacao: str,
+    doador: str | None = None,
+) -> None:
+    resultado = await email_notificacao_doacao_admin_async(
+        nome_completo=nome_completo,
+        numero_militante=numero_militante,
+        nome_admin=nome_admin,
+        doador=doador,
+        quantia=quantia,
+        referencia=referencia,
+        id_transacao=id_transacao,
+    )
+    if resultado is None:
+        await asyncio.sleep(RETRY_ESPERA_S)
+        raise EnvioEmailFalhou('Falha ao enviar o e-mail de notificação de doação')
 # ---------------------------------------------------------------------------
 # Enfileirar com plano B (chamado pelos endpoints)
 # ---------------------------------------------------------------------------
@@ -106,6 +152,7 @@ async def enviar_email_login(
     ip_address: str,
     email_destino: str,
     navegador: str,
+    # nome_admin: str,
     sistema_operacional: str,
 ) -> None:
     await _enfileirar(
@@ -113,8 +160,64 @@ async def enviar_email_login(
         email_sucesso_login_async,
         background,
         nome_completo=nome_completo,
+        # nome_admin=nome_admin,
         ip_address=ip_address,
         email_destino=email_destino,
         navegador=navegador,
         sistema_operacional=sistema_operacional,
     )
+
+
+async def enviar_notificacao_quota_admin(
+    background: BackgroundTasks,
+    *,
+    nome_completo: str,
+    numero_militante: str,
+    email_admin: str,
+    quantia: float,
+    meses_pagar: int,
+    referencia: str,
+    id_transacao: str,
+) -> None:
+    await _enfileirar(
+        tarefa_notificacao_quota_admin,
+        email_notificacao_quota_admin_async,
+        background,
+        nome_completo=nome_completo,
+        numero_militante=numero_militante,
+        email_admin=email_admin,
+        quantia=quantia,
+        meses_pagar=meses_pagar,
+        referencia=referencia,
+        id_transacao=id_transacao,
+    )
+
+
+async def enviar_notificacao_doacao_admin(
+    background: BackgroundTasks,
+    *,
+    nome_completo: str,
+    numero_militante: str | None,
+    email_admin: str,
+    nome_admin: str,
+    quantia: float,
+    referencia: str,
+    id_transacao: str,
+    doador: str | None = None
+) -> None:
+    await _enfileirar(
+        tarefa_notificacao_doacao_admin,
+        email_notificacao_doacao_admin_async,
+        background,
+        nome_completo=nome_completo,
+        numero_militante=numero_militante,
+        email_admin=email_admin,
+        nome_admin=nome_admin,
+        quantia=quantia,
+        referencia=referencia,
+        doador=doador,
+        id_transacao=id_transacao,
+    )
+
+
+
