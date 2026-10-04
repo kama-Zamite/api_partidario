@@ -27,6 +27,7 @@ from fastapi import (
     Path,
     Request,
     status,
+    BackgroundTasks,
 )
 from pydantic import TypeAdapter, ValidationError
 from redis.asyncio import Redis as AsyncRedis
@@ -35,7 +36,12 @@ from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload, joinedload
 from project_part.services.finance_audit import registar_movimento
-
+from project_part.tasks.email_tasks import (
+    enviar_notificacao_quota_aprovar,
+    enviar_notificacao_quota_rejeitado,
+    enviar_notificacao_doacao_aprovada_admin,
+    enviar_notificacao_doacao_rejeitada_admin,
+    )
 from project_part.core.cloudinary_config import upload_imagem_geral
 from project_part.core.secury import (
     Get_current_user,
@@ -4395,6 +4401,7 @@ async def aprovar_doacao(
     session: Session,
     current_user: Get_current_user,
     scope: ScopeValid,
+    backgroundTasks: BackgroundTasks,  # Adicionei para futuras tarefas assíncronas, como envio de e-mails
 ):
     doacao = await session.scalar(
         select(Doacao)
@@ -4517,9 +4524,20 @@ async def aprovar_doacao(
             detail="Erro ao salvar dados no banco.",
         )
 
+    await enviar_notificacao_doacao_aprovada_admin(
+        background=backgroundTasks,
+        nome_completo=doacao.doador.nome_completo if doacao.doador else "Anónimo",
+        numero_militante=doacao.doador.militante_numero if doacao.doador else None,
+        quantia=doacao.quantia,
+        email_militante=doacao.doador.email if doacao.doador else None,
+        referencia=doacao.referencia or "N/A",
+        id_transacao=doacao.id_transacao or "N/A",
+    )
     return {
         "msg": "Doação aprovada com sucesso."
     }
+
+
 
 @admin.post('/doacoes/{doacao_id}/rejeitar', status_code=HTTPStatus.OK)
 # @limiter.limit('20/minute')
@@ -4530,9 +4548,12 @@ async def rejeitar_doacao(
     session: Session,
     current_user: Get_current_user,
     scope: ScopeValid,
+    backgroundTasks: BackgroundTasks,  # Adicionei para futuras tarefas assíncronas, como envio de e-mails
 ):
     doacao = await session.scalar(
-        select(Doacao).where(Doacao.id == doacao_id).options(selectinload(Doacao.doador))
+        select(Doacao).where(Doacao.id == doacao_id).options(
+            selectinload(Doacao.doador)
+            )
     )
     if not doacao:
         raise HTTPException(HTTPStatus.NOT_FOUND, detail='Doação não encontrada.')
@@ -4599,6 +4620,17 @@ async def rejeitar_doacao(
         await session.rollback()
         logger.error("Erro ao salvar solicitação e notificação: %s", str(e))
         raise HTTPException(status_code=HTTPStatus.INTERNAL_SERVER_ERROR, detail="Erro ao salvar dados no banco.")
+
+    await enviar_notificacao_doacao_rejeitada_admin(
+        background=backgroundTasks,
+        nome_completo=doacao.doador.nome_completo if doacao.doador else 'militante',
+        numero_militante=doacao.doador.militante_numero if doacao.doador.militante_numero else None,
+        email_militante=doacao.doador.email if doacao.doador else None,
+        quantia=doacao.quantia,
+        motivo_rejeicao=body.observacao,
+        referencia=doacao.referencia,
+        id_transacao=doacao.id_transacao,
+    )
 
     return {
         "msg": f"Doação rejeitado com sucesso. Pelo admin {current_user.nome_completo},\n {current_user.email} com o seguinte motivo: {body.observacao}"
@@ -4679,6 +4711,7 @@ async def aprovar_quota(
     request: Request,
     quota_id: uuid.UUID,
     session: Session,
+    background_tasks: BackgroundTasks,
     current_user: Get_current_user,
     scope: ScopeValid,
 ):
@@ -4819,6 +4852,14 @@ async def aprovar_quota(
             detail='Erro ao registrar aprovação da quota'
         )
 
+    await enviar_notificacao_quota_aprovar(
+        background_tasks,
+        nome_completo=pag.militante.nome_completo,
+        referencia=pag.referencia,
+        quantia=pag.quantia,
+        meses_pagar=pag.meses_pagar,
+        email_destinatario=pag.militante.email,
+    )
     return {
         "msg": "Pagamento de quota aprovado com sucesso. "
     }
@@ -4835,6 +4876,7 @@ async def rejeitar_quota(
     session: Session,
     current_user: Get_current_user,
     scope: ScopeValid,
+    backgroundTasks: BackgroundTasks
 ):
     pag = await session.scalar(
         select(PagamentoQuota)
@@ -4901,6 +4943,15 @@ async def rejeitar_quota(
             status_code=HTTPStatus.BAD_REQUEST,
             detail='Erro no processo de aprovacao do pagamento de quota'
         )
+    
+    await enviar_notificacao_quota_rejeitado(
+        backgroundTasks,
+        nome_completo=pag.militante.nome_completo,
+        referencia=pag.referencia,
+        quantia=pag.quantia,
+        motivo_rejeicao=body.observacao,
+        email_destinatario=pag.militante.email,
+    )
     return {
         "msg": f"Pagamento de quota rejeitado com sucesso. Pelo admin {current_user.nome_completo} \n Email: {current_user.email}, com o seguinte motivo: {body.observacao}"
     }

@@ -51,6 +51,7 @@ from project_part.model.models import (
 from project_part.tasks.email_tasks import (
     enviar_notificacao_quota_admin,
     enviar_notificacao_doacao_admin,
+    enviar_notificacao_doacao_aprovada_admin,
 )
 
 from project_part.core.secury import Get_current_user
