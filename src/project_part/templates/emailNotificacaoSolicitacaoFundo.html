@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Nova Solicitação de Fundo - Administração Central</title>
+</head>
+<body style="margin: 0; padding: 0; background-color: #f4f4f4; font-family: Arial, Helvetica, sans-serif;">
+    <!-- Container principal -->
+    <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color: #f4f4f4; padding: 40px 5px;">
+        <tr>
+            <td align="center">
+                <!-- Card do e-mail -->
+                <table width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width: 500px; background-color: #ffffff; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 12px rgba(0,0,0,0.08);">
+                    
+                    <!-- Linha do Logótipo -->
+                    <tr>
+                        <td style="padding: 20px; text-align: center; background-color: #f0f1f3;">
+                            <img src="{{ logo_url }}" alt="Logo Oficial" style="max-width: 120px; height: auto; display: inline-block; border: 0;">
+                        </td>
+                    </tr>
+
+                    <!-- Conteúdo -->
+                    <tr>
+                        <td style="padding: 40px 30px 30px 30px;">
+                            <p align="center" style="margin: 0 0 5px 0; color: #1e6b37; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px;">
+                                Gabinete de Finanças & Orçamento Central
+                            </p>
+                            <p align="center" style="margin: 20px 0 25px 0; color: #2d3748; font-size: 12px; line-height: 1.6;">
+                                Olá, Superadmin! Foi submetida uma nova solicitação de fundo territorial pendente de verificação.
+                            </p>
+
+                            <!-- Caixa de Detalhes do Solicitante Provincial -->
+                            <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width: 100%; border-collapse: collapse; background-color: #f8f9fa; border: 1px solid #e2e8f0; border-radius: 8px; margin-bottom: 20px;">
+                                <tr>
+                                    <td style="padding: 20px;">
+                                        
+                                        <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width: 100%; border-collapse: collapse; margin-bottom: 8px;">
+                                            <tr>
+                                                <td style="font-size: 12px; font-weight: 700; color: #4a5568; text-transform: uppercase; letter-spacing: 0.5px;">
+                                                    Origem do Pedido
+                                                </td>
+                                            </tr>
+                                        </table>
+
+                                        <!-- Linha: Província Destacada -->
+                                        <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width: 100%; border-collapse: collapse; border-bottom: 1px solid #edf2f7;">
+                                            <tr>
+                                                <td style="padding: 10px 0; font-size: 13px; color: #718096; width: 35%;">Província</td>
+                                                <td align="right" style="padding: 10px 0; font-size: 12px; color: #1e6b37; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px;">
+                                                    {{ provincia }}
+                                                </td>
+                                            </tr>
+                                        </table>
+
+                                        <!-- Linha: Nome do Admin Provincial -->
+                                        <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width: 100%; border-collapse: collapse; border-bottom: 1px solid #edf2f7;">
+                                            <tr>
+                                                <td style="padding: 10px 0; font-size: 12px; color: #718096; width: 35%;">Solicitante</td>
+                                                <td align="right" style="padding: 10px 0; font-size: 12px; color: #2d3748; font-weight: 600;">{{ nome_completo }}</td>
+                                            </tr>
+                                        </table>
+
+                                        <!-- Linha: Contacto Eletrónico -->
+                                        <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width: 100%; border-collapse: collapse;">
+                                            <tr>
+                                                <td style="padding: 10px 0; font-size: 12px; color: #718096; width: 35%;">E-mail Oficial</td>
+                                                <td align="right" style="padding: 10px 0; font-size: 12px; color: #2d3748; font-weight: 600; word-break: break-all;">{{ email_solicitante }}</td>
+                                            </tr>
+                                        </table>
+
+                                    </td>
+                                </tr>
+                            </table>
+
+                            <!-- Bloco de Conteúdo: Quantia Requerida -->
+                            <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width: 100%; border-collapse: collapse; background-color: #fafbfe; border: 1px solid #e2e8f0; border-radius: 8px; margin-bottom: 20px;">
+                                <tr>
+                                    <td style="padding: 15px 20px; border-radius: 8px;">
+                                        <p style="margin: 0 0 4px 0; font-size: 11px; font-weight: 700; color: #4a5568; text-transform: uppercase; letter-spacing: 0.5px;">
+                                            Montante Solicitado
+                                        </p>
+                                        <p style="margin: 0; font-size: 16px; color: #1e6b37; font-weight: 700;">
+                                            {{ quantidade }}
+                                        </p>
+                                    </td>
+                                </tr>
+                            </table>
+
+                            <!-- Bloco de Conteúdo: Justificação/Descrição do Pedido -->
+                            <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width: 100%; border-collapse: collapse; background-color: #fafbfe; border: 1px solid #e2e8f0; border-radius: 8px; margin-bottom: 30px;">
+                                <tr>
+                                    <td style="padding: 20px; border-radius: 8px;">
+                                        <p style="margin: 0 0 6px 0; font-size: 11px; font-weight: 700; color: #4a5568; text-transform: uppercase; letter-spacing: 0.5px;">
+                                            Justificação & Finalidade do Fundo
+                                        </p>
+                                        <p style="margin: 0; font-size: 14px; color: #2d3748; line-height: 1.6; white-space: pre-line; word-break: break-word;">
+                                            {{ descricao }}
+                                        </p>
+                                    </td>
+                                </tr>
+                            </table>
+
+                            <!-- Botão de Acesso para Avaliação Central -->
+                            <table width="100%" cellpadding="0" cellspacing="0" border="0">
+                                <tr>
+                                    <td align="center" style="padding-bottom: 10px;">
+                                        <a href="{{ link_redirecionamento }}" target="_blank" style="background-color: #1e6b37; color: #ffffff; padding: 13px 32px; font-size: 14px; font-weight: 600; text-decoration: none; border-radius: 6px; display: inline-block;">
+                                            Avaliar Solicitação no Painel
+                                        </a>
+                                    </td>
+                                </tr>
+                            </table>
+                        </td>
+                    </tr>
+
+                    <!-- Rodapé Muted -->
+                    <tr>
+                        <td style="background-color: #f0f1f3; padding: 20px; text-align: center; font-size: 11px; color: #a0aec0; border-top: 1px solid #eeeeee;">
+                            Aviso automático confidencial expedido pelo Módulo de Controlo Orçamental Centralizado.<br>
+                            Por favor, não respondas para este endereço de e-mail.
+                        </td>
+                    </tr>
+                </table>
+            </td>
+        </tr>
+    </table>
+</body>
+</html>

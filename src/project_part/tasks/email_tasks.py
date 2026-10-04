@@ -17,6 +17,7 @@ from project_part.services.email_service.pagamento_quota_rejeitado import email_
 from project_part.services.email_service.doacao_aprovada import email_notificacao_doacao_aprovada_admin_async
 from project_part.services.email_service.doacao_rejeitada import email_notificacao_rejeitada_admin_async
 from project_part.services.email_service.email_suporte import email_notificacao_suporte_async
+from project_part.services.email_service.email_solicitacao_fundo import email_notificacao_solicitacao_fundo_async
 
 
 logger = logging.getLogger(__name__)
@@ -225,7 +226,33 @@ async def tarefa_notificacao_suporte(
     if resultado is None:
         await asyncio.sleep(RETRY_ESPERA_S)
         raise EnvioEmailFalhou('Falha ao enviar o e-mail de notificação de suporte')
-    
+
+
+# ---------------------------------------------------------------------------
+# Tarefa de notificação de solicitação de fundo (executada pelo worker)
+# ---------------------------------------------------------------------------
+
+@broker.task(task_name='email.notificacao_solicitacao_fundo', retry_on_error=True, max_retries=3)
+async def tarefa_notificacao_solicitacao_fundo(
+    nome_completo: str,
+    email_superadmin: str,
+    email_solicitante: str,
+    provincia: str,
+    descricao: str,
+    quantidade: str,
+) -> None:
+    resultado = await email_notificacao_solicitacao_fundo_async(
+        nome_completo=nome_completo,
+        email_superadmin=email_superadmin,
+        email_solicitante=email_solicitante,
+        provincia=provincia,
+        descricao=descricao,
+        quantidade=quantidade,
+    )
+    if resultado is None:
+        await asyncio.sleep(RETRY_ESPERA_S)
+        raise EnvioEmailFalhou('Falha ao enviar o e-mail de notificação de solicitação de fundo')
+
 # ---------------------------------------------------------------------------
 # Enfileirar com plano B (chamado pelos endpoints)
 # ---------------------------------------------------------------------------
@@ -443,6 +470,26 @@ async def enviar_notificacao_suporte(
         mensagem=mensagem,
         categoria=categoria,
     )
-    
 
+async def enviar_notificacao_solicitacao_fundo(
+    background: BackgroundTasks,
+    *,
+    nome_completo: str,
+    email_superadmin: str,
+    email_solicitante: str,
+    provincia: str,
+    descricao: str,
+    quantidade: str,
+) -> None:
+    await _enfileirar(
+        tarefa_notificacao_solicitacao_fundo,
+        email_notificacao_solicitacao_fundo_async,
+        background,
+        nome_completo=nome_completo,
+        email_superadmin=email_superadmin,
+        email_solicitante=email_solicitante,
+        provincia=provincia,
+        descricao=descricao,
+        quantidade=quantidade,
+    )
 

@@ -41,6 +41,7 @@ from project_part.tasks.email_tasks import (
     enviar_notificacao_quota_rejeitado,
     enviar_notificacao_doacao_aprovada_admin,
     enviar_notificacao_doacao_rejeitada_admin,
+    enviar_notificacao_solicitacao_fundo,
     )
 from project_part.core.cloudinary_config import upload_imagem_geral
 from project_part.core.secury import (
@@ -3036,6 +3037,7 @@ async def criar_solicitacao_fundo(
     session: Session,
     current_user: Get_current_user,
     scope: ScopeValid,
+    background: BackgroundTasks
 ):
     """Só admin provincial pode solicitar fundos para a sua província."""
     if scope.provincia_id is None:
@@ -3081,56 +3083,56 @@ async def criar_solicitacao_fundo(
         },
     )
 
-    # ── Superadmins (sem restrição de território) ───────────────
-    superadmin_ids = (
-        await session.scalars(
-            select(User.id)
-            .join(AdminScope, AdminScope.user_id == User.id)
-            .where(
-                User.role_id == settings.ADMIN_ROLE_ID,
-                User.ativo.is_(True),
-                AdminScope.provincia_id.is_(None),
-                AdminScope.municipio_id.is_(None),
-            )
+    # ── Superadmin (sem restrição de território) ───────────────
+    superadmin_alvo = await session.scalar(
+        select(User)
+        .join(AdminScope, AdminScope.user_id == User.id)
+        .where(
+            User.role_id == settings.ADMIN_ROLE_ID,
+            User.ativo.is_(True),
+            User.deletado_em.is_(None),  # Segurança: Garante que não foi apagado
+            AdminScope.provincia_id.is_(None),
+            AdminScope.municipio_id.is_(None),
         )
-    ).all()
+    )
 
     # Fallback: qualquer admin se não houver scope de superadmin
-    if not superadmin_ids:
+    if not superadmin_alvo:
         logger.warning(
             'Nenhum superadmin encontrado para notificar sobre a solicitação %s',
             solicitacao.id,
         )
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail='Nenhum superadmin encontrado para notificar sobre a solicitação.',
+            detail='Nenhum superadmin encontrado para processar esta solicitação.',
         )
 
     nome_provincia = None
-    prov = await session.scalar(
-        select(Provincia).where(Provincia.id == scope.provincia_id)
-    )
-    if prov:
-        nome_provincia = prov.nome_provincia
-
-    for admin_id in superadmin_ids:
-        session.add(
-            Notification(
-                admin_id=admin_id,
-                user_id=current_user.id,
-                titulo='Nova solicitação de fundo',
-                mensagem=(
-                    f'O admin provincial {current_user.nome_completo} '
-                    f'({nome_provincia or f"província {scope.provincia_id}"}) '
-                    f'solicitou {solicitacao.quantia} AOA para '
-                    f'{solicitacao.finalidade.value}: {solicitacao.descricao}.'
-                ),
-                destinatario='ADMIN',
-                categoria=RoleCategoriaNotificacao.FUNDO,
-            )
+    if scope.provincia_id:
+        prov = await session.scalar(
+            select(Provincia).where(Provincia.id == scope.provincia_id)
         )
+        if prov:
+            nome_provincia = prov.nome_provincia
 
-    if not superadmin_ids:
+
+    session.add(
+        Notification(
+            admin_id=superadmin_alvo.id,
+            user_id=current_user.id,
+            titulo='Nova solicitação de fundo',
+            mensagem=(
+                f'O admin provincial {current_user.nome_completo} '
+                f'({nome_provincia or f"província {scope.provincia_id}"}) '
+                f'solicitou {solicitacao.quantia} AOA para '
+                f'{solicitacao.finalidade.value}: {solicitacao.descricao}.'
+            ),
+            destinatario='ADMIN',
+            categoria=RoleCategoriaNotificacao.FUNDO,
+        )
+    )
+
+    if not superadmin_alvo:
         logger.warning(
             'Solicitação %s criada sem superadmin para notificar',
             solicitacao.id,
@@ -3157,6 +3159,17 @@ async def criar_solicitacao_fundo(
         .where(SolicitacaoFundo.id == solicitacao.id)
         .options(selectinload(SolicitacaoFundo.provincia))
     )
+
+    await enviar_notificacao_solicitacao_fundo(
+        background,
+        nome_completo=current_user.nome_completo,
+        email_superadmin=superadmin_alvo.email,
+        email_solicitante=current_user.email,
+        provincia=nome_provincia,
+        descricao=solicitacao.descricao,
+        quantidade=str(solicitacao.quantia),
+    )
+
     logger.info(
         'Solicitação de fundo %s criada pela província %s (user %s)',
         result.id,

@@ -470,9 +470,9 @@ class QuotaRejeitar(BaseModel):
 
 class SolicitacaoFundoCreate(BaseModel):
     finalidade: FinalidadeFundoEnum
-    descricao: str = Field(..., min_length=5, max_length=500)
+    descricao: str = Field(..., min_length=5, max_length=100)
     quantia: Decimal = Field(..., gt=0, decimal_places=2)
-    observacao: str | None = Field(None, max_length=500)
+    observacao: str | None = Field(None, max_length=100)
 
 
 class SolicitacaoFundoRejeitar(BaseModel):
