@@ -6,7 +6,8 @@ from fastapi import (
     Depends,
     HTTPException,
     status,
-    Form
+    Form,
+    BackgroundTasks,
 )
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -24,6 +25,9 @@ from project_part.model.models import (
     Notification,
     AdminScope,
     User,
+)
+from project_part.tasks.email_tasks import (
+    enviar_notificacao_suporte,
 )
 from project_part.services.claudflare_turnfile import verificar_turnstile
 from .schemas import (
@@ -48,6 +52,7 @@ async def enviar_mensagem_suporte(
     session: Session,
     current_user: Get_current_user,
     _captcha: Claudflare_turnfile,
+    background_tasks: BackgroundTasks,
     categoria: CategoriaMensagemSuporte = Form(...),
     assunto: str = Form(..., min_length=5, max_length=200),
     mensagem: str = Form(..., min_length=10, max_length=3000),
@@ -120,13 +125,6 @@ async def enviar_mensagem_suporte(
                 detail="Não foi possível enviar a mensagem. Tente novamente mais tarde.",
             )
         
-        logger.info("Nova mensagem de suporte recebida: %s", nova_mensagem.id)
-        # Opcional: enviar e-mail para suporte@unita.ao
-        # await enviar_email_suporte(nova_mensagem)
-
-        return MensagemSuporteResponse(
-            mensagem="Mensagem enviada com sucesso. A nossa equipa responderá de segunda a sábado."
-        )
 
     except Exception as err:
         await session.rollback()
@@ -135,3 +133,32 @@ async def enviar_mensagem_suporte(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Não foi possível enviar a mensagem. Tente novamente mais tarde.",
         )
+    
+    logger.info("Nova mensagem de suporte recebida: %s", nova_mensagem.id)
+    # Opcional: enviar e-mail para suporte@unita.ao
+    # await enviar_email_suporte(nova_mensagem)
+
+    tipo_categoria = None
+    if dados_validos.categoria == CategoriaMensagemSuporte.SUGESTAO:
+        tipo_categoria = "Sugestão"
+    elif dados_validos.categoria == CategoriaMensagemSuporte.PROBLEMA_DE_CONTA:
+        tipo_categoria = "Reclamação"
+    elif dados_validos.categoria == CategoriaMensagemSuporte.OUTROS:
+        tipo_categoria = "Outros"
+    elif dados_validos.categoria == CategoriaMensagemSuporte.SUPORTE_TECNICO:
+        tipo_categoria = "Suporte Técnico"
+    elif dados_validos.categoria == CategoriaMensagemSuporte.PAGAMENTOS_QUOTAS:
+        tipo_categoria = "Pagamentos/Quotas"
+
+    await enviar_notificacao_suporte(
+        background_tasks,
+        nome_completo=current_user.nome_completo,
+        email_suporte=admin_alvo.email,
+        assunto=dados_validos.assunto,
+        mensagem=dados_validos.mensagem,
+        categoria=tipo_categoria,
+    )
+
+    return MensagemSuporteResponse(
+        mensagem="Mensagem enviada com sucesso. A nossa equipa responderá de segunda a sábado."
+    )
