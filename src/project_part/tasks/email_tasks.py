@@ -18,7 +18,8 @@ from project_part.services.email_service.doacao_aprovada import email_notificaca
 from project_part.services.email_service.doacao_rejeitada import email_notificacao_rejeitada_admin_async
 from project_part.services.email_service.email_suporte import email_notificacao_suporte_async
 from project_part.services.email_service.email_solicitacao_fundo import email_notificacao_solicitacao_fundo_async
-
+from project_part.services.email_service.email_aprovacao_solicitacao_fundos import email_aprovacao_solicitacao_fundo_async
+from project_part.services.email_service.email_rejeitar_solicitacao_fundos import email_rejeicao_solicitacao_fundo_async
 
 logger = logging.getLogger(__name__)
 
@@ -252,6 +253,42 @@ async def tarefa_notificacao_solicitacao_fundo(
     if resultado is None:
         await asyncio.sleep(RETRY_ESPERA_S)
         raise EnvioEmailFalhou('Falha ao enviar o e-mail de notificação de solicitação de fundo')
+
+
+
+@broker.task(task_name='email.aprovacao_solicitacao_fundo', retry_on_error=True, max_retries=3)
+async def tarefa_aprovacao_solicitacao_fundo(
+    nome_completo: str,
+    email_solicitante: str,
+) -> None:
+    resultado = await email_aprovacao_solicitacao_fundo_async(
+        nome_completo=nome_completo,
+        email_solicitante=email_solicitante,
+    )
+    if resultado is None:
+        await asyncio.sleep(RETRY_ESPERA_S)
+        raise EnvioEmailFalhou('Falha ao enviar o e-mail de aprovação de solicitação de fundo')
+
+
+@broker.task(task_name='email.rejeicao_solicitacao_fundo', retry_on_error=True, max_retries=3)
+async def tarefa_rejeicao_solicitacao_fundo(
+    nome_completo: str,
+    email_solicitante: str,
+    motivo_rejeicao: str,
+    provincia: str,
+    quantia: float,
+) -> None:
+    resultado = await email_rejeicao_solicitacao_fundo_async(
+        nome_completo=nome_completo,
+        email_solicitante=email_solicitante,
+        motivo_rejeicao=motivo_rejeicao,
+        provincia=provincia,
+        quantia=quantia,
+    )
+    if resultado is None:
+        await asyncio.sleep(RETRY_ESPERA_S)
+        raise EnvioEmailFalhou('Falha ao enviar o e-mail de rejeição de solicitação de fundo')
+
 
 # ---------------------------------------------------------------------------
 # Enfileirar com plano B (chamado pelos endpoints)
@@ -491,5 +528,40 @@ async def enviar_notificacao_solicitacao_fundo(
         provincia=provincia,
         descricao=descricao,
         quantidade=quantidade,
+    )
+
+async def enviar_aprovacao_solicitacao_fundo(
+    background: BackgroundTasks,
+    *,
+    nome_completo: str,
+    email_solicitante: str,
+) -> None:
+    await _enfileirar(
+        tarefa_aprovacao_solicitacao_fundo,
+        email_aprovacao_solicitacao_fundo_async,
+        background,
+        nome_completo=nome_completo,
+        email_solicitante=email_solicitante,
+    )
+
+
+async def enviar_rejeicao_solicitacao_fundo(
+    background: BackgroundTasks,
+    *,
+    nome_completo: str,
+    email_solicitante: str,
+    motivo_rejeicao: str,
+    provincia: str,
+    quantia: float,
+) -> None:
+    await _enfileirar(
+        tarefa_rejeicao_solicitacao_fundo,
+        email_rejeicao_solicitacao_fundo_async,
+        background,
+        nome_completo=nome_completo,
+        email_solicitante=email_solicitante,
+        motivo_rejeicao=motivo_rejeicao,
+        provincia=provincia,
+        quantia=quantia,
     )
 

@@ -42,6 +42,8 @@ from project_part.tasks.email_tasks import (
     enviar_notificacao_doacao_aprovada_admin,
     enviar_notificacao_doacao_rejeitada_admin,
     enviar_notificacao_solicitacao_fundo,
+    enviar_aprovacao_solicitacao_fundo,
+    enviar_rejeicao_solicitacao_fundo,
     )
 from project_part.core.cloudinary_config import upload_imagem_geral
 from project_part.core.secury import (
@@ -4987,6 +4989,7 @@ async def aprovar_solicitacao_fundo(
     session: Session,
     current_user: Get_current_user,
     scope: ScopeValid,
+    backgroundTasks: BackgroundTasks
 ):
     # _apenas_superadmin(scope)
     logger.info('Superadmin %s tentando aprovar solicitação %s', current_user.id, solicitacao_id)
@@ -5084,6 +5087,12 @@ async def aprovar_solicitacao_fundo(
             status_code=HTTPStatus.BAD_REQUEST,
             detail='Erro no processo de aprovação do pagamento de quota'
         )
+
+    await enviar_aprovacao_solicitacao_fundo(
+        backgroundTasks,
+        nome_completo=user_banco.nome_completo,
+        email_solicitante=user_banco.email,
+    )
     
 
     logger.info(
@@ -5110,6 +5119,7 @@ async def rejeitar_solicitacao_fundo(
     session: Session,
     current_user: Get_current_user,
     scope: ScopeValid,
+    backgroundTasks: BackgroundTasks
 ):
     verificar_permissao_global_pais(scope, current_user)
 
@@ -5184,6 +5194,15 @@ async def rejeitar_solicitacao_fundo(
             status_code=HTTPStatus.BAD_REQUEST,
             detail='Erro no processo de rejeição do pagamento de quota'
         )
+
+    await enviar_rejeicao_solicitacao_fundo(
+        backgroundTasks,
+        nome_completo=solicitacao.user.nome_completo,
+        email_solicitante=solicitacao.user.email,
+        motivo_rejeicao=body.observacao,
+        provincia=solicitacao.provincia.nome_provincia, # A tua variável com o nome da província
+        quantia=solicitacao.quantia,     # O valor numérico direto do banco
+    )
 
     logger.info(
         'Solicitação %s REJEITADA por superadmin %s',
