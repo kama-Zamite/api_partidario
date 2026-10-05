@@ -18,7 +18,11 @@ TEMPLATES = BASE_DIR / "templates"
 env = Environment(loader=FileSystemLoader(TEMPLATES))
 
 
-async def enviar_email_real_async(email_destino: str, token: str, nome_completo: str):
+async def enviar_email_real_async(
+        email_destino: str,
+        token: str,
+        nome_completo: str
+        ):
     link_completo = f"https://app-gestao-plataforma-2026.vercel.app/redefinir-senha?token={token}"
     URL_LOGO_OFICIAL = settings.URL_LOGO_UNCLOCK
 

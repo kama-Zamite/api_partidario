@@ -14,7 +14,10 @@ TEMPLATES = BASE_DIR / 'templates'
 env = Environment(loader=FileSystemLoader(TEMPLATES))
 
 
-async def email_sucesso_cadastro_async(nome_completo: str, email_destino: str):
+async def email_sucesso_cadastro_async(
+        nome_completo: str, 
+        email_destino: str
+        ):
 
     LOGO_URL = settings.URL_LOGO_WELLCOME
     link_completo = f"https://app-gestao-plataforma-2026.vercel.app/login"

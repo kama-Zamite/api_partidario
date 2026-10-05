@@ -1,6 +1,5 @@
 import resend
 import logging
-from urllib.parse import quote
 import pathlib
 from jinja2 import (
     Environment,

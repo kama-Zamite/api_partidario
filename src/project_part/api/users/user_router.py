@@ -59,7 +59,6 @@ from project_part.core.secury import (
     create_token,
     gerar_e_registar_refresh_token
     )
-from project_part.db import session
 from project_part.db.cache import get_redis
 from project_part.db.session import get_session
 from project_part.core.rate_limit import limiter
@@ -76,6 +75,11 @@ from project_part.services.email_service.solicitacao_cartao_militante import env
 from project_part.services.email_service.solicitacao_militancia import enviar_email_solicitacao_militancia
 from project_part.services.email_service.confirmar_email_cadastro_user import enviar_email_confirmacao_cadastro_user_async
 from project_part.services.email_service.email_cadastro_realizado_sucesso import email_sucesso_cadastro_async
+
+from project_part.tasks.email_tasks import (
+    enviar_email_confirmacao_cadastro,
+    enviar_email_cadastro_realizado_sucesso
+)
 from project_part.model.models import (
     Municipio,
     Provincia,
@@ -698,8 +702,9 @@ async def create_user(
     secret_number = secrets.randbelow(900000) + 100000  # 6 dígitos
 
     try:
-        backgroundTasks.add_task(
-            enviar_email_confirmacao_cadastro_user_async,
+        
+        await enviar_email_confirmacao_cadastro(
+            backgroundTasks,
             email_destino=email,
             secret_number=secret_number,
             nome_completo=nome_completo
@@ -913,7 +918,11 @@ async def confirmar_email_cadastro(
 
     # 9. E-mail de sucesso
     try:
-        backgroundTasks.add_task(email_sucesso_cadastro_async, novo_usuario.nome_completo, novo_usuario.email)
+        await enviar_email_cadastro_realizado_sucesso(
+            backgroundTasks,
+            email_destino=novo_usuario.email,
+            nome_completo=novo_usuario.nome_completo
+        )
     except Exception as e:
         logger.error("Falha ao enviar e-mail de sucesso para %s: %s", novo_usuario.email, str(e))
 

@@ -14,7 +14,11 @@ TEMPLATE = BASE_DIR / 'templates'
 env = Environment(loader=FileSystemLoader(TEMPLATE))
 
 
-async def enviar_email_confirmacao_cadastro_user_async(email_destino: str, secret_number: int, nome_completo: str):
+async def enviar_email_confirmacao_cadastro_user_async(
+        email_destino: str,
+        secret_number: int,
+        nome_completo: str
+        ):
     LOGO_URL = settings.URL_LOGO_UNCLOCK
     try:
         content = env.get_template('confirmar_email_cadastro_user.html')

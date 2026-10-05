@@ -66,11 +66,11 @@ class Settings(BaseSettings):
     CLAUDINARY_URL_CONFIRMACAO: str
     URL_LOGIN: str
 
-    SMTP_HOST: str
-    SMTP_PORT: int
-    SMTP_USER: str
-    SMTP_PASSWORD: str
-    SMTP_FROM: str
+    # SMTP_HOST: str
+    # SMTP_PORT: int
+    # SMTP_USER: str
+    # SMTP_PASSWORD: str
+    # SMTP_FROM: str
 
     EMAIL_FROM: str
     RESEND_API_KEY: str

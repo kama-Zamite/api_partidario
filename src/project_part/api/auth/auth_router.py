@@ -96,7 +96,11 @@ from project_part.services.two_factor_challenge import (
 )
 from project_part.api.auth.util import set_auth_cookies
 from project_part.services.claudflare_turnfile import verificar_turnstile
-from project_part.tasks.email_tasks import enviar_email_bloqueio, enviar_email_login
+from project_part.tasks.email_tasks import (
+    enviar_email_bloqueio,
+    enviar_email_login,
+    enviar_email_recuperacao_senha,
+)
 from .schemas import (
     CreatePermissao,
     CreateRole,
@@ -681,11 +685,12 @@ async def solicitar_recuperacao(
             session
             )
         # background_tasks.add_task(enviar_email_falso, payload.email, token)
-        background_tasks.add_task(
-            enviar_email_real_async,
-            payload.email,
-            token,
-            usuario_banco.nome_completo
+
+        await enviar_email_recuperacao_senha(
+            background_tasks,
+            email_destino = payload.email,
+            token = token,
+            nome_completo =usuario_banco.nome_completo
             )
     else:
         logger.info('Tentativa de recuperação para e-mail inexistente: %s', payload.email)

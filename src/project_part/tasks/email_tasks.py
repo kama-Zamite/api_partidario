@@ -20,6 +20,9 @@ from project_part.services.email_service.email_suporte import email_notificacao_
 from project_part.services.email_service.email_solicitacao_fundo import email_notificacao_solicitacao_fundo_async
 from project_part.services.email_service.email_aprovacao_solicitacao_fundos import email_aprovacao_solicitacao_fundo_async
 from project_part.services.email_service.email_rejeitar_solicitacao_fundos import email_rejeicao_solicitacao_fundo_async
+from project_part.services.email_service.recuperar_senha import enviar_email_real_async
+from project_part.services.email_service.confirmar_email_cadastro_user import enviar_email_confirmacao_cadastro_user_async
+from project_part.services.email_service.email_cadastro_realizado_sucesso import email_sucesso_cadastro_async
 
 logger = logging.getLogger(__name__)
 
@@ -290,6 +293,54 @@ async def tarefa_rejeicao_solicitacao_fundo(
         raise EnvioEmailFalhou('Falha ao enviar o e-mail de rejeição de solicitação de fundo')
 
 
+
+# ---------------------------------------------------------------------------
+# Tarefas de envio de e-mails
+# ---------------------------------------------------------------------------
+
+@broker.task(task_name='email.recuperacao_senha', retry_on_error=True, max_retries=3)
+async def tarefa_recuperacao_senha(
+    email_destino: str,
+    token: str,
+    nome_completo: str
+):
+    resultado = await enviar_email_real_async(
+        email_destino = email_destino,
+        token = token,
+        nome_completo = nome_completo
+    )
+    if resultado is None:
+        await asyncio.sleep(RETRY_ESPERA_S)
+        raise EnvioEmailFalhou('Falha ao enviar o e-mail de rejeição de solicitação de fundo')
+
+
+@broker.task(task_name='email.confirmacao_cadastro_user', retry_on_error=True, max_retries=3)
+async def tarefa_confirmacao_cadastro_user(
+    email_destino: str,
+    secret_number: int,
+    nome_completo: str
+):
+    resultado = await enviar_email_confirmacao_cadastro_user_async(
+        email_destino=email_destino,
+        secret_number=secret_number,
+        nome_completo=nome_completo
+    )
+    if resultado is None:
+        await asyncio.sleep(RETRY_ESPERA_S)
+        raise EnvioEmailFalhou('Falha ao enviar o e-mail de rejeição de solicitação de fundo')
+
+@broker.task(task_name='email.cadastro_realizado_sucesso', retry_on_error=True, max_retries=3)
+async def tarefa_cadastro_realizado_sucesso(
+    nome_completo: str,
+    email_destino: str
+):
+    resultado = await email_sucesso_cadastro_async(
+        nome_completo=nome_completo,
+        email_destino=email_destino
+    )
+    if resultado is None:
+        await asyncio.sleep(RETRY_ESPERA_S)
+        raise EnvioEmailFalhou('Falha ao enviar o e-mail de cadastro realizado com sucesso')
 # ---------------------------------------------------------------------------
 # Enfileirar com plano B (chamado pelos endpoints)
 # ---------------------------------------------------------------------------
@@ -563,5 +614,53 @@ async def enviar_rejeicao_solicitacao_fundo(
         motivo_rejeicao=motivo_rejeicao,
         provincia=provincia,
         quantia=quantia,
+    )
+
+
+async def enviar_email_recuperacao_senha(
+    background: BackgroundTasks,
+    *,
+    email_destino: str,
+    token: str,
+    nome_completo: str  
+):
+    await _enfileirar(
+        tarefa_recuperacao_senha,
+        enviar_email_real_async,
+        background,
+        email_destino=email_destino,
+        token=token,
+        nome_completo=nome_completo
+    )
+
+
+async def enviar_email_confirmacao_cadastro(
+    background: BackgroundTasks,
+    *,
+    email_destino: str,
+    secret_number: int,
+    nome_completo: str
+):
+    await _enfileirar(
+        tarefa_confirmacao_cadastro_user,
+        enviar_email_confirmacao_cadastro_user_async,
+        background,
+        email_destino = email_destino,
+        secret_number = secret_number,
+        nome_completo = nome_completo
+    )
+
+async def enviar_email_cadastro_realizado_sucesso(
+    background: BackgroundTasks,
+    *,
+    nome_completo: str,
+    email_destino: str
+):
+    await _enfileirar(
+        tarefa_cadastro_realizado_sucesso,
+        email_sucesso_cadastro_async,
+        background,
+        nome_completo=nome_completo,
+        email_destino=email_destino
     )
 
