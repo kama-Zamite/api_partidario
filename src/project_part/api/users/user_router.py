@@ -71,10 +71,10 @@ from project_part.core.cloudinary_config import (
 )
 from project_part.api.auth.util import set_auth_cookies
 from project_part.services.claudflare_turnfile import verificar_turnstile
-from project_part.services.email_service.solicitacao_cartao_militante import enviar_email_solicitacao_cartao_militante
-from project_part.services.email_service.solicitacao_militancia import enviar_email_solicitacao_militancia
-from project_part.services.email_service.confirmar_email_cadastro_user import enviar_email_confirmacao_cadastro_user_async
-from project_part.services.email_service.email_cadastro_realizado_sucesso import email_sucesso_cadastro_async
+# from project_part.services.email_service.solicitacao_cartao_militante import enviar_email_solicitacao_cartao_militante
+# from project_part.services.email_service.solicitacao_militancia import enviar_email_solicitacao_militancia
+# from project_part.services.email_service.confirmar_email_cadastro_user import enviar_email_confirmacao_cadastro_user_async
+# from project_part.services.email_service.email_cadastro_realizado_sucesso import email_sucesso_cadastro_async
 
 from project_part.tasks.email_tasks import (
     enviar_email_confirmacao_cadastro,

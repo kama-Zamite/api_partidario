@@ -79,7 +79,11 @@ async def lifespan(app: FastAPI):
     fuso_horario = ZoneInfo('Africa/Luanda')
     scheduler.add_job(
         job_quotas,
-        CronTrigger(day=1, hour=2, minute=0, timezone=fuso_horario),  # dia 1, 02:00 (Luanda)
+        CronTrigger(
+            day=5,
+            hour=15,
+            minute=46,
+            timezone=fuso_horario),  # dia 1, 02:00 (Luanda)
         id='job_verificar_quotas',
         replace_existing=True,
         max_instances=1,           # por processo; o lock no Redis cobre vários processos
