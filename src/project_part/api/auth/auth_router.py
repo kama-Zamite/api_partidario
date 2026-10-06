@@ -369,6 +369,7 @@ async def login(
 
     set_auth_cookies(
         response=response,
+        request=request,
         access_token=token_gerado,
         refresh_token=refresh_gerado,
     )
@@ -619,6 +620,7 @@ async def verify_2fa(
     
     set_auth_cookies(
         response=response,
+        request=request,
         access_token=token_gerado,
         refresh_token=refresh_gerado,
     )
@@ -1060,6 +1062,7 @@ async def refresh_token(
 
         set_auth_cookies(
             response=response,
+            request=request,
             access_token=novo_access_token,
             refresh_token=novo_refresh_token,
         )
