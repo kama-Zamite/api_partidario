@@ -185,6 +185,8 @@ async def criar_noticia(
     """
     Publica uma nova notícia vinculando de forma geográfica e assíncrona a imagem à pasta noticias_portal no Cloudinary.
     """
+
+    verificar_permissao_global_pais(scope, current_user)
     pid = None
     mid = None
 
@@ -208,12 +210,12 @@ async def criar_noticia(
             status_code=HTTPStatus.UNPROCESSABLE_ENTITY, detail=e.errors(include_url=False, include_context=False)
         )
 
-    if scope.provincia_id or scope.municipio_id:
-        if not dados_validos.nome_provincia or not dados_validos.nome_municipio:
-            raise HTTPException(
-                status_code=HTTPStatus.BAD_REQUEST,
-                detail='Administradores territoriais precisam informar obrigatoriamente a província e o município da notícia.',
-            )
+    # if scope.provincia_id or scope.municipio_id:
+    #     if not dados_validos.nome_provincia or not dados_validos.nome_municipio:
+    #         raise HTTPException(
+    #             status_code=HTTPStatus.BAD_REQUEST,
+    #             detail='Administradores territoriais precisam informar obrigatoriamente a província e o município da notícia.',
+    #         )
 
     if dados_validos.nome_provincia:
         logger.info('Buscando a província da notícia: %s', dados_validos.nome_provincia)
@@ -225,14 +227,14 @@ async def criar_noticia(
 
         pid = provincia_banco.id
 
-        if scope.provincia_id and pid != scope.provincia_id:
-            logger.warning(
-                'Admin provincial %s impedido de criar em %s.', current_user.id, dados_validos.nome_provincia
-            )
-            raise HTTPException(
-                status_code=HTTPStatus.FORBIDDEN,
-                detail='Acesso negado: Você só pode criar notícias vinculadas à sua província permitida.',
-            )
+        # if scope.provincia_id and pid != scope.provincia_id:
+        #     logger.warning(
+        #         'Admin provincial %s impedido de criar em %s.', current_user.id, dados_validos.nome_provincia
+        #     )
+        #     raise HTTPException(
+        #         status_code=HTTPStatus.FORBIDDEN,
+        #         detail='Acesso negado: Você só pode criar notícias vinculadas à sua província permitida.',
+        #     )
 
         logger.info('Buscando o município da notícia: %s', dados_validos.nome_municipio)
         municipio_banco = await session.scalar(
@@ -553,20 +555,21 @@ async def atualizar_noticia_completa(
     Verifica se a notícia existe, se o administrador tem permissão para atualizar a notícia com base no território e se as novas amarrações de província/município são válidas.
     Se todas as validações passarem, atualiza os detalhes da notícia e retorna uma mensagem de sucesso. Caso contrário, retorna o erro apropriado.
     """
+    verificar_permissao_global_pais(scope, current_user)
     noticia_banco = await session.scalar(select(Noticia).where(Noticia.id == id_news))
     if not noticia_banco:
         raise HTTPException(status_code=HTTPStatus.NOT_FOUND, detail='Notícia não encontrada')
 
-    if scope.provincia_id and scope.provincia_id != noticia_banco.provincia_id:
-        logger.warning('Admin %s bloqueado de atualizar notícia de outro território.', current_user.id)
-        raise HTTPException(
-            status_code=HTTPStatus.FORBIDDEN, detail='Acesso negado: Você não gerencia o território desta notícia.'
-        )
-    if scope.municipio_id and scope.municipio_id != noticia_banco.municipio_id:
-        logger.warning('Admin %s bloqueado de atualizar notícia de outro território.', current_user.id)
-        raise HTTPException(
-            status_code=HTTPStatus.FORBIDDEN, detail='Acesso negado: Você não gerencia o território desta notícia.'
-        )
+    # if scope.provincia_id and scope.provincia_id != noticia_banco.provincia_id:
+    #     logger.warning('Admin %s bloqueado de atualizar notícia de outro território.', current_user.id)
+    #     raise HTTPException(
+    #         status_code=HTTPStatus.FORBIDDEN, detail='Acesso negado: Você não gerencia o território desta notícia.'
+    #     )
+    # if scope.municipio_id and scope.municipio_id != noticia_banco.municipio_id:
+    #     logger.warning('Admin %s bloqueado de atualizar notícia de outro território.', current_user.id)
+    #     raise HTTPException(
+    #         status_code=HTTPStatus.FORBIDDEN, detail='Acesso negado: Você não gerencia o território desta notícia.'
+    #     )
     
     slug_inicial = gerar_slug_automatico(titulo)
     slug_gerado = await gerar_slug_unico(slug_inicial, session)
@@ -608,11 +611,11 @@ async def atualizar_noticia_completa(
 
         pid = provincia_banco.id
 
-        if scope.provincia_id and pid != scope.provincia_id:
-            raise HTTPException(
-                status_code=HTTPStatus.FORBIDDEN,
-                detail='Acesso negado: Nova província informada está fora da sua zona permitida.',
-            )
+        # if scope.provincia_id and pid != scope.provincia_id:
+        #     raise HTTPException(
+        #         status_code=HTTPStatus.FORBIDDEN,
+        #         detail='Acesso negado: Nova província informada está fora da sua zona permitida.',
+        #     )
     mid = None
     if dados_validos.nome_municipio:
         municipio_banco = await session.scalar(
@@ -626,11 +629,11 @@ async def atualizar_noticia_completa(
 
         mid = municipio_banco.id
 
-        if scope.municipio_id and mid != scope.municipio_id:
-            raise HTTPException(
-                status_code=HTTPStatus.FORBIDDEN,
-                detail='Acesso negado: Novo município informado está fora da sua zona permitida.',
-            )
+        # if scope.municipio_id and mid != scope.municipio_id:
+        #     raise HTTPException(
+        #         status_code=HTTPStatus.FORBIDDEN,
+        #         detail='Acesso negado: Novo município informado está fora da sua zona permitida.',
+        #     )
         noticia_banco.municipio_id = mid
     noticia_banco.provincia_id = pid
     try:
@@ -655,27 +658,28 @@ async def eliminar_noticia(
     session: Session,
     caches: Redis,
     current_user: Get_current_user,
-    # _captcha: Claudflare_turnfile,
+    _captcha: Claudflare_turnfile,
     scope: ScopeValid,
 ):
     """Endpoint para deletar uma notícia específica.
     Verifica se a notícia existe e se o administrador tem permissão para deletar a notícia com base no território.
     Se todas as validações passarem, deleta a notícia e retorna uma mensagem de sucesso. Caso contrário, retorna o erro apropriado.
     """
+    verificar_permissao_global_pais(scope, current_user)
     noticia_banco = await session.scalar(select(Noticia).where(Noticia.id == id_news))
     if not noticia_banco:
         raise HTTPException(status_code=HTTPStatus.NOT_FOUND, detail='Notícia não encontrada')
 
-    if scope.provincia_id and scope.provincia_id != noticia_banco.provincia_id:
-        logger.warning('Admin %s bloqueado de deletar notícia de outro território.', current_user.id)
-        raise HTTPException(
-            status_code=HTTPStatus.FORBIDDEN, detail='Acesso negado: Você não gerencia o território desta notícia.'
-        )
-    if scope.municipio_id and scope.municipio_id != noticia_banco.municipio_id:
-        logger.warning('Admin %s bloqueado de deletar notícia de outro território.', current_user.id)
-        raise HTTPException(
-            status_code=HTTPStatus.FORBIDDEN, detail='Acesso negado: Você não gerencia o território desta notícia.'
-        )
+    # if scope.provincia_id and scope.provincia_id != noticia_banco.provincia_id:
+    #     logger.warning('Admin %s bloqueado de deletar notícia de outro território.', current_user.id)
+    #     raise HTTPException(
+    #         status_code=HTTPStatus.FORBIDDEN, detail='Acesso negado: Você não gerencia o território desta notícia.'
+    #     )
+    # if scope.municipio_id and scope.municipio_id != noticia_banco.municipio_id:
+    #     logger.warning('Admin %s bloqueado de deletar notícia de outro território.', current_user.id)
+    #     raise HTTPException(
+    #         status_code=HTTPStatus.FORBIDDEN, detail='Acesso negado: Você não gerencia o território desta notícia.'
+    #     )
 
     imagem_para_apagar = noticia_banco.image_url
     try:

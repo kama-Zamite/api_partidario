@@ -102,10 +102,16 @@ class Settings(BaseSettings):
 
     @computed_field
     def SAMESITE_COOKIE(self) -> str:
-        """Retorna 'none' para produção (exige HTTPS) ou 'lax' para local."""
-
-        return "none" if self.SECURE_COOKIES else "lax"
+        """Sempre 'lax': front e back agora compartilham o mesmo site."""
+        return "lax"
     
+    @computed_field
+    def COOKIE_DOMAIN(self) -> str | None:
+        """Domínio raiz em produção (com ponto), None em local."""
+        return ".militantes.dev" if self.ENV == "production" else None
+
+
+
     @field_validator('ALLOWED_ORIGINS', 'ALLOWED_HOSTS', mode='before')
     @classmethod
     def assemble_cors_origins(cls, valor: str | list[str]) -> list[str]:
