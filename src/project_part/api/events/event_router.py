@@ -423,6 +423,34 @@ async def obter_evento(id_event: uuid.UUID, session: Session):
 
 
 
+
+@event.get('/grande_evento', status_code=HTTPStatus.OK, response_model=EventResponse)
+@limiter.limit('5/minute')
+async def obter_proximo_grande_evento(
+    request: Request,
+    session: Session
+    ):
+    hoje = datetime.now(timezone.utc)
+    
+    query = (
+        select(Event)
+        .where(
+            Event.categoria == EventoCategoriaEnum.ACTO_PUBLICO,
+            Event.data_inicio >= hoje  # Apenas eventos futuros ou a acontecer hoje
+        )
+        .order_by(
+            Event.data_inicio.asc(),         # 1.º Criterio: O mais próximo de acontecer
+            Event.max_participantes.desc()   # 2.º Criterio: Em caso de datas próximas, o maior ganha
+        )
+        .limit(1)  # Traz apenas o grande destaque
+    )
+    grande_evento = await session.scalar(query)
+    if not grande_evento:
+        logger.warning('Nenhum grande evento encontrado.')
+        raise HTTPException(status_code=HTTPStatus.NOT_FOUND, detail='Nenhum grande evento encontrado')
+    
+    return grande_evento
+
 @event.put('/upgrade/{id_event}', status_code=HTTPStatus.OK)
 @limiter.limit('2/minute')
 async def atualizar_evento(
