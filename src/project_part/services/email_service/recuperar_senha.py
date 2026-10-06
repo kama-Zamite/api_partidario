@@ -23,7 +23,7 @@ async def enviar_email_real_async(
         token: str,
         nome_completo: str
         ):
-    link_completo = f"https://app-gestao-plataforma-2026.vercel.app/redefinir-senha?token={token}"
+    link_completo = f"https://militantes.dev/redefinir-senha?token={token}"
     URL_LOGO_OFICIAL = settings.URL_LOGO_UNCLOCK
 
     # 1. Carregar e renderizar o template Jinja2

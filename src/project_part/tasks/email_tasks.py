@@ -23,10 +23,10 @@ from project_part.services.email_service.email_rejeitar_solicitacao_fundos impor
 from project_part.services.email_service.recuperar_senha import enviar_email_real_async
 from project_part.services.email_service.confirmar_email_cadastro_user import enviar_email_confirmacao_cadastro_user_async
 from project_part.services.email_service.email_cadastro_realizado_sucesso import email_sucesso_cadastro_async
-# from project_part.services.email_service.job_emails import (
-#     enviar_email_ativar_quota_async,
-#     enviar_email_quota_vencida_async
-# )
+from project_part.services.email_service.job_emails import (
+    enviar_email_ativar_quota_async,
+    enviar_email_quota_vencida_async
+)
 
 
 logger = logging.getLogger(__name__)
@@ -58,18 +58,18 @@ class EnvioEmailFalhou(RuntimeError):
 #         raise EnvioEmailFalhou('Falha ao enviar o e-mail de notificação de quota vencida')
 
 
-# @broker.task(task_name='email.ativar_quota', retry_on_error=True, max_retries=3)
-# async def tarefa_email_ativar_quota(
-#     nome_completo: str,
-#     email_destinatario: str
-# ) -> None:
-#     resultado = await enviar_email_ativar_quota_async(
-#         nome_completo=nome_completo,
-#         email_destinatario=email_destinatario
-#     )
-#     if resultado is None:
-#         await asyncio.sleep(RETRY_ESPERA_S)
-#         raise EnvioEmailFalhou('Falha ao enviar o e-mail de ativação de quota')
+@broker.task(task_name='email.ativar_quota', retry_on_error=True, max_retries=3)
+async def tarefa_email_ativar_quota(
+    nome_completo: str,
+    email_destinatario: str
+) -> None:
+    resultado = await enviar_email_ativar_quota_async(
+        nome_completo=nome_completo,
+        email_destinatario=email_destinatario
+    )
+    if resultado is None:
+        await asyncio.sleep(RETRY_ESPERA_S)
+        raise EnvioEmailFalhou('Falha ao enviar o e-mail de ativação de quota')
 
 
 # ---------------------------------------------------------------------------
@@ -719,16 +719,16 @@ async def enviar_email_cadastro_realizado_sucesso(
 #         data_vencimento=data_vencimento
 #     )
 
-# async def enviar_email_ativar_quota(
-#     background: BackgroundTasks,
-#     *,
-#     nome_completo: str,
-#     email_destinatario: str
-# ):
-#     await _enfileirar(
-#         tarefa_email_ativar_quota,
-#         enviar_email_ativar_quota_async,
-#         background,
-#         nome_completo=nome_completo,
-#         email_destinatario=email_destinatario
-#     )
+async def enviar_email_ativar_quota(
+    background: BackgroundTasks,
+    *,
+    nome_completo: str,
+    email_destinatario: str
+):
+    await _enfileirar(
+        tarefa_email_ativar_quota,
+        enviar_email_ativar_quota_async,
+        background,
+        nome_completo=nome_completo,
+        email_destinatario=email_destinatario
+    )

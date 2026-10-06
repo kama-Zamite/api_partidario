@@ -80,69 +80,69 @@ async def _verificar_e_notificar_quotas_impl(session_factory):
             )
 
         # ── 2) Novos militantes sem nunca ter quota (Otimizado sem N+1) ─────
-        limite_novos = hoje - timedelta(days=3)
-        limite_dt = datetime.combine(limite_novos, datetime.min.time(), tzinfo=timezone.utc)
+        # limite_novos = hoje - timedelta(days=3)
+        # limite_dt = datetime.combine(limite_novos, datetime.min.time(), tzinfo=timezone.utc)
 
-        # Subquery para verificar se o utilizador possui QUALQUER quota PENDING ou APPROVED
-        possui_quota_ativa_ou_pendente = exists().where(
-            and_(
-                PagamentoQuota.user_id == User.id,
-                PagamentoQuota.status.in_([QuotaStatusEnum.PENDING, QuotaStatusEnum.APPROVED])
-            )
-        )
+        # # Subquery para verificar se o utilizador possui QUALQUER quota PENDING ou APPROVED
+        # possui_quota_ativa_ou_pendente = exists().where(
+        #     and_(
+        #         PagamentoQuota.user_id == User.id,
+        #         PagamentoQuota.status.in_([QuotaStatusEnum.PENDING, QuotaStatusEnum.APPROVED])
+        #     )
+        # )
 
-        query_novos = select(User).where(
-            User.ativo.is_(True),
-            User.cadastrar_militante == CadastrarComo.MILITANTE,
-            User.data_expiracao_quota.is_(None),
-            User.criado_em <= limite_dt,
-            # Correção do cast nativo do SQLAlchemy
-            User.notificado_quota_atraso_em.is_(None),
-            # or_(
-            #     and_(
-            #         extract('month', User.notificado_quota_atraso_em) != hoje.month,
-            #         extract('year', User.notificado_quota_atraso_em) == hoje.year
-            #     ),
-            #     extract('year', User.notificado_quota_atraso_em) < hoje.year
-            # ),
-            # Evita o loop N+1 trazendo apenas quem realmente não tem quotas no banco
-            ~possui_quota_ativa_ou_pendente
-        )
+        # query_novos = select(User).where(
+        #     User.ativo.is_(True),
+        #     User.cadastrar_militante == CadastrarComo.MILITANTE,
+        #     User.data_expiracao_quota.is_(None),
+        #     User.criado_em <= limite_dt,
+        #     # Correção do cast nativo do SQLAlchemy
+        #     User.notificado_quota_atraso_em.is_(None),
+        #     # or_(
+        #     #     and_(
+        #     #         extract('month', User.notificado_quota_atraso_em) != hoje.month,
+        #     #         extract('year', User.notificado_quota_atraso_em) == hoje.year
+        #     #     ),
+        #     #     extract('year', User.notificado_quota_atraso_em) < hoje.year
+        #     # ),
+        #     # Evita o loop N+1 trazendo apenas quem realmente não tem quotas no banco
+        #     ~possui_quota_ativa_ou_pendente
+        # )
 
-        novos = (await session.scalars(query_novos)).all()
+        # novos = (await session.scalars(query_novos)).all()
 
-        for user in novos:
-            # Salvaguarda de mês civil atual na memória
-            if user.notificado_quota_atraso_em and \
-               user.notificado_quota_atraso_em.month == hoje.month and \
-               user.notificado_quota_atraso_em.year == hoje.year:
-                continue
+        # for user in novos:
+        #     # Salvaguarda de mês civil atual na memória
+        #     if user.notificado_quota_atraso_em and \
+        #        user.notificado_quota_atraso_em.month == hoje.month and \
+        #        user.notificado_quota_atraso_em.year == hoje.year:
+        #         continue
 
-            session.add(
-                Notification(
-                    user_id=user.id,
-                    titulo='Ative as suas Quotas',
-                    mensagem=(
-                        f'Olá {user.nome_completo}! Efetue o pagamento da primeira quota '
-                        f'para ativar os benefícios de militante.'
-                    ),
-                    categoria=RoleCategoriaNotificacao.QUOTA,
-                )
-            )
-            user.notificado_quota_atraso_em = hoje
-            logger.info('Notificação novo sem quota → %s', user.email)
+        #     session.add(
+        #         Notification(
+        #             user_id=user.id,
+        #             titulo='Ative as suas Quotas',
+        #             mensagem=(
+        #                 f'Olá {user.nome_completo}! Efetue o pagamento da primeira quota '
+        #                 f'para ativar os benefícios de militante.'
+        #             ),
+        #             categoria=RoleCategoriaNotificacao.QUOTA,
+        #         )
+        #     )
+        #     user.notificado_quota_atraso_em = hoje
+        #     logger.info('Notificação novo sem quota → %s', user.email)
 
-            await enviar_email_ativar_quota_async(
-                nome_completo=user.nome_completo,
-                email_destinatario=user.email
-            )
+        #     await enviar_email_ativar_quota_async(
+        #         nome_completo=user.nome_completo,
+        #         email_destinatario=user.email
+        #     )
         try:
             from project_part.db.audit_helper import processar_auditoria_sessao
             await processar_auditoria_sessao(session)
             await session.commit()
             logger.info(
-                'Job quotas concluído com sucesso. Processados: %s vencidos, %s novos.',
-                len(vencidos), len(novos)
+                'Job quotas concluído com sucesso. Processados: %s vencidos.',
+                len(vencidos),
             )
         except Exception as e:
             await session.rollback()
