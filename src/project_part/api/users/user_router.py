@@ -70,7 +70,7 @@ from project_part.core.cloudinary_config import (
     apagar_foto_perfil_cloudinary,
     compensar_upload_orfao
 )
-from project_part.utils.preparar_quota import preparar_aviso_primeira_quota
+# from project_part.utils.preparar_quota import preparar_aviso_primeira_quota
 from project_part.api.auth.util import set_auth_cookies
 from project_part.services.claudflare_turnfile import verificar_turnstile
 # from project_part.services.email_service.solicitacao_cartao_militante import enviar_email_solicitacao_cartao_militante
