@@ -438,6 +438,10 @@ async def obter_proximo_grande_evento(
             Event.categoria == EventoCategoriaEnum.ACTO_PUBLICO,
             Event.data_inicio >= hoje  # Apenas eventos futuros ou a acontecer hoje
         )
+        .options(
+            selectinload(Event.provincia),
+            selectinload(Event.municipio),
+        )
         .order_by(
             Event.data_inicio.asc(),         # 1.º Criterio: O mais próximo de acontecer
             Event.max_participantes.desc()   # 2.º Criterio: Em caso de datas próximas, o maior ganha
@@ -450,6 +454,8 @@ async def obter_proximo_grande_evento(
         raise HTTPException(status_code=HTTPStatus.NOT_FOUND, detail='Nenhum grande evento encontrado')
     
     return grande_evento
+
+
 
 @event.put('/upgrade/{id_event}', status_code=HTTPStatus.OK)
 @limiter.limit('2/minute')
