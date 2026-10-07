@@ -283,6 +283,8 @@ async def listar_admin_scope(
     Admins regionais só visualizam os escopos
     pertencentes à sua própria área geográfica.
     """
+
+    verificar_permissao_global_pais(scope, current_user)
     logger.info('Usuário %s listando escopos administrativos', current_user.id)
 
     try:

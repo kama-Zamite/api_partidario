@@ -11,22 +11,22 @@ from project_part.core.setting import settings
 
 
 def set_auth_cookies(
-    request: Request,
+    # request: Request,
     response: Response,
     access_token: str,
     refresh_token: str,
 ) -> None:
 
-    origin = request.headers.get("origin") or ""
-    is_localhost = "localhost" in origin
+    # origin = request.headers.get("origin") or ""
+    # is_localhost = "localhost" in origin
 
     common = {
         "httponly": True,
         "secure": settings.SECURE_COOKIES,
-        # "samesite": settings.SAMESITE_COOKIE,
-        "samesite": "none" if is_localhost else "lax",
+        "samesite": settings.SAMESITE_COOKIE,
+        # "samesite": "none",
         "path": "/",
-        "domain": None if is_localhost else settings.COOKIE_DOMAIN,
+        # "domain": None if is_localhost else settings.COOKIE_DOMAIN,
         # "domain": settings.COOKIE_DOMAIN, # <--- Permite que o front e o back compartilhem o cookie
     }
 

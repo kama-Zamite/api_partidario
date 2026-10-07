@@ -100,15 +100,23 @@ class Settings(BaseSettings):
         """Retorna True apenas se o ambiente for produção."""
         return self.ENV == "production"
 
-    @computed_field
-    def SAMESITE_COOKIE(self) -> str:
-        """Sempre 'lax': front e back agora compartilham o mesmo site."""
-        return "lax"
     
     @computed_field
-    def COOKIE_DOMAIN(self) -> str | None:
-        """Domínio raiz em produção (com ponto), None em local."""
-        return ".militantes.dev" if self.ENV == "production" else None
+    def SAMESITE_COOKIE(self) -> str:
+        """Retorna 'none' para produção (exige HTTPS) ou 'lax' para local."""
+
+        return "none" if self.SECURE_COOKIES else "lax"
+    
+
+    # @computed_field
+    # def SAMESITE_COOKIE(self) -> str:
+    #     """Sempre 'lax': front e back agora compartilham o mesmo site."""
+    #     return "lax"
+    
+    # @computed_field
+    # def COOKIE_DOMAIN(self) -> str | None:
+    #     """Domínio raiz em produção (com ponto), None em local."""
+    #     return ".militantes.dev" if self.ENV == "production" else None
 
 
 

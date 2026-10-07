@@ -368,8 +368,8 @@ async def login(
     logger.info('E-mail de aviso de login agendado para %s.', email_log)
 
     set_auth_cookies(
+        # request=request,
         response=response,
-        request=request,
         access_token=token_gerado,
         refresh_token=refresh_gerado,
     )
@@ -619,8 +619,8 @@ async def verify_2fa(
 
     
     set_auth_cookies(
+        # request=request,
         response=response,
-        request=request,
         access_token=token_gerado,
         refresh_token=refresh_gerado,
     )
@@ -1061,8 +1061,8 @@ async def refresh_token(
         # =====================================================
 
         set_auth_cookies(
+            # request=request,
             response=response,
-            request=request,
             access_token=novo_access_token,
             refresh_token=novo_refresh_token,
         )
