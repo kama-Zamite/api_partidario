@@ -43,7 +43,6 @@ class ResponseAdminScopeBase(BaseModel):
 
 
 
-
 class ResponseAdminScope(BaseModel):
     id: uuid.UUID
     provincia: str | None = None
@@ -67,20 +66,34 @@ class ResponseAdminScope(BaseModel):
     @field_validator('provincia', mode='before')
     @classmethod
     def extrair_nome_provincia(cls, v: Any) -> Optional[str]:
-        if v and hasattr(v, 'nome_provincia'):
+        # 1. Se for explicitamente None ou vazio, permite e retorna None
+        if v is None or v == "":
+            return None
+        
+        # 2. Se for o objeto do relacionamento da BD
+        if hasattr(v, 'nome_provincia'):
             return getattr(v, 'nome_provincia')
     
+        # 3. Se já for uma string válida
         if isinstance(v, str):
             return v
+            
         raise ValueError('Província inválida ou ausente')
     
     @field_validator('municipio', mode='before')
     @classmethod
     def extrair_nome_municipio(cls, v: Any) -> Optional[str]:
-        if v and hasattr(v, 'nome_municipio'):
+        # 1. Se for explicitamente None ou vazio, permite e retorna None
+        if v is None or v == "":
+            return None
+            
+        # 2. Se for o objeto do relacionamento da BD
+        if hasattr(v, 'nome_municipio'):
             return getattr(v, 'nome_municipio')
+            
         if isinstance(v, str):
             return v
+            
         raise ValueError('Município inválido ou ausente')
 
 
