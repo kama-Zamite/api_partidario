@@ -94,6 +94,8 @@ from project_part.model.models import (
 #     AcaoMovimentoEnum,
 # )
 
+from project_part.services.claudflare_turnfile import verificar_turnstile
+
 from .schemas import (
     CreateAdminScope,
     PaginatedAuditLogs,
@@ -135,6 +137,7 @@ from .util import (
     to_solicitacao_response,
 )
 logger = logging.getLogger(__name__)
+Claudflare_turnfile = Annotated[bool, Depends(verificar_turnstile)]
 Session = Annotated[AsyncSession, Depends(get_session)]
 Redis = Annotated[AsyncRedis, Depends(get_redis)]
 ScopeValid = Annotated[AdminScope, Depends(garante_escopo_territorial)]
@@ -149,6 +152,7 @@ async def criar_scope(
     schema: CreateAdminScope,
     session: Session, 
     redis: Redis,
+    _captcha: Claudflare_turnfile,
     current_user: Get_current_user,
     scope: ScopeValid
 ):
@@ -3039,6 +3043,7 @@ async def criar_solicitacao_fundo(
     request: Request,
     body: SolicitacaoFundoCreate,
     session: Session,
+    _captcha: Claudflare_turnfile,
     current_user: Get_current_user,
     scope: ScopeValid,
     background: BackgroundTasks
@@ -3875,7 +3880,14 @@ async def marcar_como_lida(
 
 
 @admin.get('/scope/{scope_id}', status_code=HTTPStatus.OK, response_model=ResponseAdminScope)
-async def obter_escopo_por_id(scope_id: uuid.UUID, session: Session, current_user: Get_current_user, scope: ScopeValid):
+@limiter.limit('30/minute')
+async def obter_escopo_por_id(
+    request: Request,
+    scope_id: uuid.UUID,
+    session: Session,
+    current_user: Get_current_user,
+    scope: ScopeValid
+):
     """
     Retorna os detalhes de um escopo de administração específico por ID.
     Garante que admins regionais não auditem escopos fora de sua jurisdição.
@@ -3899,7 +3911,10 @@ async def obter_escopo_por_id(scope_id: uuid.UUID, session: Session, current_use
 
 
 @admin.delete('/scope/{scope_id}', status_code=HTTPStatus.OK)
+@limiter.limit('3/minute')
 async def remover_escopo_administrativo(
+    request: Request,
+    _captcha: Claudflare_turnfile,
     scope_id: uuid.UUID,
     session: Session,
     redis: Redis,
@@ -3984,8 +3999,11 @@ async def remover_escopo_administrativo(
 
 
 @admin.put('/role/militante-upgrade/{id_militante}', status_code=HTTPStatus.OK)
+@limiter.limit('4/minute')
 async def upgrade_role_user(
     id_militante: uuid.UUID,
+    request: Request,
+    _captcha: Claudflare_turnfile,
     session: Session,
     current_user: Get_current_user,
     scope: ScopeValid,
@@ -4052,7 +4070,10 @@ async def upgrade_role_user(
 
 
 @admin.post('/card/militante/{id_militante}/aprovado', status_code=HTTPStatus.OK)
+@limiter.limit('4/minute')
 async def militante_card(
+    request: Request,
+    _captcha: Claudflare_turnfile,
     session: Session,
     current_user: Get_current_user,
     scope: ScopeValid,
@@ -4235,93 +4256,11 @@ async def militante_card(
         )
 
 
-# @admin.post('/card/militante/{id_militante}/rejeitar', status_code=HTTPStatus.OK)
-# async def rejeitar_militante_card(
-#     session: Session,
-#     current_user: Get_current_user,
-#     scope: ScopeValid,
-#     id_militante: uuid.UUID,
-#     # backgroundTasks: BackgroundTasks,
-#     observacao: str = Form(
-#         ..., min_length=5, description='Descrever detalhadamente a irregularidade ou motivo da rejeição'
-#     ),
-# ):
-#     logger.info('A processar rejeição da solicitação para o utilizador: %s...', id_militante)
-
-#     query = select(User).where(User.id == id_militante)
-#     usuario_banco = await session.scalar(query)
-
-#     if not usuario_banco:
-#         raise HTTPException(
-#             status_code=HTTPStatus.NOT_FOUND, detail=f'Nenhum usuário com id: [{id_militante}] ativo foi encontrado!'
-#         )
-
-#     # Procura a solicitação pendente
-#     solicitacao = await session.scalar(
-#         select(SolicitacaoCartao).where(
-#             SolicitacaoCartao.user_id == id_militante, SolicitacaoCartao.status == StatusSolicitacao.PENDENTE
-#         )
-#     )
-#     if not solicitacao:
-#         raise HTTPException(
-#             status_code=HTTPStatus.BAD_REQUEST, detail='Nenhuma solicitação pendente encontrada para este usuário.'
-#         )
-
-#     # Validação de Escopo Regional (Garante que administradores regionais só rejeitam da sua área)
-#     if scope.provincia_id is not None:
-#         if usuario_banco.provincia_id != scope.provincia_id:
-#             raise HTTPException(
-#                 status_code=HTTPStatus.FORBIDDEN, detail='Operação negada. Região geográfica diferente.'
-#             )
-#     # elif scope.municipio_id is not None:
-#     #     if usuario_banco.municipio_id != scope.municipio_id:
-#     #         raise HTTPException(
-#     #             status_code=HTTPStatus.FORBIDDEN, detail='Operação negada. Região geográfica diferente.'
-#     #         )
-
-#     # 1. Atualiza o estado da solicitação existente para REJEITADO e grava o motivo
-#     solicitacao.status = StatusSolicitacao.REJEITADO
-#     solicitacao.observacao = observacao
-
-#     # 2. Cria a notificação de rejeição para a tabela interna
-#     nova_notificacao = Notification(
-#         user_id=usuario_banco.id,
-#         titulo='Solicitação de Cartão Rejeitada',
-#         mensagem=f'Olá {usuario_banco.nome_completo}, a sua solicitação de cartão foi recusada.',
-#         motivo = f'{observacao}',
-#         destinatario='MILITANTE',
-#     )
-
-#     session.add(solicitacao)
-#     session.add(nova_notificacao)
-
-#     try:
-#         await session.commit()
-
-#         # 3. Dispara o e-mail dinâmico. O Jinja2 vai ler "Rejeitado" e pintar a tabela de Vermelho automaticamente!
-#         # backgroundTasks.add_task(
-#         #     enviar_resposta_solicitacao_cartao_militante,
-#         #     email_destino=usuario_banco.email,
-#         #     nome_militante=usuario_banco.nome_completo,
-#         #     numero_militante=usuario_banco.militante_numero or "Não Atribuído",
-#         #     status_pedido="Rejeitado", # Passa o estado dinâmico correto para o template
-#         #     observacoes=observacao
-#         # )
-
-#         logger.info('Solicitação do utilizador %s rejeitada e e-mail agendado.', usuario_banco.id)
-#         return {'msg': 'Solicitação rejeitada com sucesso e utilizador notificado.'}
-
-#     except IntegrityError as e:
-#         await session.rollback()
-#         logger.error('Erro ao rejeitar solicitação do usuário %s: %s', id_militante, str(e))
-#         raise HTTPException(
-#             status_code=HTTPStatus.INTERNAL_SERVER_ERROR, detail='Erro interno ao processar a rejeição.'
-#         )
-
-
-
 @admin.post('/card/militante/{id_militante}/rejeitar', status_code=HTTPStatus.OK)
+@limiter.limit('4/minute')
 async def rejeitar_militante_card(
+    request: Request,
+    _captcha: Claudflare_turnfile,
     session: Session,
     current_user: Get_current_user,
     scope: ScopeValid,
@@ -4412,9 +4351,11 @@ async def rejeitar_militante_card(
 
 
 @admin.post('/doacoes/{doacao_id}/aprovar', status_code=HTTPStatus.OK)
+@limiter.limit('5/minute')
 async def aprovar_doacao(
     request: Request,
     doacao_id: uuid.UUID,
+    _captcha: Claudflare_turnfile,
     session: Session,
     current_user: Get_current_user,
     scope: ScopeValid,
@@ -4557,7 +4498,7 @@ async def aprovar_doacao(
 
 
 @admin.post('/doacoes/{doacao_id}/rejeitar', status_code=HTTPStatus.OK)
-# @limiter.limit('20/minute')
+@limiter.limit('4/minute')
 async def rejeitar_doacao(
     request: Request,
     doacao_id: uuid.UUID,
@@ -4565,6 +4506,7 @@ async def rejeitar_doacao(
     session: Session,
     current_user: Get_current_user,
     scope: ScopeValid,
+    _captcha: Claudflare_turnfile,
     backgroundTasks: BackgroundTasks,  # Adicionei para futuras tarefas assíncronas, como envio de e-mails
 ):
     doacao = await session.scalar(
@@ -4724,8 +4666,10 @@ async def rejeitar_doacao(
 
 
 @admin.post('/quotas/{quota_id}/aprovar', status_code=HTTPStatus.OK)
+@limiter.limit('10/minute')
 async def aprovar_quota(
     request: Request,
+    _captcha: Claudflare_turnfile,
     quota_id: uuid.UUID,
     session: Session,
     background_tasks: BackgroundTasks,
@@ -4885,10 +4829,11 @@ async def aprovar_quota(
 
 
 @admin.post('/quotas/{quota_id}/rejeitar', status_code=HTTPStatus.OK)
-# @limiter.limit('20/minute')
+@limiter.limit('10/minute')
 async def rejeitar_quota(
     request: Request,
     quota_id: uuid.UUID,
+    _captcha: Claudflare_turnfile,
     body: QuotaRejeitar,
     session: Session,
     current_user: Get_current_user,
@@ -4984,10 +4929,11 @@ async def rejeitar_quota(
     status_code=HTTPStatus.OK,
     response_model=SolicitacaoFundoResponse,
 )
-# @limiter.limit('20/minute')
+@limiter.limit('10/minute')
 async def aprovar_solicitacao_fundo(
     request: Request,
     solicitacao_id: uuid.UUID,
+    _captcha: Claudflare_turnfile,
     session: Session,
     current_user: Get_current_user,
     scope: ScopeValid,
@@ -5113,10 +5059,11 @@ async def aprovar_solicitacao_fundo(
     status_code=HTTPStatus.OK,
     response_model=SolicitacaoFundoResponse,
 )
-# @limiter.limit('20/minute')
+@limiter.limit('10/minute')
 async def rejeitar_solicitacao_fundo(
     request: Request,
     solicitacao_id: uuid.UUID,
+    _captcha: Claudflare_turnfile,
     body: SolicitacaoFundoRejeitar,
     session: Session,
     current_user: Get_current_user,
@@ -5221,10 +5168,11 @@ async def rejeitar_solicitacao_fundo(
     status_code=HTTPStatus.OK,
     response_model=ReativarUserResponse,
 )
-# @limiter.limit('10/minute')
+@limiter.limit('10/minute')
 async def reativar_user(
     request: Request,
     user_id: uuid.UUID,
+    _captcha: Claudflare_turnfile,
     session: Session,
     caches: Redis,
     current_user: Get_current_user,
