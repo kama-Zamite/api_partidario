@@ -5,13 +5,13 @@ services:
     build: .
     environment:
       - PYTHONPATH=/app/src  
-      - TRUSTED_PROXIES=127.0.0.1,::1,172.16.0.0/12,172.17.0.0/12,172.18.0.0/12,172.19.0.0/12 
+      # - TRUSTED_PROXIES=127.0.0.1,::1,172.16.0.0/12,172.17.0.0/12,172.18.0.0/12,172.19.0.0/12 
     env_file:
       - .env
-    expose:
-      - "10000"
-    # ports:
-    #   - "10000:10000"
+    # expose:
+    #   - "10000"
+    ports:
+      - "127.0.0.1:10000:10000"
     # volumes:
     #   - .:/app
     networks:
@@ -64,20 +64,24 @@ services:
       timeout: 3s
       retries: 5
 
-  nginx_proxy:
-    image: nginx:${NGINX_VERSION}
-    container_name: nginx_server
-    ports:
-      - "80:80"
-      - "443:443"
-    volumes:
-      - ./nginx_config/nginx.conf:/etc/nginx/templates/nginx.conf.template:ro
-      - ./certs:/etc/ssl/certs:ro
-    networks:
-      - app_network
-    depends_on:
-      server_api:
-        condition: service_healthy
+
+
+  # nginx_proxy:
+  #   image: nginx:${NGINX_VERSION}
+  #   container_name: nginx_server
+  #   ports:
+  #     - "80:80"
+  #     - "443:443"
+  #   volumes:
+  #     - ./nginx_conf:/etc/nginx/conf.d:ro
+  #     - ./certs:/etc/ssl/certs:ro
+  #   networks:
+  #     - app_network
+  #   depends_on:
+  #     server_api:
+  #       condition: service_healthy
+
+
 
   adminer:
     image: adminer:${ADMINER_VERSION}

@@ -369,17 +369,18 @@ async def listar_noticias(
     )
 
     result = await session.execute(query)
-    noticias = result.scalars().all()
+    # Adicionado .unique() para prevenir erros de linhas duplicadas causados pelo selectinload
+    noticias = result.scalars().unique().all()
 
     if not noticias:
         return []
 
-    # ── 3. Serializa e grava no cache ──────────────────────────────────────
+    # ── 3. Serializa, converte e grava no cache ────────────────────────────
     try:
-        # 1. Converte ORM → Pydantic (com from_attributes=True)
+        # CORREÇÃO E OTIMIZAÇÃO: Converte ORM diretamente para Pydantic num único passo limpo
         noticias_response = TypeAdapter(List[NoticiaResponse]).validate_python(noticias)
 
-        # 2. Gera dicts JSON-serializáveis
+        # O dump_python extrai o dicionário cru pronto para serialização em string JSON
         payload = TypeAdapter(List[NoticiaResponse]).dump_python(
             noticias_response, mode='json'
         )
@@ -391,80 +392,14 @@ async def listar_noticias(
         )
     except Exception as err:
         logger.error("Falha ao gravar cache de notícias [%s]: %s", cache_key, err)
-    logger.info("Notícias [%d] carregadas do banco e cache atualizado.", len(noticias))
-    return noticias
-
-
-
-
-@news_router.get(
-    '/list',
-    status_code=HTTPStatus.OK,
-    response_model=List[NoticiaResponse],
-)
-async def listar_noticias(
-    response: Response,
-    session: Session,
-    redes: Redis,
-    pagin: Paginacao,
-):
-    """
-    Endpoint de alta performance para listar notícias com paginação.
-    Utiliza cache Redis com chave parametrizada por skip/limit.
-    """
-    cache_key = f"{CACHE_KEY_NOTICIAS}:skip={pagin.skip}:limit={pagin.limit}"
-    response.headers['X-Cache-Hit'] = 'false'
-
-    # ── 1. Tenta ler do cache ──────────────────────────────────────────────
-    try:
-        cached = await redes.get(cache_key)
-        if cached:
-            response.headers['X-Cache-Hit'] = 'true'
-            logger.info("Cache de notícias [%s] encontrado e retornado.", cache_key)
-            return TypeAdapter(List[NoticiaResponse]).validate_python(
-                json.loads(cached)
-            )
-    except Exception as err:
-        logger.error("Falha ao ler cache de notícias [%s]: %s", cache_key, err)
-
-    # ── 2. Busca no banco ──────────────────────────────────────────────────
-    query = (
-        select(Noticia)
-        .where(Noticia.status == NoticiasStatusEnum.PUBLICADO)
-        .options(
-            selectinload(Noticia.provincia),
-            selectinload(Noticia.municipio),
-        )
-        .order_by(Noticia.publicado_as.desc())
-        .limit(pagin.limit)
-        .offset(pagin.skip)
-    )
-
-    result = await session.execute(query)
-    noticias = result.scalars().all()
-
-    if not noticias:
-        return []
-
-    # ── 3. Serializa e grava no cache ──────────────────────────────────────
-    try:
-        # 1. Converte ORM → Pydantic (com from_attributes=True)
+        # Em caso de falha no cache, geramos a resposta Pydantic para garantir o retorno seguro
         noticias_response = TypeAdapter(List[NoticiaResponse]).validate_python(noticias)
 
-        # 2. Gera dicts JSON-serializáveis
-        payload = TypeAdapter(List[NoticiaResponse]).dump_python(
-            noticias_response, mode='json'
-        )
-
-        await redes.set(
-            cache_key,
-            json.dumps(payload),
-            ex=CACHE_TTL_NOTICIAS,
-        )
-    except Exception as err:
-        logger.error("Falha ao gravar cache de notícias [%s]: %s", cache_key, err)
     logger.info("Notícias [%d] carregadas do banco e cache atualizado.", len(noticias))
-    return noticias
+    
+    # CORREÇÃO CRÍTICA: Retorna a lista de objetos já validados pelo Pydantic, 
+    # evitando que o FastAPI tente ler relacionamentos do ORM fora do loop assíncrono.
+    return noticias_response
 
 
 

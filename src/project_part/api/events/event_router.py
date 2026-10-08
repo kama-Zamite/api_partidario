@@ -36,6 +36,7 @@ from project_part.core.secury import (
     garante_escopo_territorial,
     verificar_permissao_global_pais,
 )
+from project_part.services.claudflare_turnfile import verificar_turnstile
 from project_part.db.cache import get_redis
 from project_part.db.session import get_session
 from project_part.model.models import (
@@ -59,6 +60,7 @@ from .schemas import (
 )
 
 logger = logging.getLogger(__name__)
+Claudflare_turnfile = Annotated[bool, Depends(verificar_turnstile)]
 Redis = Annotated[AsyncRedis, Depends(get_redis)]
 Session = Annotated[AsyncSession, Depends(get_session)]
 Paginacao = Annotated[LimitEvent, Depends()]
@@ -79,6 +81,7 @@ async def criar_evento(
     session: Session,
     caches: Redis,
     current_user: Get_current_user,
+    _captcha: Claudflare_turnfile,
     scope: ScopeValid,                                       
     titulo: str = Form(..., max_length=200),
     descricao: str = Form(...),
@@ -332,6 +335,7 @@ async def listar_eventos(
     }
 
 
+
 @event.get(
     '/list',
     status_code=HTTPStatus.OK,
@@ -356,9 +360,8 @@ async def listar_eventos(
         if cached:
             response.headers['X-Cache-Hit'] = 'true'
             logger.info("Cache de eventos [%s] encontrado.", cache_key)
-            return TypeAdapter(EventosPaginadosResponse).validate_python(
-                json.loads(cached)
-            )
+            # CORREÇÃO: json.loads converte a string do Redis direto para dict
+            return EventosPaginadosResponse.model_validate(json.loads(cached))
     except Exception as err:
         logger.error("Falha ao ler cache de eventos [%s]: %s", cache_key, err)
 
@@ -379,24 +382,25 @@ async def listar_eventos(
     # Aplica paginação só na query de dados
     query = query.limit(pagin.limit).offset(pagin.skip)
     resultado = await session.scalars(query)
-    eventos = resultado.all()
+    
+    # CORREÇÃO: Adicionado .unique() para garantir a extração correta de linhas com selectinload
+    eventos = resultado.unique().all()
 
     # ── 3. Monta a resposta ────────────────────────────────────────────────
-    # Preferível retornar lista vazia + total=0 em vez de 404
     resposta = EventosPaginadosResponse(
         total=total_eventos,
-        eventos=eventos,          # Pydantic converte via from_attributes=True
+        eventos=eventos,
     )
 
     # ── 4. Grava no cache ──────────────────────────────────────────────────
     try:
-        payload = TypeAdapter(EventosPaginadosResponse).dump_python(
-            resposta, mode='json'
-        )
+        # CORREÇÃO: dump_python(mode='json') já gera o dicionário primitivo limpo,
+        # passamos o dicionário para o json.dumps para guardar como string linear no Redis
+        payload = resposta.model_dump(mode='json')
         await caches.set(
             cache_key,
             json.dumps(payload),
-            ex=CACHE_TTL_EVENTOS,   # 3600 = 1 hora
+            ex=CACHE_TTL_EVENTOS,
         )
     except Exception as err:
         logger.error("Falha ao gravar cache de eventos [%s]: %s", cache_key, err)
@@ -465,6 +469,7 @@ async def atualizar_evento(
     session: Session,
     caches: Redis,
     current_user: Get_current_user,
+    _captcha: Claudflare_turnfile,
     scope: ScopeValid,
     titulo: str = Form(..., max_length=200),
     descricao: str = Form(...),
@@ -621,6 +626,7 @@ async def atualizar_evento(
 async def deletar_evento(
     request: Request,
     id_event: uuid.UUID,
+    _captcha: Claudflare_turnfile,
     session: Session,
     caches: Redis,
     current_user: Get_current_user,
