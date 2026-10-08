@@ -23,7 +23,9 @@ EXPOSE 10000
 
 ENTRYPOINT ["uvicorn"]
 
-CMD ["src.project_part.main:app", "--host", "0.0.0.0", "--port", "10000", "--proxy-headers", "--forwarded-allow-ips=*"]
+# CMD ["src.project_part.main:app", "--host", "0.0.0.0", "--port", "10000", "--proxy-headers", "--forwarded-allow-ips=*"]
+
+CMD ["src.project_part.main:app", "--host", "0.0.0.0", "--port", "10000", "--no-proxy-headers"]
 
 
 
