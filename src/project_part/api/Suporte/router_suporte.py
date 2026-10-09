@@ -139,7 +139,7 @@ async def enviar_mensagem_suporte(
     # await enviar_email_suporte(nova_mensagem)
 
     tipo_categoria = None
-    if dados_validos.categoria == CategoriaMensagemSuporte.SUGESTAO:
+    if dados_validos.categoria == CategoriaMensagemSuporte.SUGESTOES:
         tipo_categoria = "Sugestão"
     elif dados_validos.categoria == CategoriaMensagemSuporte.PROBLEMA_DE_CONTA:
         tipo_categoria = "Reclamação"
