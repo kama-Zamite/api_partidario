@@ -28,11 +28,11 @@ ENTRYPOINT ["uvicorn"]
 
 
 # Maquina de desenvolvimento local (sem proxy reverso)
-CMD ["src.project_part.main:app", "--host", "0.0.0.0", "--port", "10000", "--no-proxy-headers"]
+# CMD ["src.project_part.main:app", "--host", "0.0.0.0", "--port", "10000", "--no-proxy-headers"]
 
 # para a render
 
-# CMD ["src.project_part.main:app", "--host", "0.0.0.0", "--port", "10000", "--proxy-headers", "--forwarded-allow-ips=127.0.0.1"]
+CMD ["src.project_part.main:app", "--host", "0.0.0.0", "--port", "10000", "--proxy-headers", "--forwarded-allow-ips=127.0.0.1"]
 
 
 

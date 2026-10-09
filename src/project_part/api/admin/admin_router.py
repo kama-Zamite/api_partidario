@@ -288,7 +288,6 @@ async def listar_admin_scope(
     pertencentes à sua própria área geográfica.
     """
 
-    verificar_permissao_global_pais(scope, current_user)
     logger.info('Usuário %s listando escopos administrativos', current_user.id)
 
     try:
