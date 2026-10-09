@@ -756,6 +756,11 @@ async def create_user(
     }
 
 
+def get_client_ip(request: Request) -> str | None:
+    forwarded = request.headers.get("x-forwarded-for")
+    if forwarded:
+        return forwarded.split(",")[0].strip()  # só o primeiro IP
+    return request.client.host if request.client else None
 
 @user.post("/confirm-email", status_code=HTTPStatus.CREATED)
 @limiter.limit("3/minute; 10/day")
@@ -905,7 +910,7 @@ async def confirmar_email_cadastro(
     destinatario_tipo = None
     tipo = None
     tipo_pagamento = None
-    if novo_usuario.cadastrar_militante == CadastrarComo.MILITANTE or novo_usuario.cadastrar_militante == "MILITANTE":
+    if novo_usuario.cadastrar_militante == CadastrarComo.MILITANTE:
         destinatario_tipo = "MILITANTE"
         tipo = "Militante"
         tipo_pagamento = "o pagamento da sua quota inicial"
@@ -925,9 +930,9 @@ async def confirmar_email_cadastro(
     try:
         session.add(notification)
         await session.flush()  # Flush para garantir que o ID da notificação é gerado
-        avisar_quota = user.cadastrar_militante == CadastrarComo.MILITANTE
+        avisar_quota = novo_usuario.cadastrar_militante == CadastrarComo.MILITANTE
 
-        nome, email = user.nome_completo, user.email
+        nome, email = novo_usuario.nome_completo, novo_usuario.email
         await session.commit()
 
         if avisar_quota:
@@ -951,10 +956,8 @@ async def confirmar_email_cadastro(
     # 10. Autenticação (mesmo estilo da rota nova)
     token_gerado = emitir_access_token(novo_usuario.id, novo_usuario.password_alterado_em)
 
-    ip_address = (
-        request.headers.get("x-forwarded-for")
-        or (request.client.host if request.client else None)
-    )
+    ip_address = get_client_ip(request)
+
     user_agent = request.headers.get("user-agent")
     try:
         refresh_gerado = await gerar_e_registar_refresh_token(
