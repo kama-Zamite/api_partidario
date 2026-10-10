@@ -90,8 +90,11 @@ async def create_provincia(
 @limiter.limit('5/minute')
 async def criar_municipio(
     request: Request,
-    schemas: CreateMunicipio, session: Session, redis: Redis,
-    current_user: Get_current_user, scope: ScopeValid
+    schemas: CreateMunicipio,
+    session: Session,
+    redis: Redis,
+    current_user: Get_current_user,
+    scope: ScopeValid
 ):
     verificar_permissao_global_pais(scope, current_user)
 
@@ -167,7 +170,7 @@ async def listar_provincias(
 @limiter.limit('5/minute')
 async def atualizar_provincia(
     request: Request,
-    id_provincia: uuid.UUID,
+    id_provincia: int,
     schemas: FindProvincia,
     session: Session,
     redis: Redis,
@@ -210,7 +213,7 @@ async def atualizar_provincia(
 @limiter.limit('2/minute')
 async def eliminar_provincia(
     request: Request,
-    id_provincia: uuid.UUID,
+    id_provincia: int,
     session: Session,
     redis: Redis,
     current_user: Get_current_user,
@@ -247,7 +250,7 @@ async def eliminar_provincia(
 @limiter.limit('5/minute')
 async def atualizar_municipio(
     request: Request,
-    id_municipio: uuid.UUID,
+    id_municipio: int,
     schemas: UpgradeMunicipio,
     session: Session,
     redis: Redis,
@@ -297,7 +300,7 @@ async def atualizar_municipio(
 @limiter.limit('2/minute')
 async def eliminar_municipio(
     request: Request,
-    id_municipio: uuid.UUID,
+    id_municipio: int,
     schemas: DeleteMunicipio,
     session: Session,
     redis: Redis,
@@ -338,7 +341,7 @@ async def eliminar_municipio(
 @limiter.limit('15/minute')
 async def lista_provincia(
     request: Request,
-    id_provincia: uuid.UUID,
+    id_provincia: int,
     response: Response,
     session: Session,
     redis: Redis,
