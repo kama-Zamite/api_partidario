@@ -149,7 +149,7 @@ privacy = APIRouter(prefix="/privacy", tags=["Privacidade"])
 
 
 @privacy.post('/solicitar-dados', summary='Descarregar todos os dados do utilizador')
-@limiter.limit("1/minute, 2/hour, 4/day")  # Limite de taxa para evitar abuso
+@limiter.limit("3/minute, 7/hour, 10/day")  # Limite de taxa para evitar abuso
 async def descarregar_dados_utilizador(
     request: Request,
     session: Session,
@@ -320,7 +320,9 @@ async def descarregar_dados_utilizador(
         )
 
 @privacy.patch('/partilhar-dados', summary='Atualizar definições de privacidade')
+@limiter.limit("7/minute, 10/hour, 15/day") 
 async def partilhar_dados(
+    request: Request,
     dados: PartilharDados,
     session: Session,
     current_user: Get_current_user
@@ -357,7 +359,9 @@ async def partilhar_dados(
     
 
 @privacy.patch('/cookies-personalizado', summary='Atualizar definições de privacidade')
+@limiter.limit("7/minute, 10/hour, 15/day")
 async def atualizar_privacidade(
+    request: Request,
     dados: CookiesPersonalizacao,
     session: Session,
     current_user: Get_current_user

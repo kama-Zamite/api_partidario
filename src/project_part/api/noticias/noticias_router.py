@@ -22,6 +22,7 @@ from fastapi import (
 from pydantic import TypeAdapter, ValidationError
 from redis.asyncio import Redis as AsyncRedis
 from sqlalchemy import select
+from project_part.core.rate_limit import limiter
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -330,7 +331,9 @@ async def criar_noticia(
     status_code=HTTPStatus.OK,
     response_model=List[NoticiaResponse],
 )
+@limiter.limit('15/minute')
 async def listar_noticias(
+    request: Request,
     response: Response,
     session: Session,
     redes: Redis,
@@ -404,7 +407,9 @@ async def listar_noticias(
 
 
 @news_router.get('/{id_news}', status_code=HTTPStatus.OK, response_model=NoticiaResponse)
+@limiter.limit('15/minute')
 async def obter_noticia(
+    request: Request,
     id_news: uuid.UUID,
     session: Session
     ):
@@ -468,7 +473,7 @@ async def obter_noticia(
 
 
 @news_router.put('/{id_news}', status_code=HTTPStatus.OK)
-@limiter.limit('1/minute')
+@limiter.limit('3/minute')
 async def atualizar_noticia_completa(
     request: Request,
     id_news: uuid.UUID,

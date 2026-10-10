@@ -268,7 +268,9 @@ async def criar_evento(
 
     
 @event.get('/current_user/list/', status_code=HTTPStatus.OK, response_model=EventosPaginadosResponse) # <-- Atualize o schema aqui
+@limiter.limit('15/minute')
 async def listar_eventos(
+    request: Request,
     response: Response,
     session: Session,
     caches: Redis,
@@ -341,7 +343,9 @@ async def listar_eventos(
     status_code=HTTPStatus.OK,
     response_model=EventosPaginadosResponse,
 )
+@limiter.limit('15/minute')
 async def listar_eventos(
+    request: Request,
     response: Response,
     session: Session,
     caches: Redis,
@@ -410,7 +414,12 @@ async def listar_eventos(
 
 
 @event.get('/get/{id_event}', status_code=HTTPStatus.OK, response_model=EventResponse)
-async def obter_evento(id_event: uuid.UUID, session: Session):
+@limiter.limit('10/minute')
+async def obter_evento(
+    request: Request,
+    id_event: uuid.UUID,
+    session: Session
+    ):
     """Endpoint para obter os detalhes de um evento específico pelo seu ID."""
     evento_banco = await session.scalar(
         select(Event)
@@ -429,7 +438,7 @@ async def obter_evento(id_event: uuid.UUID, session: Session):
 
 
 @event.get('/grande_evento', status_code=HTTPStatus.OK, response_model=EventResponse)
-@limiter.limit('5/minute')
+@limiter.limit('15/minute')
 async def obter_proximo_grande_evento(
     request: Request,
     session: Session
@@ -622,7 +631,7 @@ async def atualizar_evento(
 
 
 @event.delete('/delete/{id_event}', status_code=HTTPStatus.OK)
-@limiter.limit('1/minute')
+@limiter.limit('2/minute')
 async def deletar_evento(
     request: Request,
     id_event: uuid.UUID,

@@ -56,7 +56,6 @@ from project_part.core.revocar_token_apos_alterar_passWord import (
 )
 from project_part.utils.recuperacao_de_senha import segundos_de_bloqueio_restantes
 from project_part.core.setting import settings
-from project_part.db import session
 from project_part.db.cache import get_redis
 from project_part.db.session import get_session
 from project_part.utils.security_helpers import (
@@ -71,21 +70,13 @@ from project_part.utils.crypto import HASH_SEM
 
 from project_part.model.models import (
     AdminScope,
-    PasswordResetToken,
     Permissao,
-    CadastrarComo,
     Role,
     User,
     UserRefreshToken,
     BackupCode,
 )
-from project_part.services.email_service.recuperar_senha import (
-    enviar_email_real_async,
-)
-from project_part.services.email_service.email_bloqueio_temp import (
-    email_Bloqueado_temp_async
-)
-from project_part.services.email_service.loginEmail import email_sucesso_login_async
+
 from project_part.services.two_factor_challenge import (
     criar_challenge_2fa,
     get_client_ip,
@@ -138,19 +129,6 @@ MSG_LINK_INVALIDO = 'Link inválido ou expirado.'
 TypeCacheBase = 'v4:permissao:listar'
 
 router_auth = APIRouter(prefix="/auth", tags=["Autenticação"])
-
-
-
-
-
-def get_client_ip(request: Request) -> str | None:
-    xff = request.headers.get('x-forwarded-for')
-    if xff:
-        valor = xff.split(',')[0].strip()
-    else:
-        valor = request.client.host if request.client else None
-    return valor[:45] if valor else None  # [HARDENING] era: return xff.split(',')[0].strip()
-
 
 
 @auth.post('/login',

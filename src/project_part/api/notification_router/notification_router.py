@@ -1,5 +1,6 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
+from project_part.core.rate_limit import limiter
 
 from typing import Annotated, Optional
 import logging
@@ -16,7 +17,9 @@ router_notific = APIRouter(prefix="/notifications", tags=["Notificações"])
 
 
 @router_notific.get('/preferencias', summary='Obter preferências de notificação')
+@limiter.limit('5/minute')
 async def obter_preferencias_notificacao(
+    request: Request,
     current_user: Get_current_user
 ):
     """Retorna o estado atual dos toggles de notificação do utilizador."""
@@ -31,7 +34,9 @@ async def obter_preferencias_notificacao(
 
 
 @router_notific.patch('/preferencias', summary='Atualizar preferências de notificação')
+@limiter.limit('5/minute')
 async def atualizar_preferencias_notificacao(
+    request: Request,
     dados: NotificationPreferencesUpdate,
     session: Session,
     current_user: Get_current_user

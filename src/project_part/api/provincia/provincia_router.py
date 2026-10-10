@@ -4,13 +4,20 @@ import uuid
 from http import HTTPStatus
 from typing import Annotated, List
 
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import (
+    APIRouter,
+    Depends,
+    HTTPException,
+    Request,
+    Response,
+)
 from pydantic import TypeAdapter
 from redis.asyncio import Redis as AsyncRedis
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
+from project_part.core.rate_limit import limiter
 
 from project_part.core.secury import (
     Get_current_user,
@@ -42,7 +49,9 @@ CACHE_KEY_PROVINCIAS = 'v2:provincia:listar'
 
 
 @provincia.post('/create', status_code=HTTPStatus.CREATED, response_model=ResponseProvincia)
+@limiter.limit('5/minute')
 async def create_provincia(
+    request: Request,
     schemas: CreateProvincia,
     session: Session,
     redis: Redis,
@@ -78,7 +87,9 @@ async def create_provincia(
 
 
 @provincia.post('/municipio/create', status_code=HTTPStatus.CREATED)
+@limiter.limit('5/minute')
 async def criar_municipio(
+    request: Request,
     schemas: CreateMunicipio, session: Session, redis: Redis,
     current_user: Get_current_user, scope: ScopeValid
 ):
@@ -113,7 +124,14 @@ async def criar_municipio(
 
 
 @provincia.get('/list', status_code=HTTPStatus.OK, response_model=List[ResponseProvincia])
-async def listar_provincias(response: Response, session: Session, redis: Redis, current_user: Get_current_user):
+@limiter.limit('15/minute')
+async def listar_provincias(
+    request: Request,
+    response: Response,
+    session: Session,
+    redis: Redis,
+    current_user: Get_current_user
+    ):
     try:
         provincia_salva = await redis.get(CACHE_KEY_PROVINCIAS)
         if provincia_salva:
@@ -146,7 +164,9 @@ async def listar_provincias(response: Response, session: Session, redis: Redis, 
 
 
 @provincia.put('/upgrade/{id_provincia}', status_code=HTTPStatus.OK, response_model=ResponseProvincia)
+@limiter.limit('5/minute')
 async def atualizar_provincia(
+    request: Request,
     id_provincia: uuid.UUID,
     schemas: FindProvincia,
     session: Session,
@@ -187,7 +207,9 @@ async def atualizar_provincia(
 
 
 @provincia.delete('/delete/{id_provincia}', status_code=HTTPStatus.OK)
+@limiter.limit('2/minute')
 async def eliminar_provincia(
+    request: Request,
     id_provincia: uuid.UUID,
     session: Session,
     redis: Redis,
@@ -222,7 +244,9 @@ async def eliminar_provincia(
 
 
 @provincia.put('/municipio/upgrade/{id_municipio}', status_code=HTTPStatus.OK)
+@limiter.limit('5/minute')
 async def atualizar_municipio(
+    request: Request,
     id_municipio: uuid.UUID,
     schemas: UpgradeMunicipio,
     session: Session,
@@ -270,7 +294,9 @@ async def atualizar_municipio(
 
 
 @provincia.delete('/municipio/delete/{id_municipio}', status_code=HTTPStatus.OK)
+@limiter.limit('2/minute')
 async def eliminar_municipio(
+    request: Request,
     id_municipio: uuid.UUID,
     schemas: DeleteMunicipio,
     session: Session,
@@ -309,8 +335,14 @@ async def eliminar_municipio(
 
 
 @provincia.get('/list/{id_provincia}', status_code=HTTPStatus.OK, response_model=ResponseProvincia)
+@limiter.limit('15/minute')
 async def lista_provincia(
-    id_provincia: uuid.UUID, response: Response, session: Session, redis: Redis, current_user: Get_current_user
+    request: Request,
+    id_provincia: uuid.UUID,
+    response: Response,
+    session: Session,
+    redis: Redis,
+    current_user: Get_current_user
 ):
 
     chave_cache_provincia = f'v2:provincia:{id_provincia}:detalhe'

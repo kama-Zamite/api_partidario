@@ -10,7 +10,9 @@ from fastapi import (
     HTTPException,
     status,
     Response,
+    Request,
 )
+from project_part.core.rate_limit import limiter
 from typing import Annotated
 from project_part.db.session import get_session  # Substitua pelo seu método de sessão
 from project_part.model.models import User, BackupCode  # Seu modelo SQLAlchemy de Usuário
@@ -36,7 +38,9 @@ Session = Annotated[AsyncSession, Depends(get_session)]
 
 
 @router_2FA.post("/setup")
+@limiter.limit('3/minute')
 async def setup_2fa(
+    request: Request,
     response: Response,
     current_user: Get_current_user,
     db: Session
@@ -165,7 +169,9 @@ async def setup_2fa(
 
 
 @router_2FA.post("/verify-and-enable")
+@limiter.limit('3/minute')
 async def verify_and_enable_2fa(
+    request: Request,
     response: Response,
     body: Code2FA,
     _captcha: Claudflare_turnfile,
@@ -262,7 +268,9 @@ async def verify_and_enable_2fa(
 
 
 @router_2FA.post("/disable")
+@limiter.limit('3/minute')
 async def disable_2fa(
+    request: Request,
     response: Response,
     body: Code2FA,
     _captcha: Claudflare_turnfile,

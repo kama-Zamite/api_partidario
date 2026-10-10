@@ -177,14 +177,17 @@ app.add_middleware(TrustedHostMiddleware, allowed_hosts=settings.ALLOWED_HOSTS)
 
 @app.middleware('http')
 async def audit_context_middleware(request: Request, call_next):
-    ip = request.headers.get('x-forwarded-for', request.client.host if request.client else None)
-    if ip and ',' in ip:
-        ip = ip.split(',')[0].strip()
+    ip = request.client.host if request.client else None
 
-    client_ip_ctx.set(ip)
-    user_agent_ctx.set(request.headers.get('user-agent'))
-    return await call_next(request)
+    ip_token = client_ip_ctx.set(ip)
+    ua_token = user_agent_ctx.set((request.headers.get('user-agent') or '')[:256] or None)
+    try:
+        return await call_next(request)
+    finally:
+        client_ip_ctx.reset(ip_token)
+        user_agent_ctx.reset(ua_token)
 
+        
 # 2. SEGUNDO (Colocado depois): O middleware que bloqueia o link da Render
 @app.middleware("http")
 async def bloquear_link_direto_render(request: Request, call_next):

@@ -1,21 +1,9 @@
-# =============================================================================
-# two_factor_challenge.py — SUBSTITUI o teu ficheiro actual (mesmos nomes de
-# colunas: usado_as, expira_as, tentativas; mesmo alias `Session`).
-#
-# O que mudou em relação ao que tens em produção (marcado com # [FIX-2FA]):
-#   1) obter_challenge_valida regista NO SERVIDOR o motivo exacto da rejeição
-#      (o cliente continua a receber o mesmo 401 genérico). Hoje falha em silêncio.
-#   2) CHALLENGE_EXIGIR_IP = False: diferença de IP passa a ser só um WARNING.
-#   3) strip() no token recebido (espaços/newlines colados a mais).
-#   4) get_client_ip trunca a 45 caracteres (limite de UserRefreshToken.ip_address).
-#   5) Comparações seguras para qualquer texto (compare_digest com str não-ASCII
-#      levanta TypeError -> 500 com um x-forwarded-for/user-agent estranho).
-# =============================================================================
 import hashlib
 import hmac
 import logging
 import secrets
 import uuid
+import ipaddress
 
 from datetime import timedelta, timezone, datetime
 
@@ -63,24 +51,23 @@ def _iguais(a: str | None, b: str | None) -> bool:
     return hmac.compare_digest((a or '').encode('utf-8'), (b or '').encode('utf-8'))
 
 
+
 def get_client_ip(request: Request) -> str | None:
     """
-    [FIX-2FA] Extrai o IP do cliente de forma consistente (login e 2fa-verify
-    têm de usar exactamente a mesma lógica, senão a comparação falha).
+    Devolve o IP do cliente de forma consistente (login e 2fa-verify usam
+    exactamente esta função, senão a comparação falha).
 
-    O X-Forwarded-For pode ser uma lista "cliente, proxy1, proxy2" -> usamos o
-    primeiro. ATENÇÃO: esse header só é fiável se a app estiver atrás de um
-    proxy de confiança que o sobrescreve (nginx/Cloudflare). Caso contrário o
-    cliente pode forjá-lo. Idealmente configura o uvicorn com
-    --proxy-headers --forwarded-allow-ips=<ip do proxy> e usa request.client.host.
+    Não lê X-Forwarded-For. Com `--proxy-headers --forwarded-allow-ips=<proxies>`
+    o Uvicorn já substitui request.client.host pelo IP real, mas só quando o peer
+    está na allowlist. Num cliente direto, o header forjado é ignorado.
     """
-    xff = request.headers.get('x-forwarded-for')
-    if xff:
-        valor = xff.split(',')[0].strip()
-    else:
-        valor = request.client.host if request.client else None
-    # [FIX-2FA] Truncado ao limite da coluna (antes: return xff.split(',')[0].strip())
-    return valor[:IP_MAX] if valor else None
+    host = request.client.host if request.client else None
+    if not host:
+        return None
+    try:
+        return str(ipaddress.ip_address(host))
+    except ValueError:
+        return None
 
 
 async def criar_challenge_2fa(

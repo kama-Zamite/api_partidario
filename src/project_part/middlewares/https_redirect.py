@@ -112,15 +112,12 @@
 
 # Funcional, mas tem bugs
 
-import logging
 import re
+from starlette.datastructures import MutableHeaders
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
-from starlette.types import ASGIApp, Receive, Scope, Send
-
-logger = logging.getLogger(__name__)
-
-# Expressão regular simples para detectar se o host é um IP (ex: 12.34.56.78 ou localhost)
-IP_PATTERN = re.compile(r'^(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}|localhost)(:\d+)?$')
+HSTS_VALUE = 'max-age=31536000; includeSubDomains'  # sem preload até estares seguro
+IP_HOST = re.compile(r'^(\d{1,3}(\.\d{1,3}){3}|\[[0-9a-fA-F:]+\]|localhost)(:\d+)?$')
 
 
 class ProductionSecurityMiddleware:
@@ -132,31 +129,19 @@ class ProductionSecurityMiddleware:
             await self.app(scope, receive, send)
             return
 
-        headers = dict(scope.get('headers', []))
+        # scope['scheme'] já vem validado pelo Uvicorn (--forwarded-allow-ips)
+        is_https = scope.get('scheme') == 'https'
+        host = dict(scope.get('headers', [])).get(b'host', b'').decode('latin-1')
+        send_hsts = is_https and not IP_HOST.match(host)
 
-        # 1. Corrige o esquema para HTTPS se o proxy reverso avisar que veio de lá
-        if b'x-forwarded-proto' in headers and headers[b'x-forwarded-proto'] == b'https':
-            scope['scheme'] = 'https'
-
-        # Captura o host para validar se é IP ou domínio
-        host_bytes = headers.get(b'host', b'')
-        host_str = host_bytes.decode('utf-8', errors='ignore')
-
-        async def send_wrapper(message):
+        async def send_wrapper(message: Message) -> None:
             if message['type'] == 'http.response.start':
-                response_headers = list(message.get('headers', []))
-
-                # 2. Injeta o HSTS APENAS se NÃO for um endereço IP
-                if not IP_PATTERN.match(host_str):
-                    hsts_value = b'max-age=31536000; includeSubDomains; preload'
-                    response_headers.append((b'strict-transport-security', hsts_value))
-
-                # 3. Proteções extras de segurança (XSS e Sniffing) - Sempre ativas
-                response_headers.append((b'x-content-type-options', b'nosniff'))
-                response_headers.append((b'x-frame-options', b'DENY'))
-
-                message['headers'] = response_headers
-
+                headers = MutableHeaders(scope=message)
+                if send_hsts:
+                    headers.setdefault('strict-transport-security', HSTS_VALUE)
+                headers.setdefault('x-content-type-options', 'nosniff')
+                headers.setdefault('x-frame-options', 'DENY')
             await send(message)
 
         await self.app(scope, receive, send_wrapper)
+

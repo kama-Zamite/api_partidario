@@ -520,7 +520,7 @@ PREFIXO_ARQUIVO = "avatar"
     
 
 @user.post('/create', status_code=HTTPStatus.ACCEPTED)
-@limiter.limit("3/minute; 100/day")
+@limiter.limit("3/minute; 30/day")
 async def create_user(
     request: Request,
     caches: Redis,
@@ -755,12 +755,6 @@ async def create_user(
         "message": "Código de ativação enviado para o e-mail. Confirme em até 15 minutos."
     }
 
-
-def get_client_ip(request: Request) -> str | None:
-    forwarded = request.headers.get("x-forwarded-for")
-    if forwarded:
-        return forwarded.split(",")[0].strip()  # só o primeiro IP
-    return request.client.host if request.client else None
 
 @user.post("/confirm-email", status_code=HTTPStatus.CREATED)
 @limiter.limit("3/minute; 10/day")
@@ -1555,7 +1549,7 @@ async def atualizar_email_recuperacao(
 
 
 @user.put('/perfil/upgrade', status_code=HTTPStatus.OK)
-@limiter.limit("3/minute; 100/day")
+@limiter.limit("2/minute; 5/day")
 async def perfil(
     request: Request,
     _captcha: Claudflare_turnfile,
@@ -1650,7 +1644,9 @@ async def perfil(
 
 
 @user.get('/perfil', status_code=HTTPStatus.OK, response_model=ListarUserBase)
+@limiter.limit("10/minute")
 async def obter_meu_perfil(
+    request: Request,
     session: Session, 
     current_user: Get_current_user
 ):
@@ -1832,7 +1828,7 @@ def _extrair_public_id_da_url(url: str) -> str | None:
 
 
 @user.patch("/upload-foto", status_code=status.HTTP_200_OK)
-@limiter.limit("3/minute; 100/day")
+@limiter.limit("3/minute; 10/day")
 async def atualizar_foto_perfil(
     request: Request,
     session: Session,
@@ -2164,7 +2160,11 @@ async def Listar(
 
 @user.post('/solicitar/militancia', status_code=HTTPStatus.CREATED)
 @limiter.limit("3/minute")
-async def solicitar_militancia(request: Request, session: Session, current_user: Get_current_user):
+async def solicitar_militancia(
+    request: Request,
+    session: Session,
+    current_user: Get_current_user
+    ):
     if current_user.cadastrar_militante != 'SIMPATIZANTE':
         raise HTTPException(status_code=HTTPStatus.BAD_REQUEST, detail=f'Usuario {current_user.email} precisar ser simpatizante')
     
@@ -2325,7 +2325,7 @@ async def solicitar_militancia(request: Request, session: Session, current_user:
 #     return {"detail": "Solicitação enviada com sucesso. Aguarde a aprovação do administrador."}
 
 @user.post('/card/solicitar', status_code=HTTPStatus.CREATED)
-@limiter.limit("2/minute,3/day")
+@limiter.limit("2/minute, 10/day")
 async def solicitar_cartao(
     request: Request, 
     session: Session,
@@ -2414,7 +2414,9 @@ async def solicitar_cartao(
 
 
 @user.get('/card/solicitacao/status', summary='Estado da solicitação de cartão')
+@limiter.limit("4/minute; 30/day")
 async def status_solicitacao_cartao(
+    request: Request,
     session: Session,
     current_user: Get_current_user,
 ):
@@ -2500,7 +2502,12 @@ async def status_solicitacao_cartao(
 
 
 @user.get('/card', status_code=status.HTTP_200_OK, response_model=CardBase)
-async def obter_cartao(session: Session, current_user: Get_current_user):
+@limiter.limit("30/minute")
+async def obter_cartao(
+    request: Request,
+    session: Session,
+    current_user: Get_current_user
+    ):
     """
     Retorna os detalhes do cartão ativo do militante ou o status atual da sua última solicitação.
     """
@@ -2589,7 +2596,7 @@ async def obter_cartao(session: Session, current_user: Get_current_user):
 
 
 @user.get('/doacoes', status_code=HTTPStatus.OK, response_model=DoacaoList)
-# @limiter.limit('30/minute')
+@limiter.limit('30/minute')
 async def listar_doacoes(
     request: Request,
     session: Session,
@@ -2662,8 +2669,13 @@ async def listar_doacoes(
 
 
 
-@user.get('/notificacoes', status_code=HTTPStatus.OK, response_model=NotificationListResponse)
+@user.get('/notificacoes',
+          status_code=HTTPStatus.OK,
+          response_model=NotificationListResponse
+          )
+@limiter.limit("30/minute")
 async def listar_notificacoes(
+    request: Request,
     session: Session,
     current_user: Get_current_user,
         limit: int = Query(
@@ -2727,7 +2739,9 @@ async def listar_notificacoes(
 
 
 @user.get('/notificacoes/nao-lidas', status_code=HTTPStatus.OK, response_model=NotificationListResponse)
+@limiter.limit("30/minute")
 async def listar_notificacoes_nao_lidas(
+    request: Request,
     session: Session,
     current_user: Get_current_user,
     limit: int = Query(default=10, le=50, description="Número de notificações por página"),
@@ -2784,9 +2798,13 @@ async def listar_notificacoes_nao_lidas(
 
 
 
-
-@user.get('/notificacoes/dashboard', status_code=HTTPStatus.OK, response_model=NotificationListResponse)
+@user.get('/notificacoes/dashboard',
+          status_code=HTTPStatus.OK,
+          response_model=NotificationListResponse
+          )
+@limiter.limit("30/minute")
 async def listar_notificacoes_dashboard(
+    request: Request,
     session: Session,
     current_user: Get_current_user,
         limit: int = Query(
@@ -2851,7 +2869,9 @@ async def listar_notificacoes_dashboard(
 
 
 @user.get('/notificacoes/lidas', status_code=HTTPStatus.OK, response_model=NotificationListResponse)
+@limiter.limit("30/minute")
 async def listar_notificacoes_lidas(
+    request: Request,
     session: Session,
     current_user: Get_current_user,
     limit: int = Query(default=10, le=50, description="Número de notificações por página"),
@@ -2956,14 +2976,14 @@ async def listar_notificacoes_lidas(
 
 #     return notificacao
 
-
-
 @user.patch(
     '/notificacoes/{id_notificacao}/ler',
     status_code=HTTPStatus.OK,
     response_model=NotificationResponse
 )
+@limiter.limit("30/minute")
 async def marcar_como_lida(
+    request: Request,
     response: Response,
     id_notificacao: uuid.UUID,
     session: Session,
@@ -3110,7 +3130,7 @@ def _estado_ui(status: str) -> str:
     status_code=status.HTTP_200_OK,
     response_model=ContribuicoesIndividuoResponse,
 )
-# @limiter.limit('20/minute')
+@limiter.limit('30/minute')
 async def listar_minhas_contribuicoes(
     request: Request,
     session: Session,
@@ -3210,10 +3230,10 @@ async def listar_minhas_contribuicoes(
     )
 
 
-
-
 @user.get('/ultimo-pagamento/quota', status_code=status.HTTP_200_OK, response_model=UltimoPagamentoQuotaResponse)
+@limiter.limit('30/minute')
 async def obter_ultimo_pagamento_quota(
+    request: Request,
     current_user: Get_current_user,
     session: Session
 ):
@@ -3253,7 +3273,7 @@ async def obter_ultimo_pagamento_quota(
 
 
 @user.delete('/delete/', status_code=HTTPStatus.OK)
-@limiter.limit('2/minute; 100/day')
+@limiter.limit('2/minute')
 async def delete_user(
     request: Request,
     response: Response,

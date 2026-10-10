@@ -8,6 +8,7 @@ from fastapi import (
     status,
     Form,
     BackgroundTasks,
+    Request,
 )
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -29,6 +30,7 @@ from project_part.model.models import (
 from project_part.tasks.email_tasks import (
     enviar_notificacao_suporte,
 )
+from project_part.core.rate_limit import limiter
 from project_part.services.claudflare_turnfile import verificar_turnstile
 from .schemas import (
         MensagemSuporteCreate, 
@@ -48,7 +50,9 @@ suporte_router = APIRouter(prefix="/suporte", tags=["Suporte"])
     response_model=MensagemSuporteResponse,
     summary="Enviar mensagem de suporte",
 )
+@limiter.limit('3/minute')
 async def enviar_mensagem_suporte(
+    request: Request,
     session: Session,
     current_user: Get_current_user,
     _captcha: Claudflare_turnfile,

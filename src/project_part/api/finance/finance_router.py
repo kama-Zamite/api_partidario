@@ -79,6 +79,7 @@ MAX_MESES_PAGAR = 120
 
 
 @finance.post('/doacao', status_code=HTTPStatus.CREATED)
+@limiter.limit('3/minute')
 async def criar_doacao(
     request: Request,
     body: DoacaoCreate,
@@ -184,7 +185,7 @@ async def criar_doacao(
 
 
 @finance.post('/doacao/anonimo', status_code=HTTPStatus.CREATED)
-@limiter.limit('5/minute')
+@limiter.limit('3/minute')
 async def criar_doacao_anonimo(
     request: Request,
     body: DoacaoCreate,
@@ -486,7 +487,7 @@ def _erro_integridade_quota(exc: IntegrityError, user_id) -> HTTPException:
 
 
 @finance.post('/quota', status_code=HTTPStatus.CREATED)
-@limiter.limit('5/minute')
+@limiter.limit('3/minute')
 async def criar_pagamento_quota(
     request: Request,
     backgroundTasks: BackgroundTasks,
