@@ -22,7 +22,7 @@ async def email_notificacao_doacao_admin_async(
     id_transacao: str,
     doador: str | None = None
 ):
-    LOGO_URL = settings.CLAUDINARY_URL_QUOTA_PAGAMENTO
+    LOGO_URL = settings.CLAUDINARY_URL_DOACAO_PAGAMENTO
     REDIRECT_URL = settings.URL_ADMINISTRATIVO
 
     try:

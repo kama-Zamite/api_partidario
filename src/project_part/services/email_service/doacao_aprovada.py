@@ -22,7 +22,7 @@ async def email_notificacao_doacao_aprovada_admin_async(
         id_transacao: str,
     ):
 
-    LOGO_URL = settings.CLAUDINARY_URL_QUOTA_PAGAMENTO
+    LOGO_URL = settings.CLAUDINARY_URL_DOACAO_PAGAMENTO
     REDIRECT_URL = settings.URL_LOGIN
     try:
         content = env.get_template('emailNotificacaoDoacaoAprovadaAdmin.html')
