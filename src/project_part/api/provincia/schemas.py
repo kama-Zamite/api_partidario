@@ -11,17 +11,17 @@ class MunicipioBase(BaseModel):
 class CreateMunicipio(MunicipioBase):
     nome_provincia: str
 
-    @field_validator('nome_provincia', 'nome_municipio', mode='before')
-    @classmethod
-    def formatar_iniciais(cls, v: str) -> str:
-        if isinstance(v, str):
-            v_limpo = v.strip()
+    # @field_validator('nome_provincia', 'nome_municipio', mode='before')
+    # @classmethod
+    # def formatar_iniciais(cls, v: str) -> str:
+    #     if isinstance(v, str):
+    #         v_limpo = v.strip()
 
-            if not re.match(r'^[a-zA-ZÀ-ÿ\s]+$', v_limpo):
-                raise ValueError('O campo deve conter apenas letras e espaços.')
+    #         if not re.match(r'^[a-zA-ZÀ-ÿ\s]+$', v_limpo):
+    #             raise ValueError('O campo deve conter apenas letras e espaços.')
 
-            return v_limpo.title()
-        return v
+    #         return v_limpo.title()
+    #     return v
 
 
 class DeleteMunicipio(BaseModel):
