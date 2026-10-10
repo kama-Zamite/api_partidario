@@ -66,7 +66,7 @@ class ResponseMunicipio(MunicipioBase):
 
 
 class ProvinciaBase(BaseModel):
-    nome_provincia: str = Field(min_length=4, max_length=20)
+    nome_provincia: str = Field(min_length=3, max_length=20)
 
 
 class CreateProvincia(ProvinciaBase):
