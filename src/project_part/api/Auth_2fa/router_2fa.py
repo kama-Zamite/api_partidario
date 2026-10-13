@@ -37,134 +37,134 @@ router_2FA = APIRouter(prefix="/auth/2fa", tags=["Autenticação 2FA"])
 Session = Annotated[AsyncSession, Depends(get_session)]
 
 
-@router_2FA.post("/setup")
-@limiter.limit('3/minute')
-async def setup_2fa(
-    request: Request,
-    response: Response,
-    current_user: Get_current_user,
-    db: Session
-    ):
-    """
-        Gera o segredo TOTP e retorna o QR Code
-        necessário para configurar o autenticador.
-    """
-    if current_user.two_factor_enabled:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="2FA já está ativado nesta conta.")
-
-    secret = pyotp.random_base32()
-    encrypted_secret = encrypt_totp_secret(secret)
-    try:
-        logger.info("A adicionar segredo 2FA cifrado para o utilizador %s", current_user.email)
-        current_user.two_factor_secret = encrypted_secret
-        await db.commit()
-        logger.info("Segredo 2FA adicionado com sucesso para o utilizador %s", current_user.email)
-    except Exception as e:
-        await db.rollback()
-        logger.exception("Erro ao tentar adicionar segredo 2FA: %s", str(e))
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Erro ao tentar atualizar o estado do 2FA"
-        )
-
-    totp = pyotp.TOTP(secret)
-    provisioning_uri = totp.provisioning_uri(
-        name=current_user.email,
-        issuer_name="Espaço do Militante UNITA",
-    )
-
-    # Impedir cache da resposta que contém o segredo
-    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, private"
-    response.headers["Pragma"] = "no-cache"
-
-    # Retorna apenas dados puros em texto
-    return {
-        "provisioning_uri": provisioning_uri
-    }
-
-
-# @router_2FA.post(
-#     "/setup",
-#     responses={
-#         200: {
-#             "content": {
-#                 "image/png": {}
-#             }
-#         }
-#     }
-# )
+# @router_2FA.post("/setup")
+# @limiter.limit('3/minute')
 # async def setup_2fa(
-#     response: Response,                    # ← necessário para Cache-Control
+#     request: Request,
+#     response: Response,
 #     current_user: Get_current_user,
-#     db: Session,
-# ):
+#     db: Session
+#     ):
 #     """
-#     Gera o segredo TOTP e retorna o QR Code
-#     necessário para configurar o autenticador.
+#         Gera o segredo TOTP e retorna o QR Code
+#         necessário para configurar o autenticador.
 #     """
 #     if current_user.two_factor_enabled:
-#         raise HTTPException(
-#             status_code=status.HTTP_400_BAD_REQUEST,
-#             detail="2FA já está ativado nesta conta.",
-#         )
+#         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="2FA já está ativado nesta conta.")
 
 #     secret = pyotp.random_base32()
-#     encrypted_secret = encrypt_totp_secret(secret)   # ← cifra antes de gravar
-
+#     encrypted_secret = encrypt_totp_secret(secret)
 #     try:
-#         logger.info("A iniciar setup 2FA (cifrado) para o utilizador %s", current_user.id)
+#         logger.info("A adicionar segredo 2FA cifrado para o utilizador %s", current_user.email)
 #         current_user.two_factor_secret = encrypted_secret
 #         await db.commit()
-#     except Exception:
+#         logger.info("Segredo 2FA adicionado com sucesso para o utilizador %s", current_user.email)
+#     except Exception as e:
 #         await db.rollback()
-#         logger.exception(
-#             "Erro ao iniciar configuração do 2FA para usuário ID=%s",
-#             current_user.id,
-#         )
+#         logger.exception("Erro ao tentar adicionar segredo 2FA: %s", str(e))
 #         raise HTTPException(
-#             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-#             detail="Erro ao iniciar configuração do 2FA.",
+#             status_code=status.HTTP_400_BAD_REQUEST,
+#             detail="Erro ao tentar atualizar o estado do 2FA"
 #         )
 
-#     # Auditoria recomendada
-#     # await registar_auditoria(db, user_id=current_user.id, acao="2FA_SETUP_INICIADO")
-
-#     totp = pyotp.TOTP(secret)   # usa o segredo em claro só para gerar o QR
-
+#     totp = pyotp.TOTP(secret)
 #     provisioning_uri = totp.provisioning_uri(
 #         name=current_user.email,
 #         issuer_name="Espaço do Militante UNITA",
 #     )
 
-#     qr = qrcode.QRCode(
-#         version=1,
-#         box_size=10,
-#         border=5,
-#     )
-#     qr.add_data(provisioning_uri)
-#     qr.make(fit=True)
-
-#     img = qr.make_image(
-#         fill_color="black",
-#         back_color="white",
-#     )
-
-#     buffer = io.BytesIO()
-#     img.save(buffer, format="PNG")
-#     buffer.seek(0)
-
-#     # Impedir qualquer cache da imagem que contém o segredo
+#     # Impedir cache da resposta que contém o segredo
 #     response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, private"
 #     response.headers["Pragma"] = "no-cache"
 
-#     return Response(
-#         content=buffer.getvalue(),
-#         media_type="image/png",
-#         headers={
-#             "Cache-Control": "no-store, no-cache, must-revalidate, private",
-#             "Pragma": "no-cache",
-#         }
-#     )
+#     # Retorna apenas dados puros em texto
+#     return {
+#         "provisioning_uri": provisioning_uri
+#     }
+
+
+@router_2FA.post(
+    "/setup",
+    responses={
+        200: {
+            "content": {
+                "image/png": {}
+            }
+        }
+    }
+)
+async def setup_2fa(
+    response: Response,                    # ← necessário para Cache-Control
+    current_user: Get_current_user,
+    db: Session,
+):
+    """
+    Gera o segredo TOTP e retorna o QR Code
+    necessário para configurar o autenticador.
+    """
+    if current_user.two_factor_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="2FA já está ativado nesta conta.",
+        )
+
+    secret = pyotp.random_base32()
+    encrypted_secret = encrypt_totp_secret(secret)   # ← cifra antes de gravar
+
+    try:
+        logger.info("A iniciar setup 2FA (cifrado) para o utilizador %s", current_user.id)
+        current_user.two_factor_secret = encrypted_secret
+        await db.commit()
+    except Exception:
+        await db.rollback()
+        logger.exception(
+            "Erro ao iniciar configuração do 2FA para usuário ID=%s",
+            current_user.id,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Erro ao iniciar configuração do 2FA.",
+        )
+
+    # Auditoria recomendada
+    # await registar_auditoria(db, user_id=current_user.id, acao="2FA_SETUP_INICIADO")
+
+    totp = pyotp.TOTP(secret)   # usa o segredo em claro só para gerar o QR
+
+    provisioning_uri = totp.provisioning_uri(
+        name=current_user.email,
+        issuer_name="Espaço do Militante UNITA",
+    )
+
+    qr = qrcode.QRCode(
+        version=1,
+        box_size=10,
+        border=5,
+    )
+    qr.add_data(provisioning_uri)
+    qr.make(fit=True)
+
+    img = qr.make_image(
+        fill_color="black",
+        back_color="white",
+    )
+
+    buffer = io.BytesIO()
+    img.save(buffer, format="PNG")
+    buffer.seek(0)
+
+    # Impedir qualquer cache da imagem que contém o segredo
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, private"
+    response.headers["Pragma"] = "no-cache"
+
+    return Response(
+        content=buffer.getvalue(),
+        media_type="image/png",
+        headers={
+            "Cache-Control": "no-store, no-cache, must-revalidate, private",
+            "Pragma": "no-cache",
+        }
+    )
 
 
 
@@ -174,7 +174,7 @@ async def verify_and_enable_2fa(
     request: Request,
     response: Response,
     body: Code2FA,
-    _captcha: Claudflare_turnfile,
+    # _captcha: Claudflare_turnfile,
     current_user: Get_current_user,
     db: Session,
 ):

@@ -5171,7 +5171,7 @@ async def rejeitar_solicitacao_fundo(
 async def reativar_user(
     request: Request,
     user_id: uuid.UUID,
-    _captcha: Claudflare_turnfile,
+    # _captcha: Claudflare_turnfile,
     session: Session,
     caches: Redis,
     current_user: Get_current_user,

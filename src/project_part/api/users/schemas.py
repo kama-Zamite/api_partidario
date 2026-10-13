@@ -141,6 +141,7 @@ class UserBase(BaseModel):
 
 class DeleteUser(BaseModel):
     confirmar_senha: str = Field(min_length=8, max_length=30)
+    codigo_2fa: str | None = Field(default=None, pattern=r'^(\d{6}|\d{8})$')
 
     @field_validator("confirmar_senha")
     @classmethod

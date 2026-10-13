@@ -77,6 +77,21 @@ from project_part.core.secury import (
     decrypt_totp_secret,
     gerar_e_registar_refresh_token
     )
+from project_part.utils.eliminar_usuario import (
+    limpar_cookies_auth,
+    ContaSnapshot,
+    senha_valida,
+    registar_falha_credencial,
+    verificar_segundo_fator,
+    registar_falha_credencial,
+    ids_admins_a_notificar,
+    desativar_conta,
+    MSG_ERRO_INTERNO,
+    MSG_JA_DESATIVADA,
+    MSG_BLOQUEADO,
+    MSG_SENHA_INCORRETA,
+    MSG_2FA_INVALIDO,
+)
 from project_part.db.cache import get_redis
 from project_part.db.session import get_session
 from project_part.core.rate_limit import limiter
@@ -90,9 +105,6 @@ from project_part.core.cloudinary_config import (
 # from project_part.utils.preparar_quota import preparar_aviso_primeira_quota
 from project_part.api.auth.util import set_auth_cookies
 from project_part.services.claudflare_turnfile import verificar_turnstile
-from project_part.utils.security_helpers import (
-    erro_interno
-)
 from project_part.tasks.email_tasks import (
     enviar_email_confirmacao_cadastro,
     enviar_email_cadastro_realizado_sucesso,
@@ -3036,437 +3048,68 @@ async def obter_ultimo_pagamento_quota(
 async def delete_user(
     request: Request,
     response: Response,
-    _captcha: Claudflare_turnfile,
+    # _captcha: Claudflare_turnfile,
     session: Session,
     caches: Redis,
     current_user: Get_current_user,
     schemas: DeleteUser,
     backgroundTasks: BackgroundTasks,
-) -> Dict[str, str]:
+) -> dict[str, str]:
+    """Desativa a conta do utilizador autenticado (soft delete).
+
+    Exige a senha e, se a conta tiver 2FA, o código TOTP ou de resgate.
+    Revoga todas as sessões e notifica os administradores competentes.
+    """
     agora = datetime.now(timezone.utc)
+    conta = ContaSnapshot.de(current_user)
 
-    # [FIX] Capturar tudo ANTES de qualquer commit (o commit expira o objeto)
-    user_id = current_user.id
-    email_log = mascarar_email(current_user.email)
-    user_email = current_user.email
-    nome_completo = current_user.nome_completo
-    provincia_id = current_user.provincia_id
-    two_factor = current_user.two_factor_enabled
-    totp_secret_cifrado = current_user.two_factor_secret
-    tipo_user = (                                      # [FIX] valor por defeito (antes podia ser None)
-        'Militante' if current_user.cadastrar_militante == CadastrarComo.MILITANTE
-        else 'Simpatizante'
-    )
-
-    # [FIX] Conta já desativada
     if current_user.deletado_em is not None:
-        raise HTTPException(HTTPStatus.BAD_REQUEST, 'A conta já foi desativada.')
-
-    # [FIX] Conta bloqueada por tentativas falhadas
+        raise HTTPException(HTTPStatus.BAD_REQUEST, MSG_JA_DESATIVADA)
     if current_user.bloqueado_ate and current_user.bloqueado_ate > agora:
-        raise HTTPException(HTTPStatus.TOO_MANY_REQUESTS, 'Demasiadas tentativas. Tente mais tarde.')
+        raise HTTPException(HTTPStatus.TOO_MANY_REQUESTS, MSG_BLOQUEADO)
 
-    async def _falha_credencial(detalhe: str):
-        """Conta a falha no mesmo contador do login e responde 400/429."""
-        bloqueou = False
-        try:
-            current_user.tentativa_acertos = (current_user.tentativa_acertos or 0) + 1
-            if current_user.tentativa_acertos >= settings.MAX_TENTATIVAS:
-                bloqueou = True
-                current_user.tentativas_apos_bloqueio = (current_user.tentativas_apos_bloqueio or 0) + 1
-                minutos = duracao_bloqueio_min(current_user.tentativas_apos_bloqueio)
-                current_user.bloqueado_ate = agora + timedelta(minutes=minutos)
-                current_user.tentativa_acertos = 0
-            session.add(current_user)
-            await session.commit()
-        except Exception:
-            await session.rollback()
-            logger.exception('Não foi possível registar a tentativa falhada no DB')
-            raise HTTPException(HTTPStatus.INTERNAL_SERVER_ERROR, 'Erro interno de processamento.')
-        logger.warning('Falha de credenciais na eliminação da conta %s (bloqueou=%s).', email_log, bloqueou)
-        # [FIX] Erro 4xx explícito: antes podia devolver 200 e o frontend achava que a conta foi apagada
-        raise HTTPException(
-            HTTPStatus.TOO_MANY_REQUESTS if bloqueou else HTTPStatus.BAD_REQUEST,
-            'Demasiadas tentativas. Tente mais tarde.' if bloqueou else detalhe,
-        )
+    # 1. Reautenticação
+    if not await senha_valida(conta, schemas.confirmar_senha):
+        await registar_falha_credencial(session, conta, agora, MSG_SENHA_INCORRETA)
 
-    # --- 1. Senha ---
-    async with HASH_SEM:
-        senha_ok = await run_in_threadpool(
-            verify_password, schemas.confirmar_senha, current_user.password_hash
-        )
-    if not senha_ok:
-        await _falha_credencial('A senha inserida está incorreta.')
+    resgate_id = None
+    if conta.two_factor_enabled:
+        ok, resgate_id = await verificar_segundo_fator(session, conta, schemas.codigo_2fa)
+        if not ok:
+            await registar_falha_credencial(session, conta, agora, MSG_2FA_INVALIDO)
 
-    # --- 2. 2FA no próprio pedido (sem challenge, sem segundo endpoint) ---
-    backup_code_id = None
-    if two_factor:
-        codigo = (schemas.codigo_2fa or '').strip()
-        codigo_ok = False
-
-        if len(codigo) == 6:
-            try:
-                secret_claro = decrypt_totp_secret(totp_secret_cifrado)
-            except Exception:
-                logger.exception('Falha ao desencriptar segredo 2FA do utilizador %s', user_id)
-                raise HTTPException(HTTPStatus.INTERNAL_SERVER_ERROR, 'Erro interno de segurança.')
-            codigo_ok = pyotp.TOTP(secret_claro).verify(codigo, valid_window=1)
-
-        elif len(codigo) == 8:
-            disponiveis = (await session.scalars(
-                select(BackupCode).where(BackupCode.user_id == user_id, BackupCode.used.is_(False))
-            )).all()
-            async with HASH_SEM:
-                for bc in disponiveis:
-                    # [FIX] verify_password em threadpool (antes bloqueava o event loop)
-                    if await run_in_threadpool(verify_password, codigo, bc.code_hash):
-                        backup_code_id = bc.id
-                        codigo_ok = True
-                        break
-
-        if not codigo_ok:
-            await _falha_credencial('Código de dois fatores inválido.')
-
-    logger.info('Utilizador %s executou auto-exclusão da conta.', email_log)
-
-    # --- 3. Admins a notificar ---
-    admin_ids: set[uuid.UUID] = set()
-    if provincia_id is not None:
-        admin_ids.update((await session.scalars(
-            select(User.id).join(AdminScope, AdminScope.user_id == User.id).where(
-                User.role_id == settings.ADMIN_ROLE_ID,
-                User.ativo.is_(True),
-                User.deletado_em.is_(None),
-                AdminScope.provincia_id == provincia_id,
-                AdminScope.municipio_id.is_(None),
-            )
-        )).all())
-    admin_ids.update((await session.scalars(
-        select(User.id).join(AdminScope, AdminScope.user_id == User.id).where(
-            User.role_id == settings.ADMIN_ROLE_ID,
-            User.ativo.is_(True),
-            User.deletado_em.is_(None),
-            AdminScope.provincia_id.is_(None),
-            AdminScope.municipio_id.is_(None),
-        )
-    )).all())
+    # 2. Eliminação (transação única)
+    admin_ids = await ids_admins_a_notificar(session, conta.provincia_id)
     if not admin_ids:
-        logger.warning('Nenhum admin encontrado para notificar delete do user %s', user_id)
+        logger.warning('Nenhum admin para notificar a eliminação de %s.', conta.id)
 
-    # --- 4. UMA só transação: soft delete + revogar TODAS as sessões + notificações ---
     try:
-        current_user.deletado_em = agora
-        current_user.ativo = False
-        current_user.password_alterado_em = agora      # [FIX] invalida os access tokens existentes
-        current_user.tentativa_acertos = 0
-        session.add(current_user)
-
-        # [FIX] Revoga TODOS os refresh tokens (antes só o do dispositivo atual)
-        await session.execute(
-            update(UserRefreshToken)
-            .where(UserRefreshToken.user_id == user_id, UserRefreshToken.revogado.is_(False))
-            .values(revogado=True, revogado_em=agora)
-        )
-
-        # [FIX] Código de resgate: uso único, na mesma transação
-        if backup_code_id is not None:
-            r = await session.execute(
-                update(BackupCode)
-                .where(BackupCode.id == backup_code_id, BackupCode.used.is_(False))
-                .values(used=True)
-            )
-            if r.rowcount != 1:
-                await session.rollback()
-                raise HTTPException(HTTPStatus.BAD_REQUEST, 'Código de resgate inválido ou já utilizado.')
-
-        for admin_id in admin_ids:
-            session.add(Notification(
-                admin_id=admin_id,
-                user_id=user_id,
-                titulo='Delete de Conta',
-                mensagem=f'O {tipo_user} {nome_completo} eliminou a sua conta.',
-                tipo_usuario=tipo_user,
-                destinatario='ADMIN',
-                categoria=RoleCategoriaNotificacao.DELETE_CONTA,
-            ))
-
-        await session.commit()
+        await desativar_conta(session, current_user, conta, agora, resgate_id, admin_ids)
     except HTTPException:
+        await session.rollback()
         raise
     except Exception:
         await session.rollback()
-        logger.exception('Erro no commit de exclusão do user %s', email_log)
-        raise HTTPException(
-            HTTPStatus.INTERNAL_SERVER_ERROR, 'Erro interno ao processar a desativação da conta.'
-        )
+        logger.exception('Erro ao desativar a conta %s.', conta.email_log)
+        raise HTTPException(HTTPStatus.INTERNAL_SERVER_ERROR, MSG_ERRO_INTERNO)
 
-    logger.info('Utilizador %s desativado com sucesso.', email_log)
+    logger.info('Conta %s desativada por auto-exclusão.', conta.email_log)
 
-    # --- 5. Pós-commit: cache e e-mail (falhas aqui não desfazem a eliminação) ---
+    # 3. Pós-commit (falhas aqui não desfazem a eliminação)
     try:
-        await caches.incr('v1:usuarios:lista:versao')   # [FIX] só depois do commit
+        await caches.incr('v1:usuarios:lista:versao')
     except Exception:
-        logger.error('Falha ao invalidar cache após eliminação de %s.', email_log)
+        logger.error('Falha ao invalidar a cache após eliminar %s.', conta.email_log)
 
     try:
-        # [NOVO] Protege o dono caso não tenha sido ele. Ver nota sobre recuperação abaixo.
         await enviar_email_conta_desativada(
-            backgroundTasks, nome_completo=nome_completo,
-            email_destino=user_email,
+            backgroundTasks, nome_completo=conta.nome_completo, email_destino=conta.email
         )
     except Exception:
-        logger.error('Falha ao agendar e-mail de conta desativada para %s.', email_log)
+        logger.error('Falha ao agendar o e-mail de conta desativada (%s).', conta.email_log)
 
-    # --- 6. Cookies ---
-    for chave in ('access_token', 'refresh_token'):
-        response.delete_cookie(
-            key=chave, path='/', httponly=True,
-            samesite=settings.SAMESITE_COOKIE, secure=settings.SECURE_COOKIES,
-        )
-    response.headers['Cache-Control'] = 'no-store'
+    limpar_cookies_auth(response)
     return {'msg': 'Conta desativada com sucesso.'}
 
 
-
-@user.post('/delete/2fa-verify', status_code=HTTPStatus.OK, summary='Verificação de 2FA')
-@limiter.limit('7/minute')
-async def   verify_2fa(
-    response: Response,
-    request: Request,
-    current_user: Get_current_user,
-    body: Delete2FARequest,
-    session: Session,
-    backgroundTasks: BackgroundTasks,
-    _captcha: Claudflare_turnfile,
-):
-    """
-    Endpoint para verificação de autenticação de dois fatores (2FA).
-    Recebe a challenge emitida pelo /login (após validar a senha) e o código 2FA.
-    Se tudo estiver correcto, emite o access token e o refresh token.
- 
-    Args:
-        body (Delete2FARequest): challenge_token + codigo (TOTP de 6 ou backup de 8 dígitos).
- 
-    Raises:
-        HTTPException [401]: challenge inválida, expirada, já usada ou de outra origem.
-        HTTPException [400]: código inválido, expirado ou já usado.
-        HTTPException [500]: Erro interno do servidor.
-        HTTPException [404]: Usuário não encontrado.
-        HTTPException [403]: Acesso negado.
-        HTTPException [429]: Requisições em excesso.
-        HTTPException [409]: Conflito de dados.
-    """
-
-    logger.info('Tentativa de verificação 2FA')
-    ip_address = get_client_ip(request)
-    user_agent = request.headers.get('user-agent')
-
-    challenge = await obter_challenge_valida(
-        session=session,
-        token_em_claro=body.challenge_token,
-        ip=ip_address,
-        user_agent=user_agent,
-    )
-    if not challenge:
-        logger.warning('Challenge 2FA inválida, expirada, usada ou de origem diferente (ip=%s)', ip_address)
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=settings.DETAIL_CHALLENGE_INVALIDA)
-     
-    # if not user or not user.two_factor_enabled:
-    #     raise HTTPException(
-    #         status_code=status.HTTP_400_BAD_REQUEST,
-    #         detail="Requisição de login inválida ou expirada."
-    #     )
-    challenge_id = challenge.id
-    user_id = challenge.user_id
-
-    if not await registrar_tentativa(session, challenge_id):
-        logger.warning('Challenge %s sem tentativas restantes', challenge_id)
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=settings.DETAIL_CHALLENGE_INVALIDA)
-
-    logger.info('Tentativa de verificação 2FA para o usuário: %s', user_id)
-
-
-    codigo_limpo = body.codigo.strip()
-    codigo_encontrado = None
-
-    if len(codigo_limpo) == 6:
-        # ─── DESCRIPTOGRAFA O SEGREDO ───
-        try:
-            secret_claro = decrypt_totp_secret(current_user.two_factor_secret)
-        except Exception:
-            logger.exception("Falha ao desencriptar segredo 2FA do usuário %s", user.id)
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Erro interno de segurança.",
-            )
-        
-
-        totp = pyotp.TOTP(secret_claro)
-        logger.info('Verificando código 2FA')
-        #valid_window=1 permite aceitar códigos válidos dentro de uma janela de tempo de 30 segundos antes ou depois do código atual.
-        if not totp.verify(codigo_limpo, valid_window=1):
-            logger.warning('Código 2FA inválido')
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Código 2FA inválido ou expirado."
-            )
-    elif len(codigo_limpo) == 8:
-        # Aqui esta a lógica para verificar o código de backup de 8 dígitos.
-        backup_result = await session.scalars(
-            select(BackupCode).where(
-                BackupCode.user_id == user.id,
-                BackupCode.used == False
-            )
-        )
-        codigos_disponiveis = backup_result.all()
-        
-        for codigo in codigos_disponiveis:
-            if verify_password(codigo_limpo, codigo.code_hash):
-                codigo_encontrado = codigo
-                break
-        if not codigo_encontrado:
-            logger.warning('Código de backup inválido')
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Código de resgate inválido ou já utilizado."
-            )
-
-        # try:
-        #     codigo_encontrado.used = True
-        #     await session.commit()
-        # except Exception as e:
-        #     await session.rollback()
-        #     logger.error('Não foi possível marcar o código de resgate como usado: %s', str(e))
-        #     raise HTTPException(
-        #         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-        #         detail="Erro ao processar validação de segurança."
-        #     )
-
-    else:
-        logger.warning('Código 2FA ou de backup com tamanho inválido')
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="O código deve conter 6 dígitos (aplicativo) ou 8 dígitos (resgate)."
-        )
-
-
-    nome_completo = current_user.nome_completo
-    email_destino = current_user.email
-    user_id_str = str(current_user.id)
-    pwd_alterado_em = current_user.password_alterado_em
-
-
-
-    try:
-        if not await consumir_challenge(session, challenge_id):
-            # Outro pedido concorrente já consumiu esta challenge (replay)
-            await session.rollback()
-            logger.warning('Challenge %s já consumida (possível replay)', challenge_id)
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail=settings.DETAIL_CHALLENGE_INVALIDA
-                )
- 
-        if codigo_encontrado is not None:
-            # UPDATE condicional: garante uso único do código de backup mesmo com concorrência
-            resultado_backup = await session.execute(
-                update(BackupCode)
-                .where(BackupCode.id == codigo_encontrado.id, BackupCode.used == False)  # noqa: E712
-                .values(used=True)
-            )
-            if resultado_backup.rowcount != 1:
-                await session.rollback()
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail='Código de resgate inválido ou já utilizado.',
-                )
- 
-        # [FIX-2FA] ultimo_login gravado só agora (login realmente concluído).
-        current_user.ultimo_login = datetime.now(timezone.utc)
-        session.add(current_user)
-        await session.commit()
-    except HTTPException:
-        raise
-    except Exception as e:
-        await session.rollback()
-        logger.error('Não foi possível concluir a validação 2FA: %s', str(e))
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail='Erro ao processar validação de segurança.',
-        )
-
-    logger.info('Usuário %s autenticado com sucesso (2FA)', user_id_str)
-     
-    token_gerado = emitir_access_token(user_id, pwd_alterado_em)
-
-    # ip_address = (
-    #     request.headers.get("x-forwarded-for")
-    #     or (
-    #         request.client.host
-    #         if request.client
-    #         else None
-    #     )
-    # )
-
-    # if not ip_address:
-    #     ip_address = request.client.host if request.client else None
-
-    # # 3. Capturar o User-Agent (Navegador/Dispositivo)
-    # user_agent = request.headers.get("user-agent")
-    
-    refresh_gerado = await gerar_e_registar_refresh_token(
-        session=session,      # <-- Faltava este argumento!
-        user_id=user_id, 
-        ip=ip_address, 
-        user_agent=(user_agent or '')[:500] or None,
-    )
-
-    try:
-        # session.add(user)
-        await session.commit()
-        logger.info('Sucesso na atualizacao do ultimo_login do usuario')
-    except Exception as e:
-        await session.rollback()
-        logger.error('Nao foi possivel atualizar a data de ultimo_login no DB: %s', str(e))
-        raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail='Erro interno de processamento.',
-            )
-
-    user_agent_parsed = parse(user_agent)
-    
-    # try:
-    #     # # backgroundTasks.add_task(
-    #     # #     email_sucesso_login_async, 
-    #     # #     nome_completo=user.nome_completo, 
-    #     # #     ip_address=ip_address, 
-    #     # #     email_destino=user.email,
-    #     # #     navegador=user_agent_parsed.browser.family, 
-    #     # #     sistema_operacional=user_agent_parsed.os.family, 
-    #     # #     )
-    #     # await enviar_email_login(
-    #     #     backgroundTasks,
-    #     #     nome_completo=nome_completo,
-    #     #     ip_address=ip_address,
-    #     #     email_destino=email_destino,
-    #     #     navegador=user_agent_parsed.browser.family,
-    #     #     sistema_operacional=user_agent_parsed.os.family,
-    #     # )
-    #     logger.info("E-mail de login enviado com sucesso para %s", user.email)
-    # except Exception as e:
-    #     logger.error("Falha ao enviar e-mail de login para %s: %s", user.email, str(e))
-
-    
-    set_auth_cookies(
-        # request=request,
-        response=response,
-        access_token=token_gerado,
-        refresh_token=refresh_gerado,
-    )
-    response.headers["Cache-Control"] = "no-store"
-
-    return {
-        "status": "success",
-        "message": "Autenticação realizada com sucesso.",
-    }
 
