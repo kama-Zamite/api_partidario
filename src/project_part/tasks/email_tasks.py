@@ -23,6 +23,7 @@ from project_part.services.email_service.email_rejeitar_solicitacao_fundos impor
 from project_part.services.email_service.recuperar_senha import enviar_email_real_async
 from project_part.services.email_service.confirmar_email_cadastro_user import enviar_email_confirmacao_cadastro_user_async
 from project_part.services.email_service.email_cadastro_realizado_sucesso import email_sucesso_cadastro_async
+from project_part.services.email_service.email_conta_desativada import email_conta_desativada_async 
 from project_part.services.email_service.job_emails import (
     enviar_email_ativar_quota_async,
     enviar_email_quota_vencida_async
@@ -91,6 +92,20 @@ async def tarefa_email_bloqueio(
         await asyncio.sleep(RETRY_ESPERA_S)
         raise EnvioEmailFalhou('Falha ao enviar o e-mail de bloqueio temporário')
 
+
+@broker.task(task_name='email.conta_desativada', retry_on_error=True, max_retries=3)
+async def tarefa_email_conta_desativada(    
+    nome_completo: str,
+    email_militante: str,
+) -> None:
+    resultado = await email_conta_desativada_async(
+        nome_completo=nome_completo,
+        email_militante=email_militante,
+    )
+    if resultado is None:
+        await asyncio.sleep(RETRY_ESPERA_S)
+        raise EnvioEmailFalhou('Falha ao enviar o e-mail de notificação de conta desativada')
+    
 
 @broker.task(task_name='email.sucesso_login', retry_on_error=True, max_retries=3)
 async def tarefa_email_login(
@@ -413,6 +428,20 @@ async def enviar_email_bloqueio(
         minutos=minutos,
     )
 
+
+async def enviar_email_conta_desativada(
+    background: BackgroundTasks,
+    *,
+    nome_completo: str,
+    email_militante: str,
+) -> None:
+    await _enfileirar(
+        tarefa_email_conta_desativada,
+        email_conta_desativada_async,
+        background,
+        nome_completo=nome_completo,
+        email_militante=email_militante,
+    )
 
 async def enviar_email_login(
     background: BackgroundTasks,

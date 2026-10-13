@@ -56,13 +56,25 @@ class UserBase(BaseModel):
             raise ValueError("O utilizador deve aceitar as políticas de segurança.")
         return termos
 
+    
     @field_validator('nome_completo')
     @classmethod
     def validar_nome(cls, nome_complet: str) -> str:
+        # Remove espaços extras no início/fim e divide em palavras
         nomes = nome_complet.strip().split()
+        
+        # 1. Verifica se tem pelo menos um nome e um sobrenome
         if len(nomes) < 2:
             raise ValueError('O nome completo deve conter pelo menos um nome e um apelido/sobrenome.')
+        
+        # 2. Verifica se a primeira letra de CADA palavra é maiúscula
+        for palavra in nomes:
+            if not palavra[0].isupper():
+                raise ValueError('O nome completo deve começar com letra maiúscula.')
+                
+        # Retorna o nome formatado apenas com um espaço simples entre as palavras
         return ' '.join(nomes)
+
 
     @field_validator("password")
     @classmethod
@@ -128,11 +140,39 @@ class UserBase(BaseModel):
 
 
 class DeleteUser(BaseModel):
-    valid: str = Field(min_length=8, max_length=9)
+    confirmar_senha: str = Field(min_length=8, max_length=30)
+
+    @field_validator("confirmar_senha")
+    @classmethod
+    def validar_complexidade(cls, v: str) -> str:
+        if not re.search(r"[A-Z]", v):
+            raise ValueError("A senha deve conter pelo menos uma letra maiúscula")
+        if not re.search(r"[a-z]", v):
+            raise ValueError("A senha deve conter pelo menos uma letra minúscula")
+        if not re.search(r"\d", v):
+            raise ValueError("A senha deve conter pelo menos um número")
+        if not re.search(r"[!@#$%^&*(),.?\":{}|<>]", v):
+            raise ValueError("A senha deve conter pelo menos um caractere especial")
+        return v
+
+
+class Delete2FARequest(BaseModel):
+    confirmar_senha: str
+    codigo_2fa: str | None = Field(default=None, pattern=r'^(\d{6}|\d{8})$')
+
+
 
 class ConfirmarEmailSchema(BaseModel):
-    email: EmailStr
-    codigo: int
+    # [SEC-001] O registo pendente já não se identifica pelo e-mail,
+    # mas por uma referência opaca devolvida pelo /create.
+    model_config = ConfigDict(extra='forbid', str_strip_whitespace=True)
+
+    registration_ref: str = Field(
+        min_length=40,
+        max_length=64,
+        pattern=r'^[A-Za-z0-9_-]+$',   # alfabeto do secrets.token_urlsafe
+    )
+    codigo: str = Field(pattern=r'^\d{6}$')   # str, não int: preserva zeros à esquerd
 
 
 class CreateUser(UserBase): ...

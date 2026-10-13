@@ -622,10 +622,13 @@ async def eliminar_noticia(
     #     )
 
     imagem_para_apagar = noticia_banco.image_url
+    noticia_id = str(noticia_banco.id)
+    titulo_log = noticia_banco.titulo
+    tinha_imagem = bool(noticia_banco.image_url)
     try:
         await session.delete(noticia_banco)
         await session.commit()
-        logger.info('Notícia [%s] deletada com sucesso por %s.', noticia_banco.titulo, current_user.email)
+        logger.info('Notícia [%s] deletada com sucesso por %s.', titulo_log, current_user.email)
     except IntegrityError as e:
         await session.rollback()
         logger.error('Erro de integridade ao deletar a notícia: %s', str(e.orig))
@@ -640,11 +643,20 @@ async def eliminar_noticia(
             status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
             detail='Erro interno de processamento no servidor.',
         )
-    if imagem_para_apagar:
-        await apagar_imagem_noticia_cloudinary(imagem_para_apagar)
+        # [SEC-007] era: apagar_imagem_noticia_cloudinary(imagem_para_apagar)  -> passava uma URL
+    if tinha_imagem:
+        try:
+            apagou = await apagar_imagem_noticia_cloudinary(noticia_id)
+            if not apagou:
+                logger.error('Imagem da notícia %s não foi removida do Cloudinary (órfã).', noticia_id)
+        except Exception:
+            logger.exception('Falha ao remover imagem da notícia %s do Cloudinary.', noticia_id)
+    padrao_chaves = f"{CACHE_KEY_NOTICIAS}:*"
+    # O Redis vai procurar por: "v1:noticias:lista:*"
+    chaves_encontradas = await caches.keys(padrao_chaves)
 
     try:
-        await caches.delete(CACHE_KEY_NOTICIAS)
+        await caches.delete(*chaves_encontradas)
     except Exception as e:
         logger.critical('Erro ao limpar o cache: %s', str(e))
 

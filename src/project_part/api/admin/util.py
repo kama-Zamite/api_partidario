@@ -112,4 +112,3 @@ def to_solicitacao_response(s: SolicitacaoFundo) -> SolicitacaoFundoResponse:
 
 
 
-

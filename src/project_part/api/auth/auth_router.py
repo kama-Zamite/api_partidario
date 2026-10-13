@@ -142,7 +142,7 @@ async def login(
     session: Session,
     token: Access_token,
     backgroundTasks: BackgroundTasks,
-    _captcha: Claudflare_turnfile
+    # _captcha: Claudflare_turnfile
     ):
     """Endpoint para autenticação de usuário."""
 
@@ -364,6 +364,7 @@ async def login(
 
 
 
+
 @auth.post('/login/2fa-verify', status_code=HTTPStatus.OK, summary='Verificação de 2FA')
 @limiter.limit('7/minute')
 async def verify_2fa(
@@ -444,12 +445,14 @@ async def verify_2fa(
         totp = pyotp.TOTP(secret_claro)
         logger.info('Verificando código 2FA')
         #valid_window=1 permite aceitar códigos válidos dentro de uma janela de tempo de 30 segundos antes ou depois do código atual.
-        if not totp.verify(codigo_limpo, valid_window=1):
-            logger.warning('Código 2FA inválido')
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Código 2FA inválido ou expirado."
-            )
+        async with HASH_SEM:
+
+            if not totp.verify(codigo_limpo, valid_window=1):
+                logger.warning('Código 2FA inválido')
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Código 2FA inválido ou expirado."
+                )
     elif len(codigo_limpo) == 8:
         # Aqui esta a lógica para verificar o código de backup de 8 dígitos.
         backup_result = await session.scalars(
@@ -574,6 +577,7 @@ async def verify_2fa(
             )
 
     user_agent_parsed = parse(user_agent)
+    
     try:
         # backgroundTasks.add_task(
         #     email_sucesso_login_async, 
@@ -585,9 +589,9 @@ async def verify_2fa(
         #     )
         await enviar_email_login(
             backgroundTasks,
-            nome_completo=user.nome_completo,
+            nome_completo=nome_completo,
             ip_address=ip_address,
-            email_destino=user.email,
+            email_destino=email_destino,
             navegador=user_agent_parsed.browser.family,
             sistema_operacional=user_agent_parsed.os.family,
         )

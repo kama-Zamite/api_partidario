@@ -1,7 +1,8 @@
 import logging
 
-from fastapi import APIRouter, Response, status
+from fastapi import APIRouter, Response, status, Request
 from sqlalchemy import text
+from project_part.core.rate_limit import limiter
 
 from project_part.core.setting import settings
 from project_part.db.cache import redis_client
@@ -13,7 +14,12 @@ health_router = APIRouter(prefix='/health', tags=['Infraestrutura'])
 
 
 @health_router.get('', status_code=status.HTTP_200_OK)
-async def health_check(response: Response):
+@limiter.limit("15/minute")  # Limite de 10 requisições por minuto para este endpoint
+async def health_check(
+    request: Request,
+    
+    response: Response
+    ):
     """Endpoint de Health Check para monitoramento da infraestrutura.
     Verifica a saúde do banco de dados Postgres e do cache Redis.
         - Postgres: Verifica se a conexão é bem-sucedida e se uma consulta simples

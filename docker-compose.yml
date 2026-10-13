@@ -1,24 +1,32 @@
+x-app-hardening: &app-hardening
+  user: "10001:10001"
+  cap_drop:
+    - ALL
+  security_opt:
+    - no-new-privileges:true
+  pids_limit: 256
+  mem_limit: 512m
+  cpus: 1.0
+  # Fase 2 (depois de a fase 1 funcionar):
+  read_only: true
+  tmpfs:
+    - /tmp:size=64m,mode=1777
+
 services:
   server_api:
+    <<: *app-hardening
     image: partido_uniao:${PROJECT_VERSION}
     container_name: app_project_real
     build: .
+    command: ["src.project_part.main:app", "--host", "0.0.0.0", "--port", "10000", "--no-proxy-headers"]
     environment:
-      - PYTHONPATH=/app/src  
-      # - TRUSTED_PROXIES=127.0.0.1,::1,172.16.0.0/12,172.17.0.0/12,172.18.0.0/12,172.19.0.0/12 
+      - PYTHONPATH=/app/src
     env_file:
       - .env
-    # expose:
-    #   - "10000"
     ports:
       - "127.0.0.1:10000:10000"
-    # volumes:
-    #   - .:/app
     networks:
       - app_network
-    # dns:
-    #   - 8.8.8.8
-    #   - 1.1.1.1
     depends_on:
       database_project:
         condition: service_healthy
@@ -52,12 +60,17 @@ services:
   redis_database:
     image: redis:${REDIS_VERSION}
     container_name: cache_db
+    command: ["redis-server", "--requirepass", "${REDIS_CACHE_PASSWORD}", "--save", "", "--appendonly", "no"]
+    environment:
+      - REDISCLI_AUTH=${REDIS_CACHE_PASSWORD}
     networks:
       - app_network
-    ports:
-      - "127.0.0.1:6379:6379"
+    ports: []
     volumes:
       - redis_volume:/data
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 256m
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -93,10 +106,22 @@ services:
     depends_on:
       database_project:
         condition: service_healthy
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    profiles: ["dev"]
+    mem_limit: 128m
+    pids_limit: 128
+    restart: unless-stopped
   
   redis_queue:
     image: redis:7-alpine
     container_name: redis_queue_broker
+    ports: []
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 256m
     command: >
       redis-server --appendonly yes --appendfsync everysec
       --requirepass ${REDIS_QUEUE_PASSWORD}
@@ -106,7 +131,9 @@ services:
     networks:
       - app_network
 
+
   worker:
+    <<: *app-hardening
     build: .
     container_name: taskiq_worker_app
     entrypoint: []

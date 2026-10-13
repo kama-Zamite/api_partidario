@@ -1,30 +1,54 @@
-FROM python:3.13
+# syntax=docker/dockerfile:1
 
-ENV POETRY_VIRTUALENVS_CREATE=false
+ARG PYTHON_IMAGE=python:3.13-slim@sha256:70729b46c69b4f1e97c4822c1af3df53a1476cf5ddc6c087c0c10bc3a5678c2f
+ARG POETRY_VERSION=2.4.1
 
-WORKDIR /app
+# ---------- builder ----------
+FROM ${PYTHON_IMAGE} AS builder
+ARG POETRY_VERSION
 
-ENV PYTHONPATH=/app
-
-COPY pyproject.toml ./
+ENV PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
-    gcc \
+        build-essential gcc \
     && rm -rf /var/lib/apt/lists/*
 
-RUN pip install poetry
+RUN python -m venv /opt/venv
+ENV VIRTUAL_ENV=/opt/venv \
+    PATH="/opt/venv/bin:$PATH" \
+    POETRY_VIRTUALENVS_CREATE=false
 
+RUN pip install "poetry==${POETRY_VERSION}"
+
+WORKDIR /app
+COPY pyproject.toml poetry.lock ./
 RUN poetry install --no-interaction --no-ansi --without dev --no-root --no-cache
 
-COPY . .
+# ---------- runtime ----------
+FROM ${PYTHON_IMAGE} AS runtime
 
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PYTHONPATH=/app \
+    VIRTUAL_ENV=/opt/venv \
+    PATH="/opt/venv/bin:$PATH"
+
+RUN groupadd --system --gid 10001 app \
+ && useradd --system --uid 10001 --gid app --no-create-home --shell /usr/sbin/nologin app
+
+WORKDIR /app
+COPY --from=builder /opt/venv /opt/venv
+COPY --chown=app:app . .
+
+USER app
 EXPOSE 10000
 
 ENTRYPOINT ["uvicorn"]
 
-
-
+# # Dev local (sem proxy reverso): sobrepõe o CMD no compose, ver abaixo
+# # Render / produção:
+# CMD ["src.project_part.main:app", "--host", "0.0.0.0", "--port", "10000", "--proxy-headers", "--forwarded-allow-ips=127.0.0.1"]
 # Maquina de desenvolvimento local (sem proxy reverso)
 # CMD ["src.project_part.main:app", "--host", "0.0.0.0", "--port", "10000", "--no-proxy-headers"]
 

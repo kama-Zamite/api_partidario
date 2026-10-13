@@ -5,11 +5,13 @@ import base64
 import time
 import hmac
 from jwt import PyJWTError, decode
+from user_agents import parse
 from fastapi.concurrency import run_in_threadpool
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from PIL import Image, ImageOps, UnidentifiedImageError
 from sqlalchemy.exc import SQLAlchemyError
+from project_part.core import pending_registration
 import cloudinary.uploader
 import filetype 
 import asyncio
@@ -34,21 +36,34 @@ from decimal import Decimal
 import secrets
 import uuid
 from datetime import datetime, timezone, date
-# from slowapi import (
-#     Limiter,
-#     _rate_limit_exceeded_handler
-# )
-# from slowapi.errors import RateLimitExceeded
+
 from pydantic import TypeAdapter, model_validator, ValidationError
 from redis.asyncio import Redis as AsyncRedis
-from sqlalchemy import func, or_, select, case, extract, desc, asc
+from sqlalchemy import (
+    func,
+    or_,
+    select,
+    case,
+    extract,
+    desc,
+    asc,
+    update,
+)
+import pyotp
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload, joinedload
 
 from fastapi import Response
 from project_part.core.revocar_token_apos_alterar_passWord import revogar_todas_sessoes, emitir_access_token
-from project_part.services.two_factor_challenge import get_client_ip 
+from project_part.services.two_factor_challenge import (
+    criar_challenge_2fa,
+    get_client_ip,
+    obter_challenge_valida,
+    registrar_tentativa,
+    consumir_challenge,
+    CHALLENGE_TTL,
+)
 from project_part.core.revocar_token_apos_alterar_passWord import (
     emitir_access_token,
 )
@@ -57,7 +72,9 @@ from project_part.core.secury import (
     verify_password,
     Get_current_user,
     garante_escopo_territorial,
+    create_token_recuperar_senha,
     create_token,
+    decrypt_totp_secret,
     gerar_e_registar_refresh_token
     )
 from project_part.db.cache import get_redis
@@ -73,15 +90,15 @@ from project_part.core.cloudinary_config import (
 # from project_part.utils.preparar_quota import preparar_aviso_primeira_quota
 from project_part.api.auth.util import set_auth_cookies
 from project_part.services.claudflare_turnfile import verificar_turnstile
-# from project_part.services.email_service.solicitacao_cartao_militante import enviar_email_solicitacao_cartao_militante
-# from project_part.services.email_service.solicitacao_militancia import enviar_email_solicitacao_militancia
-# from project_part.services.email_service.confirmar_email_cadastro_user import enviar_email_confirmacao_cadastro_user_async
-# from project_part.services.email_service.email_cadastro_realizado_sucesso import email_sucesso_cadastro_async
-
+from project_part.utils.security_helpers import (
+    erro_interno
+)
 from project_part.tasks.email_tasks import (
     enviar_email_confirmacao_cadastro,
     enviar_email_cadastro_realizado_sucesso,
     enviar_email_ativar_quota,
+    enviar_email_bloqueio,
+    enviar_email_conta_desativada,
 )
 from project_part.model.models import (
     Municipio,
@@ -104,10 +121,16 @@ from project_part.model.models import (
     DonationStatusEnum,
     QuotaStatusEnum,
     PagamentoQuota,
+    BackupCode,
+
 )
 from project_part.utils.crypto import HASH_SEM
 from project_part.utils.security_helpers import (
-    mascarar_email)
+    mascarar_email,
+    duracao_bloqueio_min,
+    erro_interno,
+    resposta_credenciais_invalidas,
+)
 
 from .schemas import (
     UserBase,
@@ -122,6 +145,7 @@ from .schemas import (
     NotificationListResponse,
     DeleteUser,
     DoacaoList,
+    Delete2FARequest,
     DoacaoResponse,
     ContribuicoesIndividuoResponse,
     ContribuicaoItem,
@@ -647,7 +671,7 @@ async def create_user(
             estado_civil=estado_civil,
             nome_provincia=nome_provincia,
             foi_militante=foi_militante,
-            cadastrar_militante=cadastrar_militante.strip(),
+            cadastrar_militante=cadastrar_militante,
             nome_municipio=nome_municipio,
             militante_numero=num_militante_final,
             codigo_verificacao_email=None  # ainda não precisamos
@@ -705,33 +729,16 @@ async def create_user(
             detail="A permissão de acesso especificada não está configurada no sistema."
         )
 
-    # --- 5. Geração do código e envio do e-mail ---
+    # --- 5. Geração do código, hash da senha e persistência cifrada ---
     secret_number = secrets.randbelow(900000) + 100000  # 6 dígitos
+    async with HASH_SEM:
+        password_hash = await run_in_threadpool(hash_password, dados_validados.password)
 
-    try:
-        
-        await enviar_email_confirmacao_cadastro(
-            backgroundTasks,
-            email_destino=email,
-            secret_number=secret_number,
-            nome_completo=nome_completo
-        )
-    except Exception as e:
-        logger.error("Falha ao injetar tarefa de e-mail para %s: %s", email, str(e))
-        raise HTTPException(
-            status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
-            detail="Falha ao processar e-mail de confirmação."
-        )
-
-    # --- 6. Persistência temporária no Redis (15 minutos) ---
-
-
-    foto_b64 = base64.b64encode(conteudo_bytes).decode('utf-8')
     dados_temporarios = {
         "nome_completo": dados_validados.nome_completo,
         "email": dados_validados.email,
         "aceitou_termos": dados_validados.aceitou_termos,
-        "password": dados_validados.password,
+        "password_hash": password_hash,   # [SEC-001] era "password": dados_validados.password
         "data_nascimento": dados_validados.data_nascimento.isoformat(),
         "nif": dados_validados.nif,
         "telefone": dados_validados.telefone,
@@ -743,17 +750,52 @@ async def create_user(
         "id_municipio": str(municipio_banco.id),
         "id_role": str(role_banco.id),
         "militante_numero": num_militante_final,
-        "foto_perfil_b64": foto_b64,
-        "codigo_verificacao": secret_number
+        # [SEC-001] REMOVIDOS: "foto_perfil_b64" (a foto vai como bytes cifrados, em chave própria)
+        # e "codigo_verificacao" (fica só um HMAC do código, dentro do payload cifrado)
     }
 
-    chave_redis = f"cadastro_pendente:{email}"
-    await caches.setex(chave_redis, 900, json.dumps(dados_temporarios))  # 15 minutos
+    try:
+        # [SEC-001] Cifra tudo, guarda com TTL de 15 min e devolve a referência opaca.
+        # Gravar ANTES de enviar o e-mail: antes, se o Redis falhasse, o utilizador
+        # recebia um código para um registo que não existia.
+        ref = await pending_registration.guardar(
+            caches, dados_temporarios, conteudo_bytes, str(secret_number)
+        )
+    except Exception:
+        # [SEC-001] Não registar o payload nem a exceção completa (pode conter PII)
+        # logger.error("Falha ao guardar registo pendente no Redis.")
+        logger.exception("Falha ao guardar registo pendente no Redis.")
+        raise HTTPException(
+            status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+            detail="Falha ao iniciar o registo."
+        )
+
+    try:
+        
+        await enviar_email_confirmacao_cadastro(
+            backgroundTasks,
+            email_destino=dados_validados.email,   # [SEC-001] o validado, igual ao guardado
+            secret_number=secret_number,
+            nome_completo=dados_validados.nome_completo,
+        )
+    except Exception as e:
+        # [SEC-001] Se o e-mail não saiu, não deixar um registo pendente órfão
+        await pending_registration.descartar(caches, ref)
+        logger.error("Falha ao injetar tarefa de e-mail para %s: %s",
+                     mascarar_email(dados_validados.email), str(e))
+        raise HTTPException(
+            status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+            detail="Falha ao processar e-mail de confirmação."
+        )
 
     return {
         "status": "success",
-        "message": "Código de ativação enviado para o e-mail. Confirme em até 15 minutos."
+        "message": "Código de ativação enviado para o e-mail. Confirme em até 15 minutos.",
+        "registration_ref": ref,
     }
+
+
+
 
 
 @user.post("/confirm-email", status_code=HTTPStatus.CREATED)
@@ -761,58 +803,51 @@ async def create_user(
 async def confirmar_email_cadastro(
     request: Request,
     response: Response,
-    dados: ConfirmarEmailSchema,
+    dados: ConfirmarEmailSchema,   # [SEC-001] agora: registration_ref + codigo (sem email)
     caches: Redis,
     session: Session,
     _captcha: Claudflare_turnfile,
-    backgroundTasks: BackgroundTasks
+    backgroundTasks: BackgroundTasks,
 ):
-    # 1. Recupera os dados temporários do Redis
-    email_log = mascarar_email(dados.email)
-    chave_redis = f"cadastro_pendente:{dados.email}"
-    chave_tentativas = f"cadastro_tentativas:{dados.email}"
-
-
     agora = datetime.now(timezone.utc)
     versao_politica_apd = settings.VERSAO_POLITICA_APD
 
-    # 1. Dados temporários do Redis
-    dados_cache = await caches.get(chave_redis)
-    if not dados_cache:
-        logger.warning("Tentativa de confirmação expirada ou inexistente para o e-mail: %s", email_log)
+    # --- 1. Recuperar, validar o código e consumir (uso único) ---
+    # [SEC-001] consumir() valida o código por HMAC (compare_digest), limita as
+    # tentativas (5 por registo) e apaga o registo ao devolver os dados.
+    # Mensagem única: não distingue "expirado", "inexistente" e "código errado".
+    resultado = await pending_registration.consumir(
+        caches, dados.registration_ref, dados.codigo
+    )
+    if resultado is None:
+        logger.warning(
+            "Confirmação de cadastro recusada (inválida, expirada ou tentativas esgotadas)."
+        )
         raise HTTPException(
             status_code=HTTPStatus.BAD_REQUEST,
-            detail="O tempo de validação (15 min) expirou ou o registo não existe. Por favor, registe-se novamente."
+            detail="Código inválido ou expirado. Se necessário, registe-se novamente.",
         )
+    usuario_data, conteudo_bytes = resultado
+    email_log = mascarar_email(usuario_data["email"])
 
-    usuario_data = json.loads(dados_cache)
+    # [SEC-001] O hash já vem feito do /create: não voltar a fazer hash.
+    password_hash = usuario_data["password_hash"]
 
-    # 2. Validação do código
-    if usuario_data["codigo_verificacao"] != dados.codigo:
-        raise HTTPException(
-            status_code=HTTPStatus.BAD_REQUEST,
-            detail="Código de verificação inválido ou expirado."
-        )
-
-    async with HASH_SEM:
-        password_hash = await run_in_threadpool(hash_password, usuario_data["password"])
-
-
-    # 3. Re-checagem de unicidade (proteção contra race condition)
+    # --- 2. Re-checagem de unicidade (proteção contra race condition) ---
+    # [FIX] era dados.email, que já não existe no schema
     usuario_duplicado = await session.scalar(
         select(User.id).where(
-            (User.email == dados.email) | (User.nif == usuario_data["nif"])
+            (User.email == usuario_data["email"]) | (User.nif == usuario_data["nif"])
         )
     )
     if usuario_duplicado:
-        await caches.delete(chave_redis)
+        # O registo já foi consumido: não há nada a apagar no Redis
         raise HTTPException(
             status_code=HTTPStatus.CONFLICT,
-            detail="Estes dados de e-mail ou NIF já foram registados por outra conta ativa."
+            detail="Estes dados de e-mail ou NIF já foram registados por outra conta ativa.",
         )
 
-
-    # 4. Cria o usuário (ainda sem commit)
+    # --- 3. Cria o utilizador (ainda sem commit) ---
     novo_usuario = User(
         nome_completo=usuario_data["nome_completo"],
         email=usuario_data["email"],
@@ -831,7 +866,7 @@ async def confirmar_email_cadastro(
         role_id=usuario_data["id_role"],
         genero=usuario_data["genero"],
         estado_civil=usuario_data["estado_civil"],
-        image_url=None
+        image_url=None,
     )
     novo_usuario.criado_em = datetime.now(timezone.utc)
 
@@ -842,68 +877,71 @@ async def confirmar_email_cadastro(
         await session.rollback()
         raise HTTPException(
             status_code=HTTPStatus.CONFLICT,
-            detail="Erro de integridade relacional ao registar documentos."
+            detail="Erro de integridade relacional ao registar documentos.",
         )
     except Exception as e:
         await session.rollback()
         logger.critical("Erro catastrófico ao reservar usuário: %s", e)
         raise HTTPException(
             status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
-            detail="Erro interno de processamento no servidor."
+            detail="Erro interno de processamento no servidor.",
         )
 
-    # 5. Upload da foto (só agora)
+    # --- 4. Upload da foto (só agora) ---
+    # [SEC-001] conteudo_bytes já vem decifrado de consumir(); sem base64
     try:
-        conteudo_bytes = base64.b64decode(usuario_data["foto_perfil_b64"])
         url_secure = await asyncio.wait_for(
             upload_imagem_geral(
                 file_bytes=conteudo_bytes,
                 identificador=str(novo_usuario.id),
-                pasta_alvo="perfis_usuarios",
-                prefixo_arquivo="avatar"
+                pasta_alvo=PASTA_ALVO,
+                prefixo_arquivo=PREFIXO_ARQUIVO,
             ),
-            timeout=30
+            timeout=30,
         )
     except Exception as e:
         await session.rollback()
         logger.error("Falha ao subir imagem para o Cloudinary na confirmação: %s", e)
         raise HTTPException(
             status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
-            detail="Falha ao salvar imagem de perfil no serviço de nuvem."
+            detail="Falha ao salvar imagem de perfil no serviço de nuvem.",
         )
 
     novo_usuario.image_url = url_secure
 
-    # 6. Commit final
+    # --- 5. Commit final ---
+    # [FIX] a compensação usa as mesmas constantes do upload (antes: literal "perfis_usuarios/avatar_")
+    caminho_upload = f"{PASTA_ALVO}/{PREFIXO_ARQUIVO}_{novo_usuario.id}"
     try:
         await session.commit()
     except IntegrityError:
         await session.rollback()
-        await compensar_upload_orfao(f"perfis_usuarios/avatar_{novo_usuario.id}")
+        await compensar_upload_orfao(caminho_upload)
         raise HTTPException(
             status_code=HTTPStatus.CONFLICT,
-            detail="Erro de integridade relacional ao efetivar o registo."
+            detail="Erro de integridade relacional ao efetivar o registo.",
         )
     except Exception as e:
         await session.rollback()
-        await compensar_upload_orfao(f"perfis_usuarios/avatar_{novo_usuario.id}")
+        await compensar_upload_orfao(caminho_upload)
         logger.critical("Erro catastrófico ao commitar usuário após upload: %s", e)
         raise HTTPException(
             status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
-            detail="Erro interno de processamento no servidor."
+            detail="Erro interno de processamento no servidor.",
         )
 
-    # 7. Limpeza do Redis + invalidação de cache
+    # --- 6. Invalidação de cache ---
+    # [FIX] REMOVIDO: caches.delete(chave_redis). A variável deixou de existir e o
+    # registo já foi apagado em consumir(). Se ficasse, dava NameError e o incr abaixo
+    # nunca correria (o try/except engolia o erro).
     try:
-        await caches.delete(chave_redis)
         await caches.incr("v1:usuarios:lista:versao")
     except Exception as cache_err:
-        logger.error("Falha não-bloqueante ao atualizar dados do Redis após sucesso: %s", cache_err)
+        logger.error(
+            "Falha não-bloqueante ao atualizar dados do Redis após sucesso: %s", cache_err
+        )
 
-    # 8. Notificação de boas-vindas
-    destinatario_tipo = None
-    tipo = None
-    tipo_pagamento = None
+    # --- 7. Notificação de boas-vindas ---
     if novo_usuario.cadastrar_militante == CadastrarComo.MILITANTE:
         destinatario_tipo = "MILITANTE"
         tipo = "Militante"
@@ -916,14 +954,18 @@ async def confirmar_email_cadastro(
     notification = Notification(
         user_id=novo_usuario.id,
         titulo="Bem-vindo à UNITA PGM",
-        mensagem=f"Olá {tipo} {novo_usuario.nome_completo}, seja bem-vindo à UNITA PGM! O seu cadastro foi realizado com sucesso. Aceda à secção Financeira para efetuar {tipo_pagamento}.",
+        mensagem=(
+            f"Olá {tipo} {novo_usuario.nome_completo}, seja bem-vindo à UNITA PGM! "
+            f"O seu cadastro foi realizado com sucesso. "
+            f"Aceda à secção Financeira para efetuar {tipo_pagamento}."
+        ),
         categoria=RoleCategoriaNotificacao.BEM_VINDO,
         criado_as=datetime.now(timezone.utc),
-        destinatario=destinatario_tipo
+        destinatario=destinatario_tipo,
     )
     try:
         session.add(notification)
-        await session.flush()  # Flush para garantir que o ID da notificação é gerado
+        await session.flush()  # garante que o ID da notificação é gerado
         avisar_quota = novo_usuario.cadastrar_militante == CadastrarComo.MILITANTE
 
         nome, email = novo_usuario.nome_completo, novo_usuario.email
@@ -931,36 +973,46 @@ async def confirmar_email_cadastro(
 
         if avisar_quota:
             await enviar_email_ativar_quota(
-                backgroundTasks, nome_completo=nome, email_destinatario=email
+                backgroundTasks,
+                nome_completo=nome,
+                email_destinatario=email,
             )
-        # await session.commit()
     except Exception as e:
-        logger.error("Falha ao criar notificação de boas-vindas para o usuário %s: %s", novo_usuario.id, str(e))
+        # [FIX] rollback para a sessão não ficar num estado inválido para o passo seguinte
+        await session.rollback()
+        logger.error(
+            "Falha ao criar notificação de boas-vindas para o usuário %s: %s",
+            novo_usuario.id, str(e),
+        )
 
-    # 9. E-mail de sucesso
+    # --- 8. E-mail de sucesso ---
     try:
         await enviar_email_cadastro_realizado_sucesso(
             backgroundTasks,
             email_destino=novo_usuario.email,
-            nome_completo=novo_usuario.nome_completo
+            nome_completo=novo_usuario.nome_completo,
         )
     except Exception as e:
-        logger.error("Falha ao enviar e-mail de sucesso para %s: %s", novo_usuario.email, str(e))
+        # [FIX] e-mail mascarado (antes: completo, dado pessoal no log)
+        logger.error(
+            "Falha ao enviar e-mail de sucesso para %s: %s", email_log, str(e)
+        )
 
-    # 10. Autenticação (mesmo estilo da rota nova)
-    token_gerado = emitir_access_token(novo_usuario.id, novo_usuario.password_alterado_em)
+    # --- 9. Autenticação ---
+    token_gerado = emitir_access_token(
+        novo_usuario.id, novo_usuario.password_alterado_em
+    )
 
     ip_address = get_client_ip(request)
-
     user_agent = request.headers.get("user-agent")
     try:
         refresh_gerado = await gerar_e_registar_refresh_token(
             session=session,
             user_id=novo_usuario.id,
             ip=ip_address,
-            user_agent=user_agent
+            user_agent=user_agent,
         )
-        await session.commit()  # Commit para garantir que o refresh token é persistido
+        await session.commit()  # garante que o refresh token é persistido
         set_auth_cookies(
             response=response,
             access_token=token_gerado,
@@ -969,21 +1021,22 @@ async def confirmar_email_cadastro(
         response.headers["Cache-Control"] = "no-store"
     except Exception as e:
         await session.rollback()
-        logger.error("Falha ao gerar e registrar token de refresh para o usuário %s: %s", novo_usuario.id, str(e))
+        logger.error(
+            "Falha ao gerar e registrar token de refresh para o usuário %s: %s",
+            novo_usuario.id, str(e),
+        )
         raise HTTPException(
             status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
-            detail="Erro interno de processamento no servidor."
+            detail="Erro interno de processamento no servidor.",
         )
 
-
-    logger.info("Usuário %s confirmado e logado com sucesso.", novo_usuario.email)
+    # [FIX] e-mail mascarado no log (antes: novo_usuario.email completo)
+    logger.info("Usuário %s confirmado e logado com sucesso.", email_log)
 
     return {
         "status": "success",
-        "message": "E-mail confirmado e utilizador autenticado com sucesso."
+        "message": "E-mail confirmado e utilizador autenticado com sucesso.",
     }
-
-
 
 
 # @user.post("/confirm-email", status_code=status.HTTP_200_OK)
@@ -1666,64 +1719,6 @@ async def obter_meu_perfil(
     return usuario_completo
 
 
-# @user.patch("/upload-foto", status_code=status.HTTP_200_OK)
-# async def atualizar_foto_perfil(session: Session, current_user: Get_current_user, arquivo: UploadFile = File(..., description="Selecione uma imagem JPG ou PNG") ):
-#     # 1. Validar a extensão do arquivo
-#     extensao = arquivo.filename.split(".")[-1].lower()
-#     if extensao not in ALLOWED_EXTENSIONS:
-#         raise HTTPException(
-#             status_code=status.HTTP_400_BAD_REQUEST, 
-#             detail="Apenas imagens JPG, JPEG são permitidas."
-#         )
-
-#     # 2. Validar o tamanho do arquivo (Max 5MB)
-#     conteudo_bytes = await arquivo.read()
-#     if len(conteudo_bytes) > MAX_FILE_SIZE:
-#         raise HTTPException(
-#             status_code=status.HTTP_400_BAD_REQUEST,
-#             detail="A imagem não pode ser maior do que 5MB."
-#         )
-
-#     try:
-#         # 3. Executar o upload (O Cloudinary substitui automaticamente o arquivo antigo)
-#         url_secure_cloudinary = await upload_imagem_geral(
-#             file_bytes=conteudo_bytes,
-#             identificador=str(current_user.id),
-#             pasta_alvo="perfis_usuarios",
-#             prefixo_arquivo="avatar"
-#         )
-#     except Exception as e:
-#         raise HTTPException(
-#             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-#             detail="Falha ao atualizar a imagem no serviço de nuvem."
-#         )
-#     finally:
-#         await arquivo.close()
-
-#     # 4. Salvar a URL na tabela do usuário (se já for a mesma, o SQLAlchemy ignora ou atualiza o AuditLog)
-#     if hasattr(current_user, "image_url"):
-#         current_user.image_url = url_secure_cloudinary
-#     else:
-#         current_user.foto_url = url_secure_cloudinary
-    
-#     try:
-#         session.add(current_user)
-#         await session.commit() 
-#     except Exception as e:
-#         await session.rollback()
-#         raise HTTPException(
-#             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-#             detail="Erro ao salvar os dados de perfil na base de dados."
-#         )
-
-#     return {
-#         "msg": "Foto de perfil substituída com sucesso no Cloudinary!",
-#         "foto_url": url_secure_cloudinary
-#     }
-
-
-
-
 def _higienizar_e_reprocessar_jpeg(conteudo_bruto: bytes) -> bytes:
     """
     Executado em uma Worker Thread separada (CPU-Bound).
@@ -1957,97 +1952,6 @@ async def atualizar_foto_perfil(
         "foto_url": url_secure_cloudinary
     }
 
-# @user.get(
-#     '/listar', status_code=HTTPStatus.OK, response_model=ListarUser
-# )
-# async def Listar(
-#     response: Response, 
-#     session: Session, 
-#     caches: Redis, 
-#     current_user: Get_current_user,
-#     pagin: Paginacao,
-#     scope: ScopeValid
-# ):
-
-#     try:
-#         versao_cache = (await caches.get("v1:usuarios:lista:versao")) or b"1"
-#         versao_cache = versao_cache.decode('utf-8') if isinstance(versao_cache, bytes) else str(versao_cache)
-#     except Exception as e:
-#         logger.error(f'Falha ao ler versão do cache no Redis: {e}')
-#         versao_cache = "fallback"
-
-#     cache_key = f"v1:usuarios:lista:{scope.provincia_id or 'all'}:{scope.municipio_id or 'all'}:sk:{pagin.skip}:lm:{pagin.limit}:v:{versao_cache}"
-
-#     try:
-#         user_save = await caches.get(cache_key)
-#         if user_save:
-#             response.headers['X-Cache-lock'] = 'veio do redis'
-#             logger.info('Dados vindo do redis')
-#             return json.loads(user_save)
-#     except Exception as e:
-#         logger.error('Error na solicitacao dos dados do redis: %s', e)
-
-#     logger.info('Buscando dados do postgresSQL...')
-    
-#     query = select(User).where(User.ativo == True).options(
-#         selectinload(User.scope),
-#         selectinload(User.provincia), 
-#         selectinload(User.municipio),
-#         selectinload(User.role)
-#     )
-
-#     count_query = select(User.genero).where(User.ativo == True)
-    
-#     if scope.municipio_id:
-#         logger.info(f'Filtrando usuários do município: {scope.municipio_id}')
-#         query = query.where(User.municipio_id == scope.municipio_id)
-#         count_query = count_query.where(User.municipio_id == scope.municipio_id)
-        
-#     elif scope.provincia_id:
-#         logger.info(f'Filtrando usuários da província: {scope.provincia_id}')
-#         query = query.where(User.provincia_id == scope.provincia_id)
-#         count_query = count_query.where(User.provincia_id == scope.provincia_id)
-        
-#     else:
-#         logger.info('Super Admin detectado. Trazendo todos os usuários ativos.')
-
-
-#     contagens = await session.scalars(count_query)
-#     lista_generos = contagens.all()
-
-#     total_user = len(lista_generos)
-#     total_homens = sum(1 for genero in lista_generos if genero == 'Masculino')
-#     total_mulheres = sum(1 for genero in lista_generos if genero == 'Mulher')
-
-#     query = query.order_by(User.criado_em.desc())
-#     query = query.offset(pagin.skip).limit(pagin.limit)
-#     users = await session.scalars(query)
-#     userAll = users.all()
-
-#     if not userAll:
-#         logger.warning('Nenhum usuário ativo foi encontrado!')
-#         raise HTTPException(
-#             status_code=HTTPStatus.NOT_FOUND, 
-#             detail='Nenhum usuário ativo foi encontrado!'
-#         )
-
-#     resposta_estruturada = {
-#         "total_usuarios": total_user,
-#         "total_homens": total_homens,
-#         "total_mulheres": total_mulheres,
-#         "usuarios": [ListarUserBase.model_validate(u).model_dump(mode='json') for u in userAll]
-#     }
-
-#     try:
-#         await caches.set(cache_key, json.dumps(resposta_estruturada), ex=60)
-#         logger.info('Caches guardados com sucesso!')
-#     except Exception as e:
-#         logger.error('Nao foi possivel guardar os caches no redis: %s', e)
-
-#     response.headers['X-Cache-lock'] = 'veio do postgres'
-#     return resposta_estruturada
-
-
 
 @user.get(
     '/listar', status_code=status.HTTP_200_OK, response_model=ListarUser
@@ -2154,8 +2058,6 @@ async def Listar(
 
     response.headers['X-Cache-lock'] = 'veio do postgres'
     return resposta_obj
-
-
 
 
 @user.post('/solicitar/militancia', status_code=HTTPStatus.CREATED)
@@ -2268,61 +2170,6 @@ async def solicitar_militancia(
             status_code=HTTPStatus.INTERNAL_SERVER_ERROR, detail='Erro interno ao processar a aprovacao de militancia.'
         )
 
-
-
-# @user.post('/card/solicitar', status_code=HTTPStatus.CREATED)
-# async def solicitar_cartao(session: Session, current_user: Get_current_user, backgroundTasks: BackgroundTasks):
-#     # 1. Verifica se já existe cartão ativo
-#     agora = datetime.now(timezone.utc)
-#     cartao = await session.scalar(select(CartaoMilitante).where(CartaoMilitante.user_id == current_user.id, CartaoMilitante.data_expiracao > agora))
-#     if cartao:
-#         raise HTTPException(status_code=HTTPStatus.BAD_REQUEST, detail="Você já possui um cartão ativo.")
-
-#     # 2. Verifica se já existe uma solicitação pendente
-#     solicitacao_existente = await session.scalar(
-#         select(SolicitacaoCartao).where(
-#             SolicitacaoCartao.user_id == current_user.id, 
-#             SolicitacaoCartao.status == StatusSolicitacao.PENDENTE))
-#     if solicitacao_existente:
-#         raise HTTPException(status_code=HTTPStatus.BAD_REQUEST, detail="Você já possui uma solicitação em análise.")
-
-#     # 3. Cria a solicitação no banco
-#     nova_solicitacao = SolicitacaoCartao(user_id=current_user.id, status=StatusSolicitacao.PENDENTE)
-#     session.add(nova_solicitacao)
-
-#     query_admin = select(User).where(User.role_id == 1)  # Supondo que role_id 1 seja para administradores
-#     admin = await session.scalar(query_admin)
-
-#     if not admin:
-#         logger.error("Nenhum administrador encontrado para notificação de solicitação de cartão.")
-#         raise HTTPException(status_code=HTTPStatus.INTERNAL_SERVER_ERROR, detail="Nenhum administrador disponível para processar a solicitação.")
-    
-
-#     query_scope_admin = select(AdminScope).where(AdminScope.user_id == admin.id)
-#     scope_admin = await session.scalar(query_scope_admin)
-
-#     if not scope_admin:
-#         logger.error("Nenhum escopo de administrador encontrado para o usuário administrador.")
-#         raise HTTPException(status_code=HTTPStatus.INTERNAL_SERVER_ERROR, detail="Escopo do administrador não configurado.")
-    
-#     if scope_admin.municipio_id and current_user.municipio_id != scope_admin.municipio_id:
-#         logger.warning("Administrador não tem permissão para aprovar solicitações de outro município.")
-#         raise HTTPException(status_code=HTTPStatus.FORBIDDEN, detail="Administrador não autorizado para este município.")
-#     if scope_admin.provincia_id and current_user.provincia_id != scope_admin.provincia_id:
-#         logger.warning("Administrador não tem permissão para aprovar solicitações de outra província.")
-#         raise HTTPException(status_code=HTTPStatus.FORBIDDEN, detail="Administrador não autorizado para esta província.")
-
-#     # 4. Cria uma notificação para o administrador
-#     notificacao_admin = Notification(
-#         user_id=scope_admin.id, # Vinculado ao autor para rastro
-#         titulo="Nova Solicitação de Cartão",
-#         mensagem=f"O militante {current_user.nome_completo} solicitou a emissão do cartão."
-#     )
-#     session.add(notificacao_admin)
-    
-#     await session.commit()
-#     backgroundTasks.add_task(enviar_email_solicitacao_cartao_militante, current_user, agora)
-#     return {"detail": "Solicitação enviada com sucesso. Aguarde a aprovação do administrador."}
 
 @user.post('/card/solicitar', status_code=HTTPStatus.CREATED)
 @limiter.limit("2/minute, 10/day")
@@ -2470,37 +2317,6 @@ async def status_solicitacao_cartao(
     }
 
 
-# @user.get('/card', status_code=HTTPStatus.OK, response_model=CardBase)
-# async def obter_cartao(session: Session, current_user: Get_current_user):
-#     """
-#     Retorna os detalhes do cartão do militante logado, se houver um cartão ativo.
-#     """
-#     if current_user.cadastrar_militante != 'MILITANTE':
-#         raise HTTPException(
-#             status_code=HTTPStatus.FORBIDDEN,
-#             detail="É necessário ser militante para visualizar o cartão."
-#         )
-
-#     cartao = await session.scalar(
-#         select(CartaoMilitante).where(
-#             CartaoMilitante.user_id == current_user.id,
-#             CartaoMilitante.activo.is_(True)
-#         )
-#     )
-    
-#     if not cartao:
-#         raise HTTPException(
-#             status_code=HTTPStatus.NOT_FOUND,
-#             detail="Nenhum cartão ativo encontrado."
-#         )
-
-    
-#     return cartao
-
-
-
-
-
 @user.get('/card', status_code=status.HTTP_200_OK, response_model=CardBase)
 @limiter.limit("30/minute")
 async def obter_cartao(
@@ -2593,8 +2409,6 @@ async def obter_cartao(
     }
 
 
-
-
 @user.get('/doacoes', status_code=HTTPStatus.OK, response_model=DoacaoList)
 @limiter.limit('30/minute')
 async def listar_doacoes(
@@ -2661,12 +2475,6 @@ async def listar_doacoes(
         )
 
     return {'total': total, 'results': results}
-
-
-
-
-
-
 
 
 @user.get('/notificacoes',
@@ -2926,55 +2734,6 @@ async def listar_notificacoes_lidas(
         'results': notificacoes}
     
 
-
-# @user.patch('/notificacoes/{id_notificacao}/ler', status_code=HTTPStatus.OK)
-# async def marcar_como_lida(
-#     id_notificacao: uuid.UUID,
-#     session: Session,
-#     current_user: Get_current_user
-# ):
-#     """
-#     Atualiza o campo 'lido_as' de uma notificação específica com a data e hora atual.
-#     Garante que um militante não consiga ler ou alterar a notificação de outro.
-#     """
-#     logger.info("Militante %s tentando ler notificação %s", current_user.id, id_notificacao)
-
-#     # Busca a notificação garantindo que ela pertence ao usuário logado
-#     query = select(Notification).where(
-#         Notification.id == id_notificacao,
-#         Notification.user_id == current_user.id, 
-#         Notification.destinatario == 'MILITANTE'
-#     )
-#     notificacao = await session.scalar(query)
-
-#     if not notificacao:
-#         logger.warning("Notificação %s não encontrada para o usuário %s", id_notificacao, current_user.id)
-#         raise HTTPException(
-#             status_code=HTTPStatus.NOT_FOUND,
-#             detail="Notificação não encontrada no seu histórico."
-#         )
-
-#     # Se ainda não foi lida, atualiza com o carimbo de data/hora atual
-#     if  notificacao.lido_as is None:
-#         notificacao.lido_as = datetime.now(timezone.utc)
-#         try:
-#             await session.commit()
-#             await session.refresh(notificacao)
-#             logger.info(
-#                     "Usuário %s marcou a notificação %s como lida",
-#                     current_user.id,
-#                     id_notificacao
-#                 )
-#         except Exception as e:
-#             await session.rollback()
-            
-#             logger.exception("Erro ao marcar notificação como lida: %s", str(e))
-#             raise HTTPException(
-#                 status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
-#                 detail="Erro ao atualizar o status da notificação."
-#             )
-
-#     return notificacao
 
 @user.patch(
     '/notificacoes/{id_notificacao}/ler',
@@ -3281,371 +3040,433 @@ async def delete_user(
     session: Session,
     caches: Redis,
     current_user: Get_current_user,
-    codigo: DeleteUser,
+    schemas: DeleteUser,
+    backgroundTasks: BackgroundTasks,
 ) -> Dict[str, str]:
-    if codigo.valid != 'ELIMINAR':
-        logger.warning('Confirmação de delete inválida para user %s', current_user.id)
+    agora = datetime.now(timezone.utc)
+
+    # [FIX] Capturar tudo ANTES de qualquer commit (o commit expira o objeto)
+    user_id = current_user.id
+    email_log = mascarar_email(current_user.email)
+    user_email = current_user.email
+    nome_completo = current_user.nome_completo
+    provincia_id = current_user.provincia_id
+    two_factor = current_user.two_factor_enabled
+    totp_secret_cifrado = current_user.two_factor_secret
+    tipo_user = (                                      # [FIX] valor por defeito (antes podia ser None)
+        'Militante' if current_user.cadastrar_militante == CadastrarComo.MILITANTE
+        else 'Simpatizante'
+    )
+
+    # [FIX] Conta já desativada
+    if current_user.deletado_em is not None:
+        raise HTTPException(HTTPStatus.BAD_REQUEST, 'A conta já foi desativada.')
+
+    # [FIX] Conta bloqueada por tentativas falhadas
+    if current_user.bloqueado_ate and current_user.bloqueado_ate > agora:
+        raise HTTPException(HTTPStatus.TOO_MANY_REQUESTS, 'Demasiadas tentativas. Tente mais tarde.')
+
+    async def _falha_credencial(detalhe: str):
+        """Conta a falha no mesmo contador do login e responde 400/429."""
+        bloqueou = False
+        try:
+            current_user.tentativa_acertos = (current_user.tentativa_acertos or 0) + 1
+            if current_user.tentativa_acertos >= settings.MAX_TENTATIVAS:
+                bloqueou = True
+                current_user.tentativas_apos_bloqueio = (current_user.tentativas_apos_bloqueio or 0) + 1
+                minutos = duracao_bloqueio_min(current_user.tentativas_apos_bloqueio)
+                current_user.bloqueado_ate = agora + timedelta(minutes=minutos)
+                current_user.tentativa_acertos = 0
+            session.add(current_user)
+            await session.commit()
+        except Exception:
+            await session.rollback()
+            logger.exception('Não foi possível registar a tentativa falhada no DB')
+            raise HTTPException(HTTPStatus.INTERNAL_SERVER_ERROR, 'Erro interno de processamento.')
+        logger.warning('Falha de credenciais na eliminação da conta %s (bloqueou=%s).', email_log, bloqueou)
+        # [FIX] Erro 4xx explícito: antes podia devolver 200 e o frontend achava que a conta foi apagada
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail='Erro na confirmação de delete da conta do utilizador',
+            HTTPStatus.TOO_MANY_REQUESTS if bloqueou else HTTPStatus.BAD_REQUEST,
+            'Demasiadas tentativas. Tente mais tarde.' if bloqueou else detalhe,
         )
 
-    tipo_user = None
-    if current_user.cadastrar_militante == CadastrarComo.MILITANTE:
-        tipo_user = 'Militante'
-    elif current_user.cadastrar_militante == CadastrarComo.SIMPATIZANTE:
-        tipo_user = 'Simpatizante'
+    # --- 1. Senha ---
+    async with HASH_SEM:
+        senha_ok = await run_in_threadpool(
+            verify_password, schemas.confirmar_senha, current_user.password_hash
+        )
+    if not senha_ok:
+        await _falha_credencial('A senha inserida está incorreta.')
 
-    logger.info('Utilizador %s executou auto-exclusão da conta.', current_user.id)
+    # --- 2. 2FA no próprio pedido (sem challenge, sem segundo endpoint) ---
+    backup_code_id = None
+    if two_factor:
+        codigo = (schemas.codigo_2fa or '').strip()
+        codigo_ok = False
 
-    current_user.deletado_em = datetime.now(timezone.utc)
-    current_user.ativo = False
-    session.add(current_user)
+        if len(codigo) == 6:
+            try:
+                secret_claro = decrypt_totp_secret(totp_secret_cifrado)
+            except Exception:
+                logger.exception('Falha ao desencriptar segredo 2FA do utilizador %s', user_id)
+                raise HTTPException(HTTPStatus.INTERNAL_SERVER_ERROR, 'Erro interno de segurança.')
+            codigo_ok = pyotp.TOTP(secret_claro).verify(codigo, valid_window=1)
 
+        elif len(codigo) == 8:
+            disponiveis = (await session.scalars(
+                select(BackupCode).where(BackupCode.user_id == user_id, BackupCode.used.is_(False))
+            )).all()
+            async with HASH_SEM:
+                for bc in disponiveis:
+                    # [FIX] verify_password em threadpool (antes bloqueava o event loop)
+                    if await run_in_threadpool(verify_password, codigo, bc.code_hash):
+                        backup_code_id = bc.id
+                        codigo_ok = True
+                        break
 
+        if not codigo_ok:
+            await _falha_credencial('Código de dois fatores inválido.')
 
-    # ── Admins a notificar ───────────────────────────────────────
-       # ── Admins a notificar: só superadmin + provincial da sua província ──
+    logger.info('Utilizador %s executou auto-exclusão da conta.', email_log)
+
+    # --- 3. Admins a notificar ---
     admin_ids: set[uuid.UUID] = set()
-
-    # 1) Admin provincial da mesma província (não municipal)
-    if current_user.provincia_id is not None:
-        result_prov = await session.scalars(
-            select(User.id)
-            .join(AdminScope, AdminScope.user_id == User.id)
-            .where(
+    if provincia_id is not None:
+        admin_ids.update((await session.scalars(
+            select(User.id).join(AdminScope, AdminScope.user_id == User.id).where(
                 User.role_id == settings.ADMIN_ROLE_ID,
                 User.ativo.is_(True),
-                User.deletado_em.is_(None),  # se usares soft delete
-                AdminScope.provincia_id == current_user.provincia_id,
+                User.deletado_em.is_(None),
+                AdminScope.provincia_id == provincia_id,
                 AdminScope.municipio_id.is_(None),
             )
-        )
-        admin_ids.update(result_prov.all())
-
-    # 2) Superadmin (sem território)
-    result_geral = await session.scalars(
-        select(User.id)
-        .join(AdminScope, AdminScope.user_id == User.id)
-        .where(
+        )).all())
+    admin_ids.update((await session.scalars(
+        select(User.id).join(AdminScope, AdminScope.user_id == User.id).where(
             User.role_id == settings.ADMIN_ROLE_ID,
             User.ativo.is_(True),
             User.deletado_em.is_(None),
             AdminScope.provincia_id.is_(None),
             AdminScope.municipio_id.is_(None),
         )
-    )
-    admin_ids.update(result_geral.all())
-
-    # Sem fallback para "qualquer admin"
+    )).all())
     if not admin_ids:
-        logger.warning(
-            'Nenhum superadmin/provincial encontrado para notificar delete do user %s',
-            current_user.id,
+        logger.warning('Nenhum admin encontrado para notificar delete do user %s', user_id)
+
+    # --- 4. UMA só transação: soft delete + revogar TODAS as sessões + notificações ---
+    try:
+        current_user.deletado_em = agora
+        current_user.ativo = False
+        current_user.password_alterado_em = agora      # [FIX] invalida os access tokens existentes
+        current_user.tentativa_acertos = 0
+        session.add(current_user)
+
+        # [FIX] Revoga TODOS os refresh tokens (antes só o do dispositivo atual)
+        await session.execute(
+            update(UserRefreshToken)
+            .where(UserRefreshToken.user_id == user_id, UserRefreshToken.revogado.is_(False))
+            .values(revogado=True, revogado_em=agora)
         )
-    else:
-        for admin_id in admin_ids:
-            session.add(
-                Notification(
-                    admin_id=admin_id,
-                    user_id=current_user.id,
-                    titulo='Delete de Conta',
-                    mensagem=(
-                        f'O {tipo_user} {current_user.nome_completo} eliminou a sua conta.'
-                    ),
-                    tipo_usuario=tipo_user,
-                    destinatario='ADMIN',
-                    categoria=RoleCategoriaNotificacao.DELETE_CONTA,
-                )
+
+        # [FIX] Código de resgate: uso único, na mesma transação
+        if backup_code_id is not None:
+            r = await session.execute(
+                update(BackupCode)
+                .where(BackupCode.id == backup_code_id, BackupCode.used.is_(False))
+                .values(used=True)
             )
-        logger.info(
-            'Notificações de delete enviadas a %s admin(s) para user %s',
-            len(admin_ids),
-            current_user.id,
-        )
-    try:
-        await caches.incr('v1:usuarios:lista:versao')
+            if r.rowcount != 1:
+                await session.rollback()
+                raise HTTPException(HTTPStatus.BAD_REQUEST, 'Código de resgate inválido ou já utilizado.')
+
+        for admin_id in admin_ids:
+            session.add(Notification(
+                admin_id=admin_id,
+                user_id=user_id,
+                titulo='Delete de Conta',
+                mensagem=f'O {tipo_user} {nome_completo} eliminou a sua conta.',
+                tipo_usuario=tipo_user,
+                destinatario='ADMIN',
+                categoria=RoleCategoriaNotificacao.DELETE_CONTA,
+            ))
+
         await session.commit()
-        logger.info('Utilizador %s desativado com sucesso.', current_user.email)
-    except Exception as e:
-        await session.rollback()
-        logger.error(
-            'Erro no commit de exclusão do user %s: %s',
-            current_user.email,
-            e,
-        )
-        raise HTTPException(
-            status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
-            detail='Erro interno ao processar a desativação da conta.',
-        )
-
-    # ── Revogar refresh token + limpar cookies (como já tinhas) ──
-    refresh_token = request.cookies.get('refresh_token')
-    try:
-        if refresh_token:
-            try:
-                payload = decode(
-                    refresh_token,
-                    settings.SECRET_KEY,
-                    algorithms=[settings.ALGORITHM],
-                )
-                token_jti = payload.get('jti')
-            except PyJWTError:
-                token_jti = None
-
-            if token_jti:
-                agora = datetime.now(timezone.utc)
-                result = await session.execute(
-                    select(UserRefreshToken)
-                    .where(
-                        UserRefreshToken.token_jti == token_jti,
-                        UserRefreshToken.revogado.is_(False),
-                    )
-                    .with_for_update()
-                )
-                db_token = result.scalar_one_or_none()
-                if db_token:
-                    db_token.revogado = True
-                    db_token.revogado_em = agora
-                    await session.commit()
-
-        response.delete_cookie(
-            key='access_token',
-            path='/',
-            httponly=True,
-            samesite=settings.SAMESITE_COOKIE,
-            secure=settings.SECURE_COOKIES,
-        )
-        response.delete_cookie(
-            key='refresh_token',
-            path='/',
-            httponly=True,
-            samesite=settings.SAMESITE_COOKIE,
-            secure=settings.SECURE_COOKIES,
-        )
-        response.headers['Cache-Control'] = 'no-store'
-        return {'msg': 'Usuário deletado com sucesso!'}
-
+    except HTTPException:
+        raise
     except Exception:
         await session.rollback()
-        logger.exception('Erro durante logout após delete.')
-        response.delete_cookie(
-            key='access_token',
-            path='/',
-            httponly=True,
-            samesite=settings.SAMESITE_COOKIE,
-            secure=settings.SECURE_COOKIES,
+        logger.exception('Erro no commit de exclusão do user %s', email_log)
+        raise HTTPException(
+            HTTPStatus.INTERNAL_SERVER_ERROR, 'Erro interno ao processar a desativação da conta.'
         )
-        response.delete_cookie(
-            key='refresh_token',
-            path='/',
-            httponly=True,
-            samesite=settings.SAMESITE_COOKIE,
-            secure=settings.SECURE_COOKIES,
+
+    logger.info('Utilizador %s desativado com sucesso.', email_log)
+
+    # --- 5. Pós-commit: cache e e-mail (falhas aqui não desfazem a eliminação) ---
+    try:
+        await caches.incr('v1:usuarios:lista:versao')   # [FIX] só depois do commit
+    except Exception:
+        logger.error('Falha ao invalidar cache após eliminação de %s.', email_log)
+
+    try:
+        # [NOVO] Protege o dono caso não tenha sido ele. Ver nota sobre recuperação abaixo.
+        await enviar_email_conta_desativada(
+            backgroundTasks, nome_completo=nome_completo,
+            email_destino=user_email,
         )
-        response.status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
-        return {'msg': 'Usuário deletado com sucesso!'}
+    except Exception:
+        logger.error('Falha ao agendar e-mail de conta desativada para %s.', email_log)
+
+    # --- 6. Cookies ---
+    for chave in ('access_token', 'refresh_token'):
+        response.delete_cookie(
+            key=chave, path='/', httponly=True,
+            samesite=settings.SAMESITE_COOKIE, secure=settings.SECURE_COOKIES,
+        )
+    response.headers['Cache-Control'] = 'no-store'
+    return {'msg': 'Conta desativada com sucesso.'}
 
 
 
-# @user.delete('/delete/{user_id}', status_code=HTTPStatus.OK)
-# @limiter.limit("2/minute; 100/day")
-# async def delete_user(
-#     request: Request,
-#     response: Response,
-#     user_id: uuid.UUID,
-#     session: Session,
-#     caches: Redis,
-#     current_user: Get_current_user,
-#     scope: ScopeValid
-# ) -> Dict[str, str]:
-#     """
-#     Executa o Soft Delete de forma dinâmica e segura.
-#     Descobre os privilégios buscando o nome da Role no banco, eliminando IDs fixos.
-#     """
-#     user_to_delete = None
-#     if current_user.id == user_id:
-#         logger.info("Usuário %s executou auto-exclusão da conta.", current_user.id)
-#         user_to_delete = current_user
+@user.post('/delete/2fa-verify', status_code=HTTPStatus.OK, summary='Verificação de 2FA')
+@limiter.limit('7/minute')
+async def   verify_2fa(
+    response: Response,
+    request: Request,
+    current_user: Get_current_user,
+    body: Delete2FARequest,
+    session: Session,
+    backgroundTasks: BackgroundTasks,
+    _captcha: Claudflare_turnfile,
+):
+    """
+    Endpoint para verificação de autenticação de dois fatores (2FA).
+    Recebe a challenge emitida pelo /login (após validar a senha) e o código 2FA.
+    Se tudo estiver correcto, emite o access token e o refresh token.
+ 
+    Args:
+        body (Delete2FARequest): challenge_token + codigo (TOTP de 6 ou backup de 8 dígitos).
+ 
+    Raises:
+        HTTPException [401]: challenge inválida, expirada, já usada ou de outra origem.
+        HTTPException [400]: código inválido, expirado ou já usado.
+        HTTPException [500]: Erro interno do servidor.
+        HTTPException [404]: Usuário não encontrado.
+        HTTPException [403]: Acesso negado.
+        HTTPException [429]: Requisições em excesso.
+        HTTPException [409]: Conflito de dados.
+    """
 
-#     else:
+    logger.info('Tentativa de verificação 2FA')
+    ip_address = get_client_ip(request)
+    user_agent = request.headers.get('user-agent')
 
-#         query = (
-#             select(User)
-#             .where(User.id == user_id, User.ativo == True)
-#             .options(selectinload(User.scope))
-#             .with_for_update() 
-#         )
-#         user_to_delete = await session.scalar(query)
+    challenge = await obter_challenge_valida(
+        session=session,
+        token_em_claro=body.challenge_token,
+        ip=ip_address,
+        user_agent=user_agent,
+    )
+    if not challenge:
+        logger.warning('Challenge 2FA inválida, expirada, usada ou de origem diferente (ip=%s)', ip_address)
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=settings.DETAIL_CHALLENGE_INVALIDA)
+     
+    # if not user or not user.two_factor_enabled:
+    #     raise HTTPException(
+    #         status_code=status.HTTP_400_BAD_REQUEST,
+    #         detail="Requisição de login inválida ou expirada."
+    #     )
+    challenge_id = challenge.id
+    user_id = challenge.user_id
 
-#         if not user_to_delete:
-#             logger.warning("Exclusão falhou: ID %s inexistente ou já inativo.", user_id)
-#             raise HTTPException(
-#                 status_code=HTTPStatus.NOT_FOUND, 
-#                 detail="Usuário não encontrado."
-#             )
+    if not await registrar_tentativa(session, challenge_id):
+        logger.warning('Challenge %s sem tentativas restantes', challenge_id)
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=settings.DETAIL_CHALLENGE_INVALIDA)
 
-#         target_scope = user_to_delete.scope
+    logger.info('Tentativa de verificação 2FA para o usuário: %s', user_id)
 
-#         if target_scope:
 
-#             # if scope.municipio_id is not None and target_scope.municipio_id is None:
-#             #     logger.warning("Admin Municipal %s tentou deletar Admin de nível superior %s.", current_user.id, user_to_delete.id)
-#             #     raise HTTPException(
-#             #         status_code=HTTPStatus.FORBIDDEN,
-#             #         detail="Permissão negada. Você não pode deletar um administrador de nível superior."
-#             #     )
+    codigo_limpo = body.codigo.strip()
+    codigo_encontrado = None
 
-#             if scope.provincia_id is not None and scope.municipio_id is None:
-#                 if target_scope.provincia_id is None and target_scope.municipio_id is None:
-#                     logger.warning("Admin Provincial %s tentou deletar o Super Admin %s.",current_user.id, user_to_delete.id)
-#                     raise HTTPException(
-#                         status_code=HTTPStatus.FORBIDDEN,
-#                         detail="Permissão negada. Você não pode deletar um Super Administrador."
-#                     )
-
-#         # if scope.municipio_id is not None:
-#         #     if user_to_delete.municipio_id != scope.municipio_id:
-#         #         logger.warning("Admin Municipal %s tentou invadir escopo do município %s.", current_user.id, user_to_delete.provincia_id)
-#         #         raise HTTPException(
-#         #             status_code=HTTPStatus.FORBIDDEN,
-#         #             detail="Operação negada. O usuário informado pertence a outra região geográfica."
-#         #         )
-                
-#         if scope.provincia_id is not None:
-#             if user_to_delete.provincia_id != scope.provincia_id:
-#                 logger.warning("Admin Provincial %s tentou invadir escopo da província %s.", current_user.id, user_to_delete.provincia_id)
-#                 raise HTTPException(
-#                     status_code=HTTPStatus.FORBIDDEN,
-#                     detail="Operação negada. O usuário informado pertence a outra região geográfica."
-#                 )
-#         else:
-#             logger.info("Super Admin %s autorizado para exclusão global.", current_user.id)
-
-#     user_to_delete.deletado_em = datetime.now(timezone.utc)
-#     user_to_delete.ativo = False
-
-#     try:
-#         session.add(user_to_delete)
-#         await caches.incr("v1:usuarios:lista:versao")
-#         await session.commit()
-
+    if len(codigo_limpo) == 6:
+        # ─── DESCRIPTOGRAFA O SEGREDO ───
+        try:
+            secret_claro = decrypt_totp_secret(current_user.two_factor_secret)
+        except Exception:
+            logger.exception("Falha ao desencriptar segredo 2FA do usuário %s", user.id)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Erro interno de segurança.",
+            )
         
-#         logger.info("Usuário %s desativado com sucesso. Versão do cache incrementada.", user_id)
 
-#     except Exception as e:
-#         await session.rollback()
-#         logger.error("Erro crítico durante commit de exclusão: do usuario %s,  %s ", user_id, str(e))
-#         raise HTTPException(
-#             status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
-#             detail="Erro interno ao processar a desativação da conta."
-#         )
-#     # await apagar_foto_perfil_cloudinary(str(user_to_delete.id))
+        totp = pyotp.TOTP(secret_claro)
+        logger.info('Verificando código 2FA')
+        #valid_window=1 permite aceitar códigos válidos dentro de uma janela de tempo de 30 segundos antes ou depois do código atual.
+        if not totp.verify(codigo_limpo, valid_window=1):
+            logger.warning('Código 2FA inválido')
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Código 2FA inválido ou expirado."
+            )
+    elif len(codigo_limpo) == 8:
+        # Aqui esta a lógica para verificar o código de backup de 8 dígitos.
+        backup_result = await session.scalars(
+            select(BackupCode).where(
+                BackupCode.user_id == user.id,
+                BackupCode.used == False
+            )
+        )
+        codigos_disponiveis = backup_result.all()
+        
+        for codigo in codigos_disponiveis:
+            if verify_password(codigo_limpo, codigo.code_hash):
+                codigo_encontrado = codigo
+                break
+        if not codigo_encontrado:
+            logger.warning('Código de backup inválido')
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Código de resgate inválido ou já utilizado."
+            )
 
-#     refresh_token = request.cookies.get(
-#             # "__Host-refresh_token"
-#             "refresh_token"
-#         )
-    
-#     try:
-    
-#         if refresh_token:
+        # try:
+        #     codigo_encontrado.used = True
+        #     await session.commit()
+        # except Exception as e:
+        #     await session.rollback()
+        #     logger.error('Não foi possível marcar o código de resgate como usado: %s', str(e))
+        #     raise HTTPException(
+        #         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        #         detail="Erro ao processar validação de segurança."
+        #     )
 
-#             try:
-    
-#                 payload = decode(
-#                     refresh_token,
-#                     settings.SECRET_KEY,
-#                     algorithms=[settings.ALGORITHM],
-#                 )
-    
-#                 token_jti = payload.get("jti")
-    
-#             except PyJWTError:
-    
-#                 token_jti = None
-    
-#             if token_jti:
-    
-#                 agora = datetime.now(timezone.utc)
-    
-#                 result = await session.execute(
-#                     select(UserRefreshToken)
-#                     .where(
-#                         UserRefreshToken.token_jti == token_jti,
-#                         UserRefreshToken.revogado.is_(False),
-#                     )
-#                     .with_for_update()
-#                 )
-    
-#                 db_token = (
-#                     result.scalar_one_or_none()
-#                 )
-    
-#                 if db_token:
-    
-#                     db_token.revogado = True
-#                     db_token.revogado_em = agora
-    
-#                     await session.commit()
-    
-#             # =====================================================
-#             # Apagar cookies
-#             # =====================================================
-    
-#         response.delete_cookie(
-#              # key="__Host-access_token",
-#             key="access_token",
-#             path="/",
-#             httponly=True,
-#             samesite=settings.SAMESITE_COOKIE,
-#             secure=settings.SECURE_COOKIES
-#         )
-    
-#         response.delete_cookie(
-#                 # key="__Host-refresh_token",
-#             key="refresh_token",
-#             path="/",
-#             httponly=True,
-#             samesite=settings.SAMESITE_COOKIE,
-#             secure=settings.SECURE_COOKIES
-#         )
-    
-#         response.headers["Cache-Control"] = "no-store"
-    
-#         return 
-    
-#     except Exception:
-    
-#         await session.rollback()
-    
-#         logger.exception(
-#             "Erro durante logout."
-#         )
-    
-#             # Mesmo em caso de erro interno,
-#             # remove as credenciais do navegador.
-    
-#         response.delete_cookie(
-#             # key="__Host-access_token",
-#             key="access_token",
-#             path="/",
-#             httponly=True,
-#             samesite=settings.SAMESITE_COOKIE,
-#             secure=settings.SECURE_COOKIES
-#             )
-    
-#         response.delete_cookie(
-#             # key="__Host-refresh_token",
-#             key="refresh_token",
-#             path="/",
-#             httponly=True,
-#             samesite=settings.SAMESITE_COOKIE,
-#             secure=settings.SECURE_COOKIES
-#         )
-#         response.status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
-    
-#         return {'msg': 'Usuário deletado com sucesso!'}
+    else:
+        logger.warning('Código 2FA ou de backup com tamanho inválido')
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="O código deve conter 6 dígitos (aplicativo) ou 8 dígitos (resgate)."
+        )
 
 
+    nome_completo = current_user.nome_completo
+    email_destino = current_user.email
+    user_id_str = str(current_user.id)
+    pwd_alterado_em = current_user.password_alterado_em
+
+
+
+    try:
+        if not await consumir_challenge(session, challenge_id):
+            # Outro pedido concorrente já consumiu esta challenge (replay)
+            await session.rollback()
+            logger.warning('Challenge %s já consumida (possível replay)', challenge_id)
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail=settings.DETAIL_CHALLENGE_INVALIDA
+                )
+ 
+        if codigo_encontrado is not None:
+            # UPDATE condicional: garante uso único do código de backup mesmo com concorrência
+            resultado_backup = await session.execute(
+                update(BackupCode)
+                .where(BackupCode.id == codigo_encontrado.id, BackupCode.used == False)  # noqa: E712
+                .values(used=True)
+            )
+            if resultado_backup.rowcount != 1:
+                await session.rollback()
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail='Código de resgate inválido ou já utilizado.',
+                )
+ 
+        # [FIX-2FA] ultimo_login gravado só agora (login realmente concluído).
+        current_user.ultimo_login = datetime.now(timezone.utc)
+        session.add(current_user)
+        await session.commit()
+    except HTTPException:
+        raise
+    except Exception as e:
+        await session.rollback()
+        logger.error('Não foi possível concluir a validação 2FA: %s', str(e))
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail='Erro ao processar validação de segurança.',
+        )
+
+    logger.info('Usuário %s autenticado com sucesso (2FA)', user_id_str)
+     
+    token_gerado = emitir_access_token(user_id, pwd_alterado_em)
+
+    # ip_address = (
+    #     request.headers.get("x-forwarded-for")
+    #     or (
+    #         request.client.host
+    #         if request.client
+    #         else None
+    #     )
+    # )
+
+    # if not ip_address:
+    #     ip_address = request.client.host if request.client else None
+
+    # # 3. Capturar o User-Agent (Navegador/Dispositivo)
+    # user_agent = request.headers.get("user-agent")
+    
+    refresh_gerado = await gerar_e_registar_refresh_token(
+        session=session,      # <-- Faltava este argumento!
+        user_id=user_id, 
+        ip=ip_address, 
+        user_agent=(user_agent or '')[:500] or None,
+    )
+
+    try:
+        # session.add(user)
+        await session.commit()
+        logger.info('Sucesso na atualizacao do ultimo_login do usuario')
+    except Exception as e:
+        await session.rollback()
+        logger.error('Nao foi possivel atualizar a data de ultimo_login no DB: %s', str(e))
+        raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail='Erro interno de processamento.',
+            )
+
+    user_agent_parsed = parse(user_agent)
+    
+    # try:
+    #     # # backgroundTasks.add_task(
+    #     # #     email_sucesso_login_async, 
+    #     # #     nome_completo=user.nome_completo, 
+    #     # #     ip_address=ip_address, 
+    #     # #     email_destino=user.email,
+    #     # #     navegador=user_agent_parsed.browser.family, 
+    #     # #     sistema_operacional=user_agent_parsed.os.family, 
+    #     # #     )
+    #     # await enviar_email_login(
+    #     #     backgroundTasks,
+    #     #     nome_completo=nome_completo,
+    #     #     ip_address=ip_address,
+    #     #     email_destino=email_destino,
+    #     #     navegador=user_agent_parsed.browser.family,
+    #     #     sistema_operacional=user_agent_parsed.os.family,
+    #     # )
+    #     logger.info("E-mail de login enviado com sucesso para %s", user.email)
+    # except Exception as e:
+    #     logger.error("Falha ao enviar e-mail de login para %s: %s", user.email, str(e))
+
+    
+    set_auth_cookies(
+        # request=request,
+        response=response,
+        access_token=token_gerado,
+        refresh_token=refresh_gerado,
+    )
+    response.headers["Cache-Control"] = "no-store"
+
+    return {
+        "status": "success",
+        "message": "Autenticação realizada com sucesso.",
+    }
 
