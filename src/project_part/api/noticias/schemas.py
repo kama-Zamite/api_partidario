@@ -12,7 +12,17 @@ class LimitNoticia(BaseModel):
 
 
 class UgradeStatusNoticia(BaseModel):
-    nome: str = Field(min_length=5, max_length=20)
+    nome: str = Field(min_length=5, max_length=20, strip_whitespace=True)
+
+    @field_validator('nome')
+    @classmethod
+    def validar_nome(cls, v: str) -> str:
+        if v is None or v == "":
+            raise ValueError("O status não pode ser vazio")
+        if v not in [e.value for e in CategoriaNoticiaEnum]:
+            raise ValueError(f"Status inválido. Valores válidos: {[e.value for e in CategoriaNoticiaEnum]}")
+        return v
+
 
 
 class RelacaoNomeSchema(BaseModel):
@@ -76,24 +86,94 @@ class NoticiaResponse(BaseModel):
 
 
 class CreateNoticia(BaseModel):
-    titulo: str = Field(..., max_length=200)
+    titulo: str = Field(..., max_length=200, strip_whitespace=True, min_length=5)
     slug: str = Field(..., max_length=255)
-    subtitulo: str | None = Field(None, max_length=255)
+    subtitulo: str | None = Field(None, max_length=255, strip_whitespace=True)
     lead: str | None = None
-    corpo: str
+    corpo: str = Field(..., strip_whitespace=True)
     image_url: UploadFile | None = None 
-    nome_provincia: str | None = None
-    nome_municipio: str | None = None
+    nome_provincia: str | None = Field(None, min_length=2, max_length=100, strip_whitespace=True)
+    nome_municipio: str | None = Field(None, min_length=2, max_length=100, strip_whitespace=True)
 
+    @field_validator('titulo')
+    @classmethod
+    def validar_titulo(cls, v: str) -> str:
+        if v is None or v == "":
+            raise ValueError("O título não pode ser vazio")
+        return v
+
+    @field_validator('subtitulo')
+    @classmethod
+    def validar_subtitulo(cls, v: str | None) -> str | None:
+        if v is None or v == "":
+            raise ValueError("O subtítulo não pode ser vazio")
+        return v
+
+    @field_validator('corpo')
+    @classmethod
+    def validar_corpo(cls, v: str) -> str:
+        if v is None or v == "":
+            raise ValueError("O corpo não pode ser vazio")
+        return v
+
+    @field_validator('nome_provincia')
+    @classmethod 
+    def validar_nome_provincia(cls, v: str | None) -> str | None:
+        if v is None or v == "":
+            raise ValueError("O nome da província não pode ser vazio")
+        return v
+
+    @field_validator('nome_municipio')
+    @classmethod
+    def validar_nome_municipio(cls, v: str | None) -> str | None:
+        if v is None or v == "":
+            raise ValueError("O nome do município não pode ser vazio")
+        return v
 
 class UpgradeNoticia(BaseModel):
-    titulo: str = Field(..., max_length=200)
-    subtitulo: str | None = Field(None, max_length=255)
+    titulo: str = Field(..., max_length=200, strip_whitespace=True, min_length=5)
+    subtitulo: str | None = Field(None, max_length=255, strip_whitespace=True, min_length=5)
     slug: str = Field(..., max_length=255)
     lead: str | None = None
-    corpo: str
+    corpo: str = Field(..., strip_whitespace=True)
     image_url: UploadFile | None = None
     # categoria: CategoriaNoticiaEnum = Field(default=CategoriaNoticiaEnum.DESTAQUE)
-    nome_municipio: str | None = None
-    nome_provincia: str | None = None
+    nome_municipio: str | None = Field(None, min_length=2, max_length=100, strip_whitespace=True)
+    nome_provincia: str | None = Field(None, min_length=2, max_length=100, strip_whitespace=True)
+
+    @field_validator('titulo')
+    @classmethod
+    def validar_titulo(cls, v: str) -> str:
+        if v is None or v == "":
+            raise ValueError("O título não pode ser vazio")
+        return v
+
+    @field_validator('subtitulo')
+    @classmethod
+    def validar_subtitulo(cls, v: str | None) -> str | None:
+        if v is None or v == "":
+            raise ValueError("O subtítulo não pode ser vazio")
+        return v
+
+    @field_validator('corpo')
+    @classmethod
+    def validar_corpo(cls, v: str) -> str:
+        if v is None or v == "":
+            raise ValueError("O corpo não pode ser vazio")
+        return v
+
+    @field_validator('nome_provincia')
+    @classmethod
+    def validar_nome_provincia(cls, v: str | None) -> str | None:
+        if v is None or v == "":
+            raise ValueError("O nome da província não pode ser vazio")
+        return v
+
+    @field_validator('nome_municipio')
+    @classmethod
+    def validar_nome_municipio(cls, v: str | None) -> str | None:
+        if v is None or v == "":
+            raise ValueError("O nome do município não pode ser vazio")
+        return v
+
     # status: str

@@ -10,7 +10,9 @@ from datetime import (
     timedelta,
     date
 )
-
+from project_part.utils.security_helpers import (
+    mascarar_email
+)
 from dateutil.relativedelta import relativedelta
 from decimal import Decimal
 from http import HTTPStatus
@@ -105,7 +107,7 @@ from .schemas import (
     MensagensSuportePaginadasResponse,
     RegistrosRecentes,
     CardSolicitante,
-    ValidarFilterSimpatizante,
+    # ValidarFilterSimpatizante,
     DistribuicaoGenero,
     MilitantesTerritorioResponse,
     MilitantesTerritorioItem,
@@ -589,7 +591,7 @@ async def ultimos_militantes_resgistrados(
     status_code=HTTPStatus.OK,
     response_model=RegistrosFinanceirosResponse,
 )
-# @limiter.limit('30/minute')
+@limiter.limit('30/minute')
 async def registros_financeiros(
     request: Request,
     session: Session,
@@ -649,7 +651,9 @@ async def registros_financeiros(
 
 
 @admin.get("/militantes-provincia", status_code=HTTPStatus.OK)
+@limiter.limit('30/minute')
 async def militantes_por_provincia_dashboard(
+    request: Request,
     session: Session,
     current_user: Get_current_user,
     scope: ScopeValid,
@@ -744,7 +748,7 @@ async def militantes_por_provincia_dashboard(
 
 
 @admin.get("/evolucao-militantes", status_code=HTTPStatus.OK)
-# @limiter.limit('30/minute')
+@limiter.limit('30/minute')
 async def evolucao_militantes(
     request: Request,
     session: Session,
@@ -822,7 +826,7 @@ async def evolucao_militantes(
 
 
 @admin.get("/evolucao-simpatizante", status_code=HTTPStatus.OK)
-# @limiter.limit('30/minute')
+@limiter.limit('30/minute')
 async def evolucao_simpatizante(
     request: Request,
     session: Session,
@@ -1066,8 +1070,9 @@ async def evolucao_simpatizante(
     status_code=HTTPStatus.OK,
     response_model=RegistrosRecentes,
 )
-# @limiter.limit('30/minute')
+@limiter.limit('30/minute')
 async def registros_militantes_recentes(
+    request: Request,
     session: Session,
     current_user: Get_current_user,
     scope: ScopeValid,
@@ -1208,8 +1213,9 @@ async def registros_militantes_recentes(
     status_code=HTTPStatus.OK,
     response_model=RegistrosRecentes,
 )
-# @limiter.limit('30/minute')
+@limiter.limit('30/minute')
 async def militantes_deletados_recentes(
+    request: Request,
     session: Session,
     current_user: Get_current_user,
     scope: ScopeValid,
@@ -1337,8 +1343,9 @@ async def militantes_deletados_recentes(
     status_code=HTTPStatus.OK,
     response_model=RegistrosRecentes,
 )
-# @limiter.limit('30/minute')
+@limiter.limit('30/minute')
 async def registros_simpatizantes_recentes(
+    request: Request,
     session: Session,
     current_user: Get_current_user,
     scope: ScopeValid,
@@ -1466,8 +1473,9 @@ async def registros_simpatizantes_recentes(
     status_code=HTTPStatus.OK,
     response_model=RegistrosRecentes,
 )
-# @limiter.limit('30/minute')
+@limiter.limit('30/minute')
 async def simpatizante_deletados_recentes(
+    request: Request,
     session: Session,
     current_user: Get_current_user,
     scope: ScopeValid,
@@ -2063,8 +2071,9 @@ async def simpatizante_deletados_recentes(
     status_code=HTTPStatus.OK,
     response_model=DistribuicaoGenero,
 )
-# @limiter.limit('30/minute')
+@limiter.limit('30/minute')
 async def distribuicao_genero(
+    request: Request,
     response: Response,
     session: Session,
     caches: Redis,
@@ -2247,7 +2256,7 @@ async def distribuicao_genero(
     status_code=HTTPStatus.OK,
     response_model=MilitantesTerritorioResponse,
 )
-# @limiter.limit('30/minute')
+@limiter.limit('30/minute')
 async def militantes_por_provincia(
     request: Request,
     response: Response,
@@ -2371,7 +2380,7 @@ async def militantes_por_provincia(
     status_code=HTTPStatus.OK,
     response_model=MilitantesTerritorioResponse,
 )
-# @limiter.limit('30/minute')
+@limiter.limit('30/minute')
 async def militantes_por_municipio(
     request: Request,
     response: Response,
@@ -2509,7 +2518,7 @@ async def militantes_por_municipio(
     status_code=HTTPStatus.OK,
     response_model=MilitantesTerritorioResponse,
 )
-# @limiter.limit('30/minute')
+@limiter.limit('30/minute')
 async def simpatizante_por_provincia(
     request: Request,
     response: Response,
@@ -2637,7 +2646,7 @@ async def simpatizante_por_provincia(
     status_code=HTTPStatus.OK,
     response_model=MilitantesTerritorioResponse,
 )
-# @limiter.limit('30/minute')
+@limiter.limit('30/minute')
 async def simpatizante_por_municipio(
     request: Request,
     response: Response,
@@ -2778,7 +2787,9 @@ async def simpatizante_por_municipio(
 
 
 @admin.get('/audoitLog', response_model=PaginatedAuditLogs)
+@limiter.limit('30/minute')
 async def listar_logs_auditoria(
+    request: Request,
     session: Session,
     current_user: Get_current_user,
     scope: ScopeValid,
@@ -2818,7 +2829,7 @@ async def listar_logs_auditoria(
 
 
 @admin.get('/financeiro/movimentos', status_code=HTTPStatus.OK)
-# @limiter.limit('30/minute')
+@limiter.limit('30/minute')
 async def listar_movimentos(
     request: Request,
     session: Session,
@@ -2864,7 +2875,7 @@ async def listar_movimentos(
 
 
 @admin.get('/doacoes', status_code=HTTPStatus.OK, response_model=DoacaoList)
-# @limiter.limit('30/minute')
+@limiter.limit('30/minute')
 async def listar_doacoes(
     request: Request,
     session: Session,
@@ -2948,7 +2959,7 @@ async def listar_doacoes(
 
 
 @admin.get('/quotas', status_code=HTTPStatus.OK, response_model=QuotaList)
-# @limiter.limit('30/minute')
+@limiter.limit('30/minute')
 async def listar_quotas(
     request: Request,
     session: Session,
@@ -3037,7 +3048,7 @@ async def listar_quotas(
     '/fundos/solicitacoes',
     status_code=HTTPStatus.CREATED,
 )
-# @limiter.limit('10/minute')
+@limiter.limit('15/minute')
 async def criar_solicitacao_fundo(
     request: Request,
     body: SolicitacaoFundoCreate,
@@ -3197,7 +3208,7 @@ async def criar_solicitacao_fundo(
     status_code=HTTPStatus.OK,
     response_model=SolicitacaoFundoList,
 )
-# @limiter.limit('30/minute')
+@limiter.limit('30/minute')
 async def listar_solicitacoes_fundo(
     request: Request,
     session: Session,
@@ -3253,7 +3264,7 @@ async def listar_solicitacoes_fundo(
 
 
 @admin.get('/financeiro/resumo', response_model=ResumoFinanceiroResponse)
-# @limiter.limit('30/minute')
+@limiter.limit('30/minute')
 async def resumo_financeiro(
     request: Request,
     session: Session,
@@ -3315,7 +3326,7 @@ async def resumo_financeiro(
     status_code=HTTPStatus.OK,
     response_model=SolicitacoesFundoContadores,
 )
-# @limiter.limit('30/minute')
+@limiter.limit('30/minute')
 async def contadores_solicitacoes_fundo(
     request: Request,
     session: Session,
@@ -3367,7 +3378,7 @@ async def contadores_solicitacoes_fundo(
     status_code=HTTPStatus.OK,
     response_model=MovimentacoesList,
 )
-# @limiter.limit('30/minute')
+@limiter.limit('30/minute')
 async def ultimas_movimentacoes(
     request: Request,
     session: Session,
@@ -3491,7 +3502,9 @@ async def ultimas_movimentacoes(
 
 
 @admin.get('/notificacoes/suporte', status_code=HTTPStatus.OK, response_model=MensagensSuportePaginadasResponse)
+@limiter.limit('30/minute')
 async def listar_notificacoes_suporte(
+    request: Request,
     session: Session,
     current_user: Get_current_user,
     scope: ScopeValid,
@@ -3528,10 +3541,11 @@ async def listar_notificacoes_suporte(
     }
 
 
-
 # CORREÇÃO: Removido o List[] do response_model, agora espera diretamente o CardSolicitante
 @admin.get('/notificacoes/solicitacoes-cartao', status_code=HTTPStatus.OK, response_model=NotificationListResponse)
+@limiter.limit('30/minute')
 async def listar_notificacoes_cartao(
+    request: Request,
     session: Session,
     current_user: Get_current_user,
     scope: ScopeValid,
@@ -3582,7 +3596,9 @@ async def listar_notificacoes_cartao(
     status_code=HTTPStatus.OK,
     response_model=CardSolicitante
 )
+@limiter.limit('30/minute')
 async def listar_solicitante_cartao(
+    request: Request,
     session: Session,
     current_user: Get_current_user,
     scope: ScopeValid,
@@ -3657,7 +3673,9 @@ async def listar_solicitante_cartao(
 
 
 @admin.get('/notificacoes/dashboard', status_code=HTTPStatus.OK, response_model=NotificationListResponse)
+@limiter.limit('30/minute')
 async def listar_notificacoes_dashboard(
+    request: Request,
     session: Session,
     current_user: Get_current_user,
         limit: int = Query(
@@ -3714,7 +3732,9 @@ async def listar_notificacoes_dashboard(
     
 
 @admin.get('/notificacoes', status_code=HTTPStatus.OK, response_model=NotificationListResponse)
+@limiter.limit('30/minute')
 async def listar_notificacoes(
+    request: Request,
     session: Session,
     current_user: Get_current_user,
     scope: ScopeValid,
@@ -3752,7 +3772,9 @@ async def listar_notificacoes(
 
 
 @admin.get('/notificacoes/lidas', status_code=HTTPStatus.OK, response_model=NotificationListResponse)
+@limiter.limit('30/minute')
 async def listar_notificacoes_lidas(
+    request: Request,
     session: Session,
     current_user: Get_current_user,
     scope: ScopeValid,
@@ -3808,7 +3830,9 @@ async def listar_notificacoes_lidas(
     status_code=HTTPStatus.OK,
     response_model=NotificationResponse
 )
+@limiter.limit('30/minute')
 async def marcar_como_lida(
+    request: Request,
     response: Response,
     id_notificacao: uuid.UUID,
     session: Session,
@@ -4046,12 +4070,13 @@ async def upgrade_role_user(
 
 
     usuario_banco.role_id = role_banco.id
+    email_log = mascarar_email(usuario_banco.email)
 
     try:
         session.add(usuario_banco)
         await session.commit()
         await session.refresh(usuario_banco)
-        return {'msg': f'Role ${usuario_banco.email} do Usuário atualizado com sucesso! para ${usuario_banco.role_id}'}
+        return {'msg': f'Role do Usuário ${email_log} atualizado com sucesso!'}
 
     except IntegrityError as e:
         await session.rollback()
@@ -5171,7 +5196,7 @@ async def rejeitar_solicitacao_fundo(
 async def reativar_user(
     request: Request,
     user_id: uuid.UUID,
-    # _captcha: Claudflare_turnfile,
+    _captcha: Claudflare_turnfile,
     session: Session,
     caches: Redis,
     current_user: Get_current_user,

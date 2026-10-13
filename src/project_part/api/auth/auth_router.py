@@ -142,7 +142,7 @@ async def login(
     session: Session,
     token: Access_token,
     backgroundTasks: BackgroundTasks,
-    # _captcha: Claudflare_turnfile
+    _captcha: Claudflare_turnfile
     ):
     """Endpoint para autenticação de usuário."""
 
@@ -170,8 +170,6 @@ async def login(
 
     agora = datetime.now(timezone.utc)
 
-    # Copiar o que vamos precisar já, para não depender de atributos expirados
-        # depois de commit/rollback (sessão assíncrona).
     if user:
         user_id = user.id
         user_email = user.email
@@ -192,16 +190,14 @@ async def login(
 
 
     # -- 3. Verificação de senha SEMPRE executada --------------------------
-    # Tempo de resposta idêntico em todos os cenários (anti timing-attack).
-    # settings.DUMMY_HASH deve ter o mesmo algoritmo e custo dos hashes reais.
-    # O hash corre numa thread para não bloquear o event loop.
+
     hash_alvo = user.password_hash if (user and not motivo_recusa) else settings.DUMMY_HASH
     async with HASH_SEM:
         senha_ok = await run_in_threadpool(verify_password, token.password, hash_alvo)
 
     # -- 4. Contas que não podem autenticar: mesma resposta genérica -------
     if motivo_recusa:
-        await session.rollback()  # liberta o lock de linha
+        await session.rollback() 
         logger.warning('Login recusado (%s): %s', motivo_recusa, email_log)
         return resposta_credenciais_invalidas()
 
@@ -358,11 +354,6 @@ async def login(
         "status": "success",
         "message": "Autenticação realizada com sucesso.",
     }
-
-
-
-
-
 
 
 @auth.post('/login/2fa-verify', status_code=HTTPStatus.OK, summary='Verificação de 2FA')
@@ -614,7 +605,6 @@ async def verify_2fa(
     }
 
 
-
 async def get_token_recuperar_senha_from_cookie(
     token_recuperar_senha: Annotated[
         str | None, Cookie(alias="token_recuperar_senha")
@@ -679,7 +669,6 @@ async def solicitar_recuperacao(
     else:
         logger.info('Tentativa de recuperação para e-mail inexistente: %s', payload.email)
     return mensagem_padrao
-
 
 
 @auth.post('/redefinir-senha', status_code=status.HTTP_200_OK, summary='Redefinir Senha')

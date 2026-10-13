@@ -27,19 +27,36 @@ from pydantic import (
     model_validator,
 )
 
+EmailValided = Annotated[EmailStr, StringConstraints(to_lower=True, strip_whitespace=True)]
+
 class AdminScopeBase(BaseModel):
-    nome_provincia: str | None
-    nome_municipio: str | None
-    email: EmailStr
+    email: EmailValided = Field(max_length=255)
+    nome_provincia: str | None = Field(max_length=55, strip_whitespace = True)
+    nome_municipio: str | None = Field(max_length=55, strip_whitespace = True)
+
+    @field_validator('email')
+    @classmethod
+    def Validar_campo(cls, v: EmailStr) -> EmailStr:
+        if v is None or v == '':
+            raise ValueError('Campo email não pode ser vazio')
+        return v
+
+    
+    @field_validator('nome_provincia', 'nome_municipio')
+    @classmethod
+    def transformar_vazio_em_none(cls, v: Optional[str]) -> Optional[str]:
+        if v is None or v == "":
+            return None
+        return v
 
 
 class CreateAdminScope(AdminScopeBase): ...
 
 
-class ResponseAdminScopeBase(BaseModel):
-    provincia_id: uuid.UUID | None
-    municipio_id: uuid.UUID | None
-    user_id: uuid.UUID
+# class ResponseAdminScopeBase(BaseModel):
+#     provincia_id: uuid.UUID | None
+#     municipio_id: uuid.UUID | None
+#     user_id: uuid.UUID
 
 
 
@@ -211,22 +228,33 @@ class MensagensSuportePaginadasResponse(BaseModel):
     # total: int
     results: list[MensagemSuporteResponse]
 
-EmailValided = Annotated[EmailStr, StringConstraints(to_lower=True, strip_whitespace=True)]
 
 
 class ValidarFilterSimpatizante(BaseModel):
     email: EmailValided | None = Field(max_length=255)
-    nif: str | None = None
+    nif: str | None = Field(max_length=20, strip_whitespace=True)
 
     @field_validator('nif')
     @classmethod
-    def validar_nif(cls, val_nif: str) -> str:
-        nif_limpo = val_nif.strip().upper()
+    def validar_nif(cls, val_nif: Optional[str]) -> Optional[str]:
+        if val_nif is None or val_nif == "":
+            return None
+        
+        nif_limpo = val_nif.upper()
 
         padrao_nif = r'^(\d{9}[A-Z]{2}\d{3}|\d{9}[A-Z]\d{3}[A-Z])$'
         if not re.match(padrao_nif, nif_limpo):
             raise ValueError('NIF inválido! Certifique-se de introduzir um NIF de Angola válido com 14 caracteres')
         return nif_limpo
+
+    @field_validator('email')
+    @classmethod
+    def validar_email(cls, val_email: Optional[str]) -> Optional[str]:
+        if val_email is None or val_email == "":
+            return None
+        email_limpo = val_email.lower().strip()
+        return email_limpo
+
 
 class UserResponse(BaseModel):
     id: uuid.UUID
@@ -476,20 +504,54 @@ class QuotaList(BaseModel):
     results: list[QuotaResponse]
 
 class QuotaRejeitar(BaseModel):
-    observacao: str = Field(..., min_length=3, max_length=500)
+    observacao: str = Field(..., min_length=3, max_length=500, strip_whitespace=True)
 
-
+    @field_validator('observacao')
+    @classmethod
+    def validar_campo(cls, v: str | None)-> str | None:
+        if v is None or v == "":
+            return None
+        return v
 
 
 class SolicitacaoFundoCreate(BaseModel):
     finalidade: FinalidadeFundoEnum
-    descricao: str = Field(..., min_length=5, max_length=100)
+    descricao: str = Field(
+        ...,
+        # min_length=5,
+        max_length=100,
+        strip_whitespace=True
+        )
     quantia: Decimal = Field(..., gt=0, decimal_places=2)
-    observacao: str | None = Field(None, max_length=100)
+    observacao: str | None = Field(
+        None,
+        max_length=256,
+        strip_whitespace=True
+        )
 
+    @field_validator('observacao')
+    @classmethod
+    def transformar_vazio_em_observacao(cls, v: Optional[str]) -> Optional[str]:
+        if v is None or v == "":
+            raise  ValueError('Campo observacao não pode ser vazio')
+        return v
+
+    @field_validator('descricao')
+    @classmethod
+    def transformar_vazio_em_descricao(cls, v: Optional[str]) -> Optional[str]:
+        if v is None or v == "":
+            raise  ValueError('Campo descricao não pode ser vazio')
+        return v
 
 class SolicitacaoFundoRejeitar(BaseModel):
-    observacao: str = Field(..., min_length=3, max_length=500)
+    observacao: str = Field(..., min_length=3, max_length=500, strip_whitespace=True)
+    
+    @field_validator('observacao')
+    @classmethod
+    def transformar_vazio_em_none(cls, v: Optional[str]) -> Optional[str]:
+        if v is None or v == "":
+             raise  ValueError('Campo observacao não pode ser vazio')
+        return v
 
 
 class SolicitacaoFundoResponse(BaseModel):
@@ -497,11 +559,11 @@ class SolicitacaoFundoResponse(BaseModel):
     provincia_id: int
     municipio_id: int | None
     finalidade: FinalidadeFundoEnum
-    descricao: str
+    descricao: str = Field(..., max_length=1000, min_length=10, strip_whitespace=True)
     quantia: Decimal
     moeda: str
     status: DespesaStatusEnum
-    observacao: str | None
+    observacao: str | None = Field(None, max_length=500, strip_whitespace=True)
     solicitado_por: str | None = None 
     # aprovado_por: str | None = None
     data_solicitacao: datetime

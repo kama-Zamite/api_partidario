@@ -26,12 +26,40 @@ class TokenResponse(BaseModel):
 #     codigo: str = Field(min_length=6, max_length=8)
 
 class Login2FARequest(BaseModel):
-    challenge_token: str = Field(min_length=20, max_length=128)  # [FIX-2FA] substitui user_id
-    codigo: str = Field(min_length=6, max_length=8)
+    challenge_token: str = Field(min_length=20, max_length=128, strip_whitespace=True)  # [FIX-2FA] substitui user_id
+    codigo: str = Field(min_length=6, max_length=8, strip_whitespace=True)
+
+    @field_validator("codigo")
+    @classmethod
+    def validar_codigo(cls, v: str) -> str:
+        if v is None or v == "":
+            raise ValueError("O código não pode ser vazio")
+        
+        if not re.fullmatch(r"\d{6}|\d{8}", v):
+            raise ValueError("O código deve ter 6 ou 8 dígitos")
+        return v
+
+    @field_validator("challenge_token")
+    @classmethod
+    def validar_challenge_token(cls, v: str) -> str:
+        if v is None or v == "":
+            raise ValueError("O challenge_token não pode ser vazio")
+        if not re.fullmatch(r"[A-Za-z0-9_\-]{20,128}", v):
+            raise ValueError("O challenge_token deve ter entre 20 e 128 caracteres alfanuméricos, incluindo '_' e '-'")
+        return v
+
+
 
  
 class PermissaoBase(BaseModel):
-    nome: str = Field(min_length=3, max_length=100)
+    nome: str = Field(min_length=3, max_length=100, strip_whitespace=True)
+
+    @field_validator("nome")
+    @classmethod
+    def validar_nome(cls, v: str) -> str:
+        if v is None or v == "":
+            raise ValueError("O nome não pode ser vazio")
+        return v
 
 
 class CreatePermissao(PermissaoBase): ...
@@ -46,18 +74,36 @@ class ResponsePermissao(PermissaoBase):
 
 
 class RoleBase(BaseModel):
-    nome: str = Field(max_length=50)
+    nome: str = Field(max_length=50, strip_whitespace=True)
+
+    @field_validator("nome")
+    @classmethod
+    def validar_nome(cls, v: str) -> str:
+        if v is None or v == "":
+            raise ValueError("O nome não pode ser vazio")
+        return v
 
 
 class CreateRole(RoleBase):
     permissoes_nome: List[str] = Field(default=[])
 
+    
 
 class UpgradeRole(RoleBase): ...
 
 
 class Code2FA(BaseModel):
-    codigo: str = Field(min_length=6, max_length=6)
+    codigo: str = Field(min_length=6, max_length=6,
+                         strip_whitespace=True)
+    @field_validator("codigo")
+    @classmethod
+    def validar_codigo(cls, v: str) -> str:
+        if v is None or v == "":
+            raise ValueError("O código não pode ser vazio")
+        if not re.fullmatch(r"\d{6}", v):
+            raise ValueError("O código deve ter 6 dígitos")
+        return v
+    
 
 class Limit(BaseModel):
     limit: int = Field(ge=0, le=100, default=10)
@@ -74,14 +120,23 @@ class ResponseRole(RoleBase):
 class PedidoRecuperacao(BaseModel):
     email: EmailValided = Field(max_length=255)
 
+    @field_validator("email")
+    @classmethod
+    def validar_email(cls, v: str) -> str:
+        if v is None or v == "":
+            raise ValueError("O email não pode ser vazio")
+        return v
+    
 class RedefinirSenhaSchema(BaseModel):
     token: str
-    password: str = Field(..., min_length=8, max_length=128)
-    confirmar_password: str
+    password: str = Field(..., min_length=8, max_length=128, strip_whitespace=True)
+    confirmar_password: str = Field(..., min_length=8, max_length=128, strip_whitespace=True)
 
     @field_validator("password")
     @classmethod
     def validar_complexidade(cls, v: str) -> str:
+        if v is None or v == "":
+            raise ValueError("A senha não pode ser vazia")
         if not re.search(r"[A-Z]", v):
             raise ValueError("A senha deve conter pelo menos uma letra maiúscula")
         if not re.search(r"[a-z]", v):
@@ -90,6 +145,13 @@ class RedefinirSenhaSchema(BaseModel):
             raise ValueError("A senha deve conter pelo menos um número")
         if not re.search(r"[!@#$%^&*(),.?\":{}|<>]", v):
             raise ValueError("A senha deve conter pelo menos um caractere especial")
+        return v
+
+    @field_validator("confirmar_password")
+    @classmethod
+    def validar_confirmar_password(cls, v: str) -> str:
+        if v is None or v == "":
+            raise ValueError("A confirmação de senha não pode ser vazia")
         return v
 
     @model_validator(mode="after")

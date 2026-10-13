@@ -7,21 +7,25 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 class MunicipioBase(BaseModel):
     nome_municipio: str = Field(max_length=200)
 
+    nome_provincia: str = Field(min_length=4, max_length=20, strip_whitespace=True)
 
+    @field_validator('nome_provincia', 'nome_municipio')
+    @classmethod
+    def formatar_iniciais(cls, v: str) -> str:
+        if v is None or v == "":
+            raise ValueError("O campo não pode ser vazio")
+        return v
+
+    
 class CreateMunicipio(MunicipioBase):
-    nome_provincia: str
+    nome_provincia: str = Field(min_length=4, max_length=20, strip_whitespace=True)
 
-    # @field_validator('nome_provincia', 'nome_municipio', mode='before')
-    # @classmethod
-    # def formatar_iniciais(cls, v: str) -> str:
-    #     if isinstance(v, str):
-    #         v_limpo = v.strip()
-
-    #         if not re.match(r'^[a-zA-ZÀ-ÿ\s]+$', v_limpo):
-    #             raise ValueError('O campo deve conter apenas letras e espaços.')
-
-    #         return v_limpo.title()
-    #     return v
+    @field_validator('nome_provincia')
+    @classmethod
+    def formatar_iniciais(cls, v: str) -> str:
+        if v is None or v == "":
+            raise ValueError("O nome da província não pode ser vazio")
+        return v
 
 
 class DeleteMunicipio(BaseModel):
@@ -51,13 +55,8 @@ class UpgradeMunicipio(BaseModel):
     )
     @classmethod
     def formatar_iniciais(cls, v: str) -> str:
-        if isinstance(v, str):
-            v_limpo = v.strip()
-
-            if not re.match(r'^[a-zA-ZÀ-ÿ\s]+$', v_limpo):
-                raise ValueError('O campo deve conter apenas letras e espaços.')
-
-            return v_limpo.title()
+        if v is None or v == "":
+            raise ValueError("O campo não pode ser vazio")
         return v
 
 

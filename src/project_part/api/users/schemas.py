@@ -26,20 +26,28 @@ from project_part.model.models import (
 EmailValided = Annotated[EmailStr, StringConstraints(to_lower=True, strip_whitespace=True)]
 
 class UpdateEmailRecuperacao(BaseModel):
-    novo_email: EmailValided = Field(max_length=255)
+    novo_email: EmailValided = Field(max_length=255,  strip_whitespace=True, description="Novo email para recuperação de conta")
+
+    @field_validator('novo_email')
+    @classmethod
+    def validar_email(cls, v: str) -> str:
+        if v is None or v == "":
+            raise ValueError("O email não pode ser vazio")
+        return v
+
 
 class UserBase(BaseModel):
-    nome_completo: str = Field(max_length=50)
-    email: EmailValided = Field(max_length=255)
-    password: str = Field(min_length=8, max_length=128)
-    confirmar_password: str = Field(min_length=8, max_length=128)
+    nome_completo: str = Field(max_length=50, strip_whitespace=True)
+    email: EmailValided = Field(max_length=255, strip_whitespace=True)
+    password: str = Field(min_length=8, max_length=128, strip_whitespace=True)
+    confirmar_password: str = Field(min_length=8, max_length=128, strip_whitespace=True)
     data_nascimento: date
-    nif: str = Field(min_length=14, max_length=14)
-    militante_numero: Optional[str]
-    telefone: str = Field(max_length=20)
+    nif: str = Field(min_length=14, max_length=14, strip_whitespace=True)
+    militante_numero: str | None = Field(default=None, max_length=20, strip_whitespace=True)
+    telefone: str = Field(max_length=20, strip_whitespace=True)
     genero: Genero | None = Field(default=Genero.HOMEM)
-    nome_provincia: str
-    nome_municipio: str
+    nome_provincia: str = Field(min_length=4, max_length=20, strip_whitespace=True)
+    nome_municipio: str = Field(min_length=4, max_length=20, strip_whitespace=True)
 
     foi_militante: bool = Field(default=False)
     cadastrar_militante: CadastrarComo = Field(default=CadastrarComo.MILITANTE)
@@ -60,8 +68,10 @@ class UserBase(BaseModel):
     @field_validator('nome_completo')
     @classmethod
     def validar_nome(cls, nome_complet: str) -> str:
+        if nome_complet is None or nome_complet == "":
+            raise ValueError("O nome completo não pode ser vazio")
         # Remove espaços extras no início/fim e divide em palavras
-        nomes = nome_complet.strip().split()
+        nomes = nome_complet.split()
         
         # 1. Verifica se tem pelo menos um nome e um sobrenome
         if len(nomes) < 2:
@@ -79,15 +89,18 @@ class UserBase(BaseModel):
     @field_validator("password")
     @classmethod
     def validar_complexidade(cls, v: str) -> str:
-            if not re.search(r"[A-Z]", v):
-                raise ValueError("A senha deve conter pelo menos uma letra maiúscula")
-            if not re.search(r"[a-z]", v):
-                raise ValueError("A senha deve conter pelo menos uma letra minúscula")
-            if not re.search(r"\d", v):
-                raise ValueError("A senha deve conter pelo menos um número")
-            if not re.search(r"[!@#$%^&*(),.?\":{}|<>]", v):
-                raise ValueError("A senha deve conter pelo menos um caractere especial")
-            return v
+
+        if v is None or v == "":
+            raise ValueError("A senha não pode ser vazia")
+        if not re.search(r"[A-Z]", v):
+            raise ValueError("A senha deve conter pelo menos uma letra maiúscula")
+        if not re.search(r"[a-z]", v):
+            raise ValueError("A senha deve conter pelo menos uma letra minúscula")
+        if not re.search(r"\d", v):
+            raise ValueError("A senha deve conter pelo menos um número")
+        if not re.search(r"[!@#$%^&*(),.?\":{}|<>]", v):
+            raise ValueError("A senha deve conter pelo menos um caractere especial")
+        return v
     
     @model_validator(mode='after')
     def validar_nova_senha(self) -> 'UserBase':
@@ -99,6 +112,8 @@ class UserBase(BaseModel):
     @field_validator('telefone')
     @classmethod
     def validar_numero_telefone(cls, tel_number: str) -> str:
+        if tel_number is None or tel_number == "":
+            raise ValueError("O número de telefone não pode ser vazio")
         numero_limpo = re.sub(r'[^\d+]', '', tel_number.strip())
         if numero_limpo.startswith('+244'):
             filtrar_numero = numero_limpo[4:]
@@ -119,7 +134,10 @@ class UserBase(BaseModel):
     @field_validator('nif')
     @classmethod
     def validar_nif(cls, val_nif: str) -> str:
-        nif_limpo = val_nif.strip().upper()
+        nif_limpo = val_nif.upper()
+
+        if nif_limpo is None or nif_limpo == "":
+            raise ValueError("O NIF não pode ser vazio")
 
         padrao_nif = r'^(\d{9}[A-Z]{2}\d{3}|\d{9}[A-Z]\d{3}[A-Z])$'
         if not re.match(padrao_nif, nif_limpo):
@@ -138,6 +156,21 @@ class UserBase(BaseModel):
 
         return date_nasc
 
+    @field_validator('militante_numero')
+    @classmethod
+    def validar_militante_numero(cls, val_militante: str) -> str:
+        if val_militante == "":
+            raise ValueError("O número de militante não pode ser vazio")
+        return val_militante
+
+    @field_validator('nome_provincia', 'nome_municipio')
+    @classmethod
+    def validar_nomes_provincia_municipio(cls, val: str) -> str:
+        if val is None or val == "":
+            raise ValueError("O nome da província ou do município não pode ser vazio")
+        return val
+
+    
 
 class DeleteUser(BaseModel):
     confirmar_senha: str = Field(min_length=8, max_length=30)
@@ -146,6 +179,9 @@ class DeleteUser(BaseModel):
     @field_validator("confirmar_senha")
     @classmethod
     def validar_complexidade(cls, v: str) -> str:
+        if v is None or v == "":
+            raise ValueError("A senha não pode ser vazia")
+        
         if not re.search(r"[A-Z]", v):
             raise ValueError("A senha deve conter pelo menos uma letra maiúscula")
         if not re.search(r"[a-z]", v):
@@ -156,11 +192,25 @@ class DeleteUser(BaseModel):
             raise ValueError("A senha deve conter pelo menos um caractere especial")
         return v
 
+    @field_validator("confirmar_senha")
+    @classmethod
+    def validar_confirmar_senha(cls, v: str) -> str:
+        if v is None or v == "":
+            raise ValueError("A confirmação de senha não pode ser vazia")
+        return v
+
+
 
 class Delete2FARequest(BaseModel):
     confirmar_senha: str
     codigo_2fa: str | None = Field(default=None, pattern=r'^(\d{6}|\d{8})$')
 
+    @field_validator("confirmar_senha", "codigo_2fa")
+    @classmethod
+    def validar_confirmar_senha(cls, v: str) -> str:
+        if v is None or v == "":
+            raise ValueError("A confirmação de senha ou o código 2FA não pode ser vazio")
+        return v
 
 
 class ConfirmarEmailSchema(BaseModel):
@@ -175,19 +225,41 @@ class ConfirmarEmailSchema(BaseModel):
     )
     codigo: str = Field(pattern=r'^\d{6}$')   # str, não int: preserva zeros à esquerd
 
+    @field_validator("codigo")
+    @classmethod
+    def validar_codigo(cls, v: str) -> str:
+        if v is None or v == "":
+            raise ValueError("O código não pode ser vazio")
+        return v
+
+    @field_validator("registration_ref")
+    @classmethod
+    def validar_registration_ref(cls, v: str) -> str:
+        if v is None or v == "":
+            raise ValueError("A referência de registo não pode ser vazia")
+        return v
+
 
 class CreateUser(UserBase): ...
 
 
 class UpgradePassWord(BaseModel):
-    senha_atual: str = Field(min_length=8, max_length=30)
-    nova_senha: str = Field(min_length=8, max_length=30)
-    confirmar_nova_senha: str = Field(min_length=8, max_length=30)
+    senha_atual: str = Field(min_length=8, max_length=30, strip_whitespace=True)
+    nova_senha: str = Field(min_length=8, max_length=30, strip_whitespace=True)
+    confirmar_nova_senha: str = Field(min_length=8, max_length=30, strip_whitespace=True)
 
+    @field_validator("senha_atual")
+    @classmethod
+    def validar_senha_atual(cls, v: str) -> str:
+        if v is None or v == "":
+            raise ValueError("A senha atual não pode ser vazia")
+        return v
 
     @field_validator("nova_senha")
     @classmethod
     def validar_complexidade(cls, v: str) -> str:
+        if v is None or v == "":
+            raise ValueError("A nova senha não pode ser vazia")
         if not re.search(r"[A-Z]", v):
             raise ValueError("A senha deve conter pelo menos uma letra maiúscula")
         if not re.search(r"[a-z]", v):
@@ -198,6 +270,14 @@ class UpgradePassWord(BaseModel):
             raise ValueError("A senha deve conter pelo menos um caractere especial")
         return v
 
+    @field_validator("confirmar_nova_senha")
+    @classmethod
+    def validar_confirmar_nova_senha(cls, v: str) -> str:
+        if v is None or v == "":
+            raise ValueError("A confirmação de senha não pode ser vazia")
+        return v
+
+    
     @model_validator(mode="after")
     def senhas_iguais(self):
         if self.nova_senha != self.confirmar_nova_senha:
@@ -206,26 +286,44 @@ class UpgradePassWord(BaseModel):
 
 
 class UpgradeUser(BaseModel):
-    nome_completo: str = Field(max_length=50)
-    email: EmailValided = Field(max_length=255)
-    telefone: str = Field(max_length=20)
-    nome_provincia: str
-    nome_municipio: str
+    nome_completo: str = Field(max_length=50, strip_whitespace=True)
+    email: EmailValided = Field(max_length=255, strip_whitespace=True)
+    telefone: str = Field(max_length=20, strip_whitespace=True)
+    nome_provincia: str = Field(min_length=4, max_length=20, strip_whitespace=True)
+    nome_municipio: str = Field(min_length=4, max_length=20, strip_whitespace=True)
 
     estado_civil: EstadoCivil = Field(default=EstadoCivil.SOLTEIRO)
 
     @field_validator('nome_completo')
     @classmethod
     def validar_nome(cls, nome_complet: str) -> str:
-        nomes = nome_complet.strip().split()
+        if nome_complet is None or nome_complet == "":
+            raise ValueError("O nome completo não pode ser vazio")
+        # Remove espaços extras no início/fim e divide em palavras
+        nomes = nome_complet.split()
+        
+        # 1. Verifica se tem pelo menos um nome e um sobrenome
         if len(nomes) < 2:
             raise ValueError('O nome completo deve conter pelo menos um nome e um apelido/sobrenome.')
+        
+        # 2. Verifica se a primeira letra de CADA palavra é maiúscula
+        for palavra in nomes:
+            if not palavra[0].isupper():
+                raise ValueError('O nome completo deve começar com letra maiúscula.')
+                
+        # Retorna o nome formatado apenas com um espaço simples entre as palavras
         return ' '.join(nomes)
+
+
+
+
 
     @field_validator('telefone')
     @classmethod
     def validar_numero_telefone(cls, tel_number: str) -> str:
-        numero_limpo = re.sub(r'[^\d+]', '', tel_number.strip())
+        if tel_number is None or tel_number == "":
+            raise ValueError("O número de telefone não pode ser vazio")
+        numero_limpo = re.sub(r'[^\d+]', '', tel_number)
         if numero_limpo.startswith('+244'):
             filtrar_numero = numero_limpo[4:]
         elif numero_limpo.startswith('244'):
@@ -242,6 +340,19 @@ class UpgradeUser(BaseModel):
             )
         return f'+244{filtrar_numero}'
 
+    @field_validator('nome_provincia', 'nome_municipio')
+    @classmethod
+    def validar_nomes(cls, v: str) -> str:
+        if v is None or v == "":
+            raise ValueError("O nome da província ou município não pode ser vazio")
+        return v
+
+    @field_validator('email')
+    @classmethod
+    def validar_email(cls, v: str) -> str:
+        if v is None or v == "":
+            raise ValueError("O email não pode ser vazio")
+        return v
 
 # class DeleteUser(BaseModel):
 #     email: EmailStr = Field(max_length=255)

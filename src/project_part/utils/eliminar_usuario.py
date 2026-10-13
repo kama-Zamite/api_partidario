@@ -86,7 +86,10 @@ class ContaSnapshot:
 # ─────────────────────────── Falhas de credencial ───────────────────────────
 
 async def registar_falha_credencial(
-    session, conta: ContaSnapshot, agora: datetime, detalhe: str
+    session,
+    conta: ContaSnapshot,
+    agora: datetime,
+    detalhe: str
 ) -> None:
     """Conta a falha no mesmo contador do login (incremento atómico) e levanta 400/429."""
     try:
@@ -134,7 +137,9 @@ async def senha_valida(conta: ContaSnapshot, senha: str) -> bool:
 
 
 async def verificar_segundo_fator(
-    session, conta: ContaSnapshot, codigo_bruto: str | None
+    session,
+    conta: ContaSnapshot,
+    codigo_bruto: str | None
 ) -> tuple[bool, uuid.UUID | None]:
     """Valida TOTP (6 dígitos) ou código de resgate (8). Devolve (ok, id_do_resgate)."""
     codigo = (codigo_bruto or '').strip()
@@ -165,7 +170,9 @@ async def verificar_segundo_fator(
 
 # ─────────────────────────────── Notificações ───────────────────────────────
 
-async def ids_admins_a_notificar(session, provincia_id: uuid.UUID | None) -> set[uuid.UUID]:
+async def ids_admins_a_notificar(
+        session,
+        provincia_id: uuid.UUID | None) -> set[uuid.UUID]:
     """Admin provincial (da mesma província) + superadmins (sem território)."""
     superadmin = and_(AdminScope.provincia_id.is_(None), AdminScope.municipio_id.is_(None))
     criterios = [superadmin]
