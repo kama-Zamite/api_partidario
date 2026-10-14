@@ -423,6 +423,7 @@ class ListarUserBase(BaseModel):
     # id: uuid.UUID
     image_url: str | None = None
     email: EmailStr = Field(max_length=255)
+    email_recuperacao: EmailStr | None = Field(max_length=255)
     data_nascimento: date
     criado_em: datetime
     nif: str = Field(max_length=30)
