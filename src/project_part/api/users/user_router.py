@@ -843,7 +843,16 @@ async def atualizar_email_recuperacao(
         user_email
     )
 
-
+    if user_email == schemas.novo_email:
+        logger.warning(
+            'Falha na atualização de e-mail de recuperação: novo e-mail é igual ao atual para o usuário ID: %s',
+            current_user.id
+        )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail='O novo e-mail de recuperação não pode ser igual ao atual.'
+        )
+    
     current_user.email_recuperacao = schemas.novo_email
     current_user.atualizado_em = datetime.now(timezone.utc)
 
@@ -891,66 +900,82 @@ async def atualizar_email_recuperacao(
 async def perfil(
     request: Request,
     _captcha: Claudflare_turnfile,
-    schemas: UpgradeUser,
     caches: Redis,
     session: Session,
-    current_user: Get_current_user
+    current_user: Get_current_user,
+    nome_completo: str = Form(max_length=50, description="Nome completo do usuário"),
+    email: str = Form(max_length=255, description="Endereço de e-mail do usuário"),
+    telefone: str = Form(max_length=20, description="Número de telefone do usuário"),
+    estado_civil: EstadoCivil = Form(default=EstadoCivil.SOLTEIRO, description="Estado civil do usuário"),
     ):
 
     """
         Atualiza os dados do perfil do usuário autenticado. 
     """
 
+    try:
+        schemas = UpgradeUser(
+            nome_completo=nome_completo,
+            email=email,
+            telefone=telefone,
+            estado_civil=estado_civil
+        )
+    except Exception as e:
+        logger.error('Erro ao criar o schema UpgradeUser: %s', str(e))
+        raise HTTPException(
+            status_code=HTTPStatus.BAD_REQUEST,
+            detail='Dados do perfil inválidos.'
+        )
 
-    current_role_stmt = select(Role.nome).where(Role.id == current_user.role_id)
-    current_role_name = await session.scalar(current_role_stmt)
+    # current_role_stmt = select(Role.nome).where(Role.id == current_user.role_id)
+    # current_role_name = await session.scalar(current_role_stmt)
 
-    if current_role_name == 'admin':
-        stmt_prov = select(Provincia.nome_provincia).where(Provincia.id == current_user.provincia_id)
-        stmt_mun = select(Municipio.nome_municipio).where(Municipio.id == current_user.municipio_id)
+    # if current_role_name == 'admin':
+    #     stmt_prov = select(Provincia.nome_provincia).where(Provincia.id == current_user.provincia_id)
+    #     stmt_mun = select(Municipio.nome_municipio).where(Municipio.id == current_user.municipio_id)
         
-        nome_prov_atual = await session.scalar(stmt_prov)
-        nome_mun_atual = await session.scalar(stmt_mun)
+    #     nome_prov_atual = await session.scalar(stmt_prov)
+    #     nome_mun_atual = await session.scalar(stmt_mun)
 
-        if schemas.nome_provincia != nome_prov_atual or schemas.nome_municipio != nome_mun_atual:
-            raise HTTPException(
-                status_code=HTTPStatus.FORBIDDEN,
-                detail="Administradores não podem alterar seu escopo geográfico de atuação sozinhos."
-            )
+    #     if schemas.nome_provincia != nome_prov_atual or schemas.nome_municipio != nome_mun_atual:
+    #         raise HTTPException(
+    #             status_code=HTTPStatus.FORBIDDEN,
+    #             detail="Administradores não podem alterar seu escopo geográfico de atuação sozinhos."
+    #         )
     email_log = mascarar_email(current_user.email)
-    logger.info('A procurar a província: %s', schemas.nome_provincia)
-    provincia_banco = await session.scalar(
-        select(Provincia).where(Provincia.nome_provincia == schemas.nome_provincia)
-    )
+    # logger.info('A procurar a província: %s', schemas.nome_provincia)
+    # provincia_banco = await session.scalar(
+    #     select(Provincia).where(Provincia.nome_provincia == schemas.nome_provincia)
+    # )
 
-    if not provincia_banco:
-        logger.warning('Província não encontrada')
-        raise HTTPException(
-            status_code=HTTPStatus.NOT_FOUND, detail='Província não encontrada'
-        )
+    # if not provincia_banco:
+    #     logger.warning('Província não encontrada')
+    #     raise HTTPException(
+    #         status_code=HTTPStatus.NOT_FOUND, detail='Província não encontrada'
+    #     )
 
-    logger.info(
-        'A procurar o município: %s dentro da província %s',
-        schemas.nome_municipio,
-        schemas.nome_provincia,
-    )
-    municipio_banco = await session.scalar(
-        select(Municipio).where(
-            Municipio.nome_municipio == schemas.nome_municipio,
-            Municipio.id_provincia == provincia_banco.id,
-        )
-    )
+    # logger.info(
+    #     'A procurar o município: %s dentro da província %s',
+    #     schemas.nome_municipio,
+    #     schemas.nome_provincia,
+    # )
+    # municipio_banco = await session.scalar(
+    #     select(Municipio).where(
+    #         Municipio.nome_municipio == schemas.nome_municipio,
+    #         Municipio.id_provincia == provincia_banco.id,
+    #     )
+    # )
 
-    if not municipio_banco:
-        logger.warning(
-            'Município %s não encontrado na província %s',
-            schemas.nome_municipio,
-            schemas.nome_provincia,
-        )
-        raise HTTPException(
-            status_code=HTTPStatus.NOT_FOUND,
-            detail=f'O município "{schemas.nome_municipio}" não pertence à província "{schemas.nome_provincia}"'
-        )
+    # if not municipio_banco:
+    #     logger.warning(
+    #         'Município %s não encontrado na província %s',
+    #         schemas.nome_municipio,
+    #         schemas.nome_provincia,
+    #     )
+    #     raise HTTPException(
+    #         status_code=HTTPStatus.NOT_FOUND,
+    #         detail=f'O município "{schemas.nome_municipio}" não pertence à província "{schemas.nome_provincia}"'
+    #     )
 
     logger.info('Atualizar os dados do usuario %s', email_log)
 
@@ -975,8 +1000,6 @@ async def perfil(
 
     current_user.email = schemas.email
     current_user.telefone = schemas.telefone
-    current_user.provincia_id = provincia_banco.id
-    current_user.municipio_id = municipio_banco.id
     current_user.atualizado_em = datetime.now(timezone.utc)
     current_user.estado_civil = schemas.estado_civil
 
@@ -1003,6 +1026,7 @@ async def perfil(
             status_code=HTTPStatus.INTERNAL_SERVER_ERROR, 
             detail='Não foi possível processar a atualização dos dados.'
         )
+
 
 
 @user.get('/perfil', status_code=HTTPStatus.OK, response_model=ListarUserBase)

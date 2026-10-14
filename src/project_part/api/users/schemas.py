@@ -288,8 +288,6 @@ class UpgradeUser(BaseModel):
     nome_completo: str = Field(max_length=50, strip_whitespace=True)
     email: EmailValided = Field(max_length=255, strip_whitespace=True)
     telefone: str = Field(max_length=20, strip_whitespace=True)
-    nome_provincia: str = Field(min_length=4, max_length=20, strip_whitespace=True)
-    nome_municipio: str = Field(min_length=4, max_length=20, strip_whitespace=True)
 
     estado_civil: EstadoCivil = Field(default=EstadoCivil.SOLTEIRO)
 
@@ -314,9 +312,6 @@ class UpgradeUser(BaseModel):
         return ' '.join(nomes)
 
 
-
-
-
     @field_validator('telefone')
     @classmethod
     def validar_numero_telefone(cls, tel_number: str) -> str:
@@ -339,12 +334,12 @@ class UpgradeUser(BaseModel):
             )
         return f'+244{filtrar_numero}'
 
-    @field_validator('nome_provincia', 'nome_municipio')
-    @classmethod
-    def validar_nomes(cls, v: str) -> str:
-        if v is None or v == "":
-            raise ValueError("O nome da província ou município não pode ser vazio")
-        return v
+    # @field_validator('nome_provincia', 'nome_municipio')
+    # @classmethod
+    # def validar_nomes(cls, v: str) -> str:
+    #     if v is None or v == "":
+    #         raise ValueError("O nome da província ou município não pode ser vazio")
+    #     return v
 
     @field_validator('email')
     @classmethod
