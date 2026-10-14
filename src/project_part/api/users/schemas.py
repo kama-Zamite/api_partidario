@@ -173,6 +173,7 @@ class UserBase(BaseModel):
     
 
 class DeleteUser(BaseModel):
+    validar_campo: str = Field(min_length=8, max_length=8)
     confirmar_senha: str = Field(min_length=8, max_length=30)
     codigo_2fa: str | None = Field(default=None, pattern=r'^(\d{6}|\d{8})$')
 
@@ -214,16 +215,14 @@ class Delete2FARequest(BaseModel):
 
 
 class ConfirmarEmailSchema(BaseModel):
-    # [SEC-001] O registo pendente já não se identifica pelo e-mail,
-    # mas por uma referência opaca devolvida pelo /create.
     model_config = ConfigDict(extra='forbid', str_strip_whitespace=True)
 
     registration_ref: str = Field(
         min_length=40,
         max_length=64,
-        pattern=r'^[A-Za-z0-9_-]+$',   # alfabeto do secrets.token_urlsafe
+        pattern=r'^[A-Za-z0-9_-]+$',
     )
-    codigo: str = Field(pattern=r'^\d{6}$')   # str, não int: preserva zeros à esquerd
+    codigo: str = Field(pattern=r'^\d{6}$')
 
     @field_validator("codigo")
     @classmethod

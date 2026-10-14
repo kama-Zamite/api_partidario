@@ -442,12 +442,9 @@ async def create_user(
 
     return {
         "status": "success",
-        "message": "Código de ativação enviado para o e-mail. Confirme em até 15 minutos.",
+        "message": "Código de ativação enviado para o e-mail. Confirme em até 5 minutos.",
         "registration_ref": ref,
     }
-
-
-
 
 
 @user.post("/confirm-email", status_code=HTTPStatus.CREATED)
@@ -2175,11 +2172,12 @@ async def listar_minhas_contribuicoes(
     total_pago = Decimal('0')
 
     # ── Quotas ───────────────────────────────────────────────────
-    q_quota = select(PagamentoQuota).where(PagamentoQuota.user_id == current_user.id)
-    if ano is not None:
-        q_quota = q_quota.where(
-            extract('year', PagamentoQuota.data_pagamento) == ano
-        )
+    if current_user.cadastrar_militante != CadastrarComo.MILITANTE:
+        q_quota = select(PagamentoQuota).where(PagamentoQuota.user_id == current_user.id)
+        if ano is not None:
+            q_quota = q_quota.where(
+                extract('year', PagamentoQuota.data_pagamento) == ano
+            )
 
     quotas = (await session.execute(q_quota)).scalars().all()
     for p in quotas:
@@ -2305,6 +2303,10 @@ async def delete_user(
     """
     agora = datetime.now(timezone.utc)
     conta = ContaSnapshot.de(current_user)
+
+    if schemas.validar_campo != 'ELIMINAR':
+        raise HTTPException(status_code = status.HTTP_400_BAD_REQUEST,
+                            detail='Campo de validação incorreto. Digite "ELIMINAR" para confirmar.')
 
     if current_user.deletado_em is not None:
         raise HTTPException(HTTPStatus.BAD_REQUEST, MSG_JA_DESATIVADA)

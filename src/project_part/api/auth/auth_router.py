@@ -142,7 +142,7 @@ async def login(
     session: Session,
     token: Access_token,
     backgroundTasks: BackgroundTasks,
-    _captcha: Claudflare_turnfile
+    # _captcha: Claudflare_turnfile
     ):
     """Endpoint para autenticação de usuário."""
 
@@ -272,8 +272,6 @@ async def login(
     user.tentativa_acertos = 0
     user.tentativas_apos_bloqueio = 0
     user.bloqueado_ate = None
-
-
 
     # -- 6a. Fluxo 2FA -----------------------------------------------------
     if user.two_factor_enabled:

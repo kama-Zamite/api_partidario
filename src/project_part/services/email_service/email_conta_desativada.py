@@ -24,6 +24,7 @@ async def email_conta_desativada_async(
         html_content = content.render(
             nome_usuario=nome_completo,
             logo_url=LOGO_URL,
+            link_suporte=settings.URL_LOGIN
         )
     except Exception as e:
         logger.error(f"Error rendering email template: {e}")

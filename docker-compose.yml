@@ -94,8 +94,6 @@ services:
   #     server_api:
   #       condition: service_healthy
 
-
-
   adminer:
     image: adminer:${ADMINER_VERSION}
     container_name: adminer_project
@@ -110,7 +108,7 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
-    profiles: ["dev"]
+    profiles: [] #["dev"]
     mem_limit: 128m
     pids_limit: 128
     restart: unless-stopped
