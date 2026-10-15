@@ -35,7 +35,7 @@ class LoggingRequestMiddleware:
                 message["headers"] = headers
 
 
-                # 🚀 EXTRAÇÃO DO UTILIZADOR PARA VERIFICAR O CONSENTIMENTO
+                # EXTRAÇÃO DO UTILIZADOR PARA VERIFICAR O CONSENTIMENTO
                 # O FastAPI popula o 'state' após passar pelas rotas/dependências
                 user = scope.get("state", {}).get("user", None)
                 partilha_autorizada = getattr(user, "partilha_dados", False) if user else False

@@ -111,13 +111,48 @@
 
 
 # Funcional, mas tem bugs
-
 import re
+
 from starlette.datastructures import MutableHeaders
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 HSTS_VALUE = 'max-age=31536000; includeSubDomains'  # sem preload até estares seguro
+
+# IP, IPv6 ou localhost (com porta opcional): hosts que NÃO recebem HSTS
 IP_HOST = re.compile(r'^(\d{1,3}(\.\d{1,3}){3}|\[[0-9a-fA-F:]+\]|localhost)(:\d+)?$')
+
+CSP_API = "default-src 'none'; frame-ancestors 'none'"
+
+# Só usada fora de produção (em produção docs_url=None e estas rotas não existem).
+# Hosts exatos usados pelo FastAPI: cdn.jsdelivr.net e fastapi.tiangolo.com.
+# 'unsafe-inline' é necessário porque a página do Swagger tem script inline.
+CSP_DOCS = (
+    "default-src 'self'; "
+    "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+    "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+    "img-src 'self' data: https://fastapi.tiangolo.com; "
+    "frame-ancestors 'none'; "
+    "base-uri 'none'"
+)
+
+PERMISSIONS_POLICY = (
+    'camera=(), '
+    'microphone=(), '
+    'geolocation=(), '
+    'payment=(), '
+    'usb=(), '
+    'bluetooth=(), '
+    'display-capture=(), '
+    'midi=(), '
+    'accelerometer=(), '
+    'gyroscope=(), '
+    'magnetometer=()'
+)
+
+# Caminhos EXATOS da documentação (set: comparação exata, sem prefixo)
+DOCS_PATHS = {'/docs', '/redoc', '/openapi.json'}
+# Subrotas reais do Swagger/ReDoc (ex.: /docs/oauth2-redirect)
+DOCS_PREFIXES = ('/docs/', '/redoc/')
 
 
 class ProductionSecurityMiddleware:
@@ -129,22 +164,36 @@ class ProductionSecurityMiddleware:
             await self.app(scope, receive, send)
             return
 
-        # scope['scheme'] já vem validado pelo Uvicorn (--forwarded-allow-ips)
+        # scope['scheme'] só vale 'https' atrás de proxy se o Uvicorn rodar com
+        # --proxy-headers e --forwarded-allow-ips configurado.
         is_https = scope.get('scheme') == 'https'
-        host = dict(scope.get('headers', [])).get(b'host', b'').decode('latin-1')
+
+        host = ''
+        for key, value in scope.get('headers', []):
+            if key == b'host':
+                host = value.decode('latin-1')
+                break
+
         send_hsts = is_https and not IP_HOST.match(host)
+
+        path = scope.get('path', '')
+        is_docs = path in DOCS_PATHS or path.startswith(DOCS_PREFIXES)
 
         async def send_wrapper(message: Message) -> None:
             if message['type'] == 'http.response.start':
                 headers = MutableHeaders(scope=message)
+
                 if send_hsts:
                     headers.setdefault('strict-transport-security', HSTS_VALUE)
+
                 headers.setdefault('x-content-type-options', 'nosniff')
                 headers.setdefault('x-frame-options', 'DENY')
                 headers.setdefault('referrer-policy', 'strict-origin-when-cross-origin')
-                headers.setdefault('content-security-policy', "default-src 'none'; frame-ancestors 'none'")
-                headers.setdefault('permissions-policy', 'camera=(), microphone=(), geolocation=(), payment=(), usb=()')
+                headers.setdefault('permissions-policy', PERMISSIONS_POLICY)
+                headers.setdefault(
+                    'content-security-policy', CSP_DOCS if is_docs else CSP_API
+                )
+
             await send(message)
 
         await self.app(scope, receive, send_wrapper)
-
