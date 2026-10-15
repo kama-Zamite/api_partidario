@@ -24,6 +24,7 @@ from project_part.services.email_service.recuperar_senha import enviar_email_rea
 from project_part.services.email_service.confirmar_email_cadastro_user import enviar_email_confirmacao_cadastro_user_async
 from project_part.services.email_service.email_cadastro_realizado_sucesso import email_sucesso_cadastro_async
 from project_part.services.email_service.email_conta_desativada import email_conta_desativada_async 
+from project_part.services.email_service.email_reativacao_conta import email_reativacao_conta_async
 from project_part.services.email_service.job_emails import (
     enviar_email_ativar_quota_async,
     enviar_email_quota_vencida_async
@@ -126,6 +127,20 @@ async def tarefa_email_login(
         await asyncio.sleep(RETRY_ESPERA_S)
         raise EnvioEmailFalhou('Falha ao enviar o e-mail de aviso de login')
 
+
+@broker.task(task_name='email.reativacao_conta', retry_on_error=True, max_retries=3)
+async def tarefa_email_reativacao_conta(
+    nome_completo: str,
+    email: str,
+) -> None:
+    resultado = await email_reativacao_conta_async(
+        nome=nome_completo,
+        email=email,
+    )
+    if resultado is None:
+        await asyncio.sleep(RETRY_ESPERA_S)
+        raise EnvioEmailFalhou('Falha ao enviar o e-mail de reativação de conta')
+    
 
 @broker.task(task_name='email.notificacao_quota_admin', retry_on_error=True, max_retries=3)
 async def tarefa_notificacao_quota_admin(
@@ -465,6 +480,21 @@ async def enviar_email_login(
         sistema_operacional=sistema_operacional,
     )
 
+
+async def enviar_email_reativacao_conta(
+    background: BackgroundTasks,
+    *,
+    nome_completo: str,
+    email: str,
+) -> None:
+    await _enfileirar(
+        tarefa_email_reativacao_conta,
+        email_reativacao_conta_async,
+        background,
+        nome_completo=nome_completo,
+        email=email,
+    )
+    
 
 async def enviar_notificacao_quota_admin(
     background: BackgroundTasks,

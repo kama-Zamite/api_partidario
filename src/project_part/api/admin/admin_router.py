@@ -46,6 +46,7 @@ from project_part.tasks.email_tasks import (
     enviar_notificacao_solicitacao_fundo,
     enviar_aprovacao_solicitacao_fundo,
     enviar_rejeicao_solicitacao_fundo,
+    enviar_email_reativacao_conta,
     )
 from project_part.core.cloudinary_config import upload_imagem_geral
 from project_part.core.secury import (
@@ -5201,6 +5202,7 @@ async def reativar_user(
     caches: Redis,
     current_user: Get_current_user,
     scope: ScopeValid,
+    backgroundTasks: BackgroundTasks
 ):
     """
     Reativa um utilizador com soft delete.
@@ -5262,6 +5264,12 @@ async def reativar_user(
         'User %s reativado por superadmin %s',
         user.email,
         current_user.id,
+    )
+
+    await enviar_email_reativacao_conta(
+        background=backgroundTasks,
+        nome_completo=user.nome_completo,
+        email=user.email,
     )
 
     return ReativarUserResponse(
