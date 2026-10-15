@@ -2203,28 +2203,28 @@ async def listar_minhas_contribuicoes(
                 extract('year', PagamentoQuota.data_pagamento) == ano
             )
 
-    quotas = (await session.execute(q_quota)).scalars().all()
-    for p in quotas:
-        data = p.aprovado_em or p.data_pagamento
-        if p.status == QuotaStatusEnum.APPROVED:
-            total_pago += p.quantia
-        items.append(
-            ContribuicaoItem(
-                id=p.id,
-                tipo=TipoContribuicao.QUOTA,
-                data=data,
-                referencia=p.referencia,
-                valor=p.quantia,
-                estado=_estado_ui(p.status.value if hasattr(p.status, 'value') else str(p.status)),
-                status=p.status.value if hasattr(p.status, 'value') else str(p.status),
-                periodo=p.periodo,
-                metodo_pagamento=(
-                    p.metodo_pagamento.value
-                    if hasattr(p.metodo_pagamento, 'value')
-                    else str(p.metodo_pagamento)
-                ),
+        quotas = (await session.execute(q_quota)).scalars().all()
+        for p in quotas:
+            data = p.aprovado_em or p.data_pagamento
+            if p.status == QuotaStatusEnum.APPROVED:
+                total_pago += p.quantia
+            items.append(
+                ContribuicaoItem(
+                    id=p.id,
+                    tipo=TipoContribuicao.QUOTA,
+                    data=data,
+                    referencia=p.referencia,
+                    valor=p.quantia,
+                    estado=_estado_ui(p.status.value if hasattr(p.status, 'value') else str(p.status)),
+                    status=p.status.value if hasattr(p.status, 'value') else str(p.status),
+                    periodo=p.periodo,
+                    metodo_pagamento=(
+                        p.metodo_pagamento.value
+                        if hasattr(p.metodo_pagamento, 'value')
+                        else str(p.metodo_pagamento)
+                    ),
+                )
             )
-        )
 
     # ── Doações ──────────────────────────────────────────────────
     q_doacao = select(Doacao).where(Doacao.user_id == current_user.id)
