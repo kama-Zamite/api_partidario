@@ -2196,7 +2196,7 @@ async def listar_minhas_contribuicoes(
     total_pago = Decimal('0')
 
     # ── Quotas ───────────────────────────────────────────────────
-    if current_user.cadastrar_militante != CadastrarComo.MILITANTE:
+    if current_user.cadastrar_militante == CadastrarComo.MILITANTE:
         q_quota = select(PagamentoQuota).where(PagamentoQuota.user_id == current_user.id)
         if ano is not None:
             q_quota = q_quota.where(
