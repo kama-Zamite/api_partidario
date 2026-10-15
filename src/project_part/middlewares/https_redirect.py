@@ -141,6 +141,9 @@ class ProductionSecurityMiddleware:
                     headers.setdefault('strict-transport-security', HSTS_VALUE)
                 headers.setdefault('x-content-type-options', 'nosniff')
                 headers.setdefault('x-frame-options', 'DENY')
+                headers.setdefault('referrer-policy', 'strict-origin-when-cross-origin')
+                headers.setdefault('content-security-policy', "default-src 'none'; frame-ancestors 'none'")
+                headers.setdefault('permissions-policy', 'camera=(), microphone=(), geolocation=(), payment=(), usb=()')
             await send(message)
 
         await self.app(scope, receive, send_wrapper)

@@ -50,7 +50,7 @@ logging.getLogger('uvicorn.access').setLevel(settings.LOG_LEVEL)
 
 Session = Annotated[AsyncSession, Depends(get_session)]
 Redis = Annotated[AsyncRedis, Depends(get_redis)]
-
+is_prod = settings.ENV == 'production'
 
 
 @asynccontextmanager
@@ -129,7 +129,15 @@ async def lifespan(app: FastAPI):
 
 #     scheduler.shutdown(wait=False)
 
-app = FastAPI(title='Uniao', lifespan=lifespan, description='uma api de povo para povo', version='1.0.0')
+app = FastAPI(
+    title='Uniao', 
+    lifespan=lifespan,
+    description='uma api de povo para povo',
+    version='1.0.0', 
+    docs_url=None if is_prod else '/docs',
+    redoc_url=None if is_prod else '/redoc',
+    openapi_url=None if is_prod else '/openapi.json',
+    )
 
 app.state.limiter = limiter
 app.add_exception_handler(

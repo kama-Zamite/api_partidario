@@ -4384,7 +4384,7 @@ async def aprovar_doacao(
     session: Session,
     current_user: Get_current_user,
     scope: ScopeValid,
-    backgroundTasks: BackgroundTasks,  # Adicionei para futuras tarefas assíncronas, como envio de e-mails
+    backgroundTasks: BackgroundTasks,
 ):
     doacao = await session.scalar(
         select(Doacao)
