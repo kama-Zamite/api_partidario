@@ -40,7 +40,7 @@ from project_part.middlewares.https_redirect import (
 )
 from project_part.middlewares.loggingResponse import LoggingRequestMiddleware
 from project_part.middlewares.payload_limit import ContentLengthLimitMiddleware
-
+from project_part.middlewares.AllowedHostMiddleware import AllowedHostMiddleware
 setup_logging()
 
 logging.basicConfig(level=settings.LOG_LEVEL)
@@ -173,6 +173,7 @@ app.add_middleware(
 # 3. Utilidades de Rede, HTTPS e Segurança Geral
 app.add_middleware(ProductionSecurityMiddleware)
 app.add_middleware(LoggingRequestMiddleware)
+app.add_middleware(AllowedHostMiddleware, allowed_hosts=settings.ALLOWED_HOSTS)
 app.add_middleware(GlobalExceptionHandlerMiddleware)
 
 
@@ -197,32 +198,34 @@ async def audit_context_middleware(request: Request, call_next):
 
         
 # 2. SEGUNDO (Colocado depois): O middleware que bloqueia o link da Render
-@app.middleware("http")
-async def bloquear_link_direto_render(request: Request, call_next):
-    host = request.headers.get("host", "")
+# @app.middleware("http")
+# async def bloquear_link_direto_render(request: Request, call_next):
+#     host = request.headers.get("host", "")
     
-    # Se o pedido vier pelo link direto da infraestrutura da Render
-    if "onrender.com" in host:
-        # Libera apenas as rotas de sobrevivência/documentação da API
-        if request.url.path in ["/", "/health", "/docs", "/openapi.json"]:
-            return await call_next(request)
+#     # Se o pedido vier pelo link direto da infraestrutura da Render
+#     if "onrender.com" in host:
+#         # Libera apenas as rotas de sobrevivência/documentação da API
+#         if request.url.path in ["/", "/health", "/docs", "/openapi.json"]:
+#             return await call_next(request)
         
-        # LOG DE SEGURANÇA (Opcional): Regista quem tentou contornar o domínio oficial
-        logger.warning(
-            "Tentativa de acesso direto bloqueada. Rota: %s | Host: %s", 
-            request.url.path, 
-            host
-        )
+#         # LOG DE SEGURANÇA (Opcional): Regista quem tentou contornar o domínio oficial
+#         logger.warning(
+#             "Tentativa de acesso direto bloqueada. Rota: %s | Host: %s", 
+#             request.url.path, 
+#             host
+#         )
         
-        # CORREÇÃO: Retorna uma resposta JSON direta para evitar o Erro 500 do FastAPI
-        return JSONResponse(
-            status_code=status.HTTP_403_FORBIDDEN,
-            content={
-                "detail": "Acesso direto pelo domínio da infraestrutura não é permitido. Utilize os canais oficiais."
-            }
-        )
+#         # CORREÇÃO: Retorna uma resposta JSON direta para evitar o Erro 500 do FastAPI
+#         return JSONResponse(
+#             status_code=status.HTTP_403_FORBIDDEN,
+#             content={
+#                 "detail": "Acesso direto pelo domínio da infraestrutura não é permitido. Utilize os canais oficiais."
+#             }
+#         )
         
-    return await call_next(request)
+#     return await call_next(request)
+
+
 
 @app.get('/')
 @limiter.limit('5/minute')
