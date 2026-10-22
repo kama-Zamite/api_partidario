@@ -106,7 +106,7 @@ def to_solicitacao_response(s: SolicitacaoFundo) -> SolicitacaoFundoResponse:
         data_solicitacao=s.data_solicitacao,
         aprovado_em=s.aprovado_em,
         nome_provincia=s.provincia.nome_provincia if s.provincia else None,
-        nome_solicitante=None,  # preenche se fizeres load do user
+        nome_solicitante=nome_solicitante,  # preenche se fizeres load do user
     )
 
 
