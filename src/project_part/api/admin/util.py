@@ -85,6 +85,8 @@ def to_quota_response(pag: PagamentoQuota) -> QuotaResponse:
         nome_aprovador=pag.aprovador,
         scope_aprovador=pag.aprovador.scope if pag.aprovador else None,
     )
+
+   
     
 def to_solicitacao_response(s: SolicitacaoFundo) -> SolicitacaoFundoResponse:
     nome_solicitante = None

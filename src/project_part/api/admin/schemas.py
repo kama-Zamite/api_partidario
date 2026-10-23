@@ -559,7 +559,7 @@ class SolicitacaoFundoResponse(BaseModel):
     provincia_id: int
     municipio_id: int | None
     finalidade: FinalidadeFundoEnum
-    descricao: str = Field(..., max_length=1000, min_length=10, strip_whitespace=True)
+    descricao: str = Field(..., max_length=1000, min_length=2, strip_whitespace=True)
     quantia: Decimal
     moeda: str
     status: DespesaStatusEnum
