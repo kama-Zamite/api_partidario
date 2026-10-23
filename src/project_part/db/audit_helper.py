@@ -33,7 +33,7 @@ def obter_dados_objeto(instance, estado='novo', partilha_autorizada: bool = True
         else:
             valor = str(getattr(instance, attr.key))
             
-        # 2. 🚀 APLICAÇÃO DA HIPÓTESE FALSE: Mascara o dado se o utilizador não autorizou a partilha
+        # 2. APLICAÇÃO DA HIPÓTESE FALSE: Mascara o dado se o utilizador não autorizou a partilha
         if not partilha_autorizada and attr.key.lower() in CAMPOS_SENSIVEIS:
             res[attr.key] = "[OCULTADO POR PRIVACIDADE]"
         else:

@@ -12,7 +12,7 @@ from taskiq_redis import RedisStreamBroker
 from project_part.core.setting import settings
 
 broker = RedisStreamBroker(
-    url=settings.REDIS_QUEUE_URL,   # ex.: redis://:SENHA@redis_queue:6379/0
+    url=settings.REDIS_QUEUE_URL,
     maxlen=100000,           # Trunca o Stream em aproximadamente 100k mensagens para evitar estouro de memória
     approximate=True,
     queue_name='unita:tasks',
