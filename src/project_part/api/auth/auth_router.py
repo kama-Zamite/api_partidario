@@ -347,6 +347,8 @@ async def login(
     )
     response.headers["Cache-Control"] = "no-store"
 
+    logger.warning("UA recebido: %r", request.headers.get("user-agent"))
+    logger.warning("Todos os headers: %s", dict(request.headers))
     return {
         "require_2fa": False,
         "status": "success",
