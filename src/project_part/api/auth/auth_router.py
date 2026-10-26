@@ -115,11 +115,6 @@ logger = logging.getLogger(__name__)
 
 auth = APIRouter(prefix='/auth', tags=['Auth'])
 
-# ---------------------------------------------------------------------------
-# Configuração da política de bloqueio
-# ---------------------------------------------------------------------------
-# Mensagem ÚNICA para qualquer falha de autenticação (evita enumeração de contas).
-
 
 IP_MAX = 45
 UA_MAX = 500
@@ -142,7 +137,7 @@ async def login(
     session: Session,
     token: Access_token,
     backgroundTasks: BackgroundTasks,
-    # _captcha: Claudflare_turnfile
+    _captcha: Claudflare_turnfile
     ):
     """Endpoint para autenticação de usuário."""
 
@@ -321,14 +316,20 @@ async def login(
     logger.info('Utilizador %s autenticado com sucesso (sem 2FA).', email_log)
     
     navegador, sistema = descrever_cliente(user_agent)
-    await enviar_email_login(
-        backgroundTasks,
-        nome_completo=nome_completo,
-        ip_address=ip_address,
-        email_destino=user_email,
-        navegador=navegador,
-        sistema_operacional=sistema,
-    )
+    try:
+        await enviar_email_login(
+            backgroundTasks,
+            nome_completo=nome_completo,
+            ip_address=ip_address,
+            email_destino=user_email,
+            navegador=navegador,
+            sistema_operacional=sistema,
+        )
+        logger.info("E-mail de login enviado com sucesso para %s", user.email)
+    except Exception as e:
+        logger.error("Falha ao enviar e-mail de login para %s: %s", user.email, str(e))
+    
+        
     # backgroundTasks.add_task(
     #     email_sucesso_login_async,
     #     nome_completo=nome_completo,
