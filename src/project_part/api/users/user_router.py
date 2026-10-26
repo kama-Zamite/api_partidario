@@ -303,6 +303,7 @@ async def create_user(
         #         break
         #     tentativas += 1
         num_militante_final = await atribuir_codigo_militante(session)
+        
         # else:
         #     logger.error("Falha crítica: Excedeu o limite de tentativas para gerar um número de cartão único.")
         #     raise HTTPException(
