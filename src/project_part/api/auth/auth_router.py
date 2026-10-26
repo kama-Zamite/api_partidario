@@ -783,6 +783,7 @@ async def redefinir_senha(
     }
 
 
+
 @auth.post(
     "/refresh",
     status_code=status.HTTP_200_OK,
