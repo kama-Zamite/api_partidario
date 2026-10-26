@@ -25,6 +25,7 @@ from project_part.model.models import (
 )
 
 from .setting import settings
+from .schema_secury import UsuarioAutenticado
 from cryptography.fernet import Fernet
 from project_part.core.setting import settings
 
@@ -231,7 +232,7 @@ async def invalidar_tokens_do_utilizador(session: Session, user_id: uuid.UUID) -
 #     return payload
 
 
-async def check_token(request: Request, session: Session):
+async def check_token(request: Request, session: Session) -> UsuarioAutenticado:
     http_responses = HTTPException(
         status_code=HTTPStatus.UNAUTHORIZED,
         detail='Error: token invalido!',
@@ -299,7 +300,13 @@ async def check_token(request: Request, session: Session):
             logger.warning('Access token rejeitado: senha alterada após a emissão (user %s)', user_uuid)
             raise http_responses
 
-    return user
+    return UsuarioAutenticado(
+        id=user.id,
+        email=user.email,
+        ativo=user.ativo,
+        bloqueado_permanente=user.bloqueado_permanente,
+        scopes=[scope.name for scope in user.scope]
+    )
 
 
 # def create_refresh_token(data: dict):
@@ -311,7 +318,8 @@ async def check_token(request: Request, session: Session):
 #     return payload
 
 
-Get_current_user = Annotated[User, Depends(check_token)]
+
+Get_current_user = Annotated[UsuarioAutenticado, Depends(check_token)]
 
 
 # async def check_refresh_token(request: Request, session: AsyncSession):  # <-- Corrigido para AsyncSession

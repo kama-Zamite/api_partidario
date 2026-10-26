@@ -1,166 +1,57 @@
-# project_part/core/jobs.py
+import re
+import phonenumbers
+from pydantic import field_validator
 
-import logging
-from datetime import datetime, timezone, timedelta, date
+# ... dentro da sua classe Pydantic ...
 
-# from sqlalchemy import select, and_, or_, Date 
-from sqlalchemy import select, or_, Date, cast, exists, and_, extract
+    @field_validator('telefone')
+    @classmethod
+    def validar_numero_telefone(cls, tel_number: str) -> str:
+        if not tel_number or tel_number.strip() == "":
+            raise             ValueError("O número de telefone não pode ser vazio")
+        
+        # 1. Limpa espaços e caracteres especiais
+        numero_limpo = re.sub(r'[^\d+]', '', tel_number.strip())
+        
+        # 2. Mantém a conveniência para Angola (9 dígitos diretos)
+        if len(numero_limpo) == 9 and numero_limpo.startswith(('91', '92', '93', '94', '95', '99')):
+            numero_limpo = f"+244{numero_limpo}"
+        
+        if not numero_limpo.startswith('+'):
+            numero_limpo = f"+{numero_limpo}"
 
-from project_part.core.distributed_lock import with_distributed_lock
-from project_part.model.models import (
-    User,
-    PagamentoQuota,
-    Notification,
-    RoleCategoriaNotificacao,
-    CadastrarComo,
-    QuotaStatusEnum,
-)
-from project_part.services.email_service.job_emails import (
-    enviar_email_ativar_quota_async,
-    enviar_email_quota_vencida_async
-)
-
-logger = logging.getLogger(__name__)
-
-LOCK_KEY_QUOTAS = 'lock:job:verificar_quotas_vencidas'
-LOCK_TTL_SECONDS = 600
-
-
-async def _verificar_e_notificar_quotas_impl(session_factory):
-    hoje = datetime.now(timezone.utc).date()
-
-    async with session_factory() as session:
-        logger.info('Job mensal quotas — Executando validações para o dia: %s', hoje)
-
-        # ── 1) Militantes em atraso (quota já expirou) ───────────
-        query_atraso = select(User).where(
-            User.ativo.is_(True),
-            User.cadastrar_militante == CadastrarComo.MILITANTE,
-            User.data_expiracao_quota.isnot(None),
-            User.data_expiracao_quota < hoje,
-            or_(
-                User.notificado_quota_atraso_em.is_(None),
-                and_(
-                    extract('month', User.notificado_quota_atraso_em) != hoje.month,
-                    extract('year', User.notificado_quota_atraso_em) == hoje.year
-                ),
-                extract('year', User.notificado_quota_atraso_em) < hoje.year
-            ),
-        )
-
-        vencidos = (await session.scalars(query_atraso)).all()
-
-        for user in vencidos:
-            # Salvaguarda de memória para o mês civil corrente
-            if user.notificado_quota_atraso_em and \
-               user.notificado_quota_atraso_em.month == hoje.month and \
-               user.notificado_quota_atraso_em.year == hoje.year:
-                continue
-
-            session.add(
-                Notification(
-                    user_id=user.id,
-                    titulo='Quota em atraso',
-                    mensagem=(
-                        f'Olá {user.nome_completo}, a sua quota encontra-se vencida. '
-                        f'Regularize o pagamento para manter os benefícios de militante ativos.'
-                    ),
-                    categoria=RoleCategoriaNotificacao.QUOTA,
-                )
-            )
-            user.notificado_quota_atraso_em = hoje
-            logger.info('Notificação atraso → %s', user.email)
-
-            # ── DISPARO DO EMAIL DE QUOTA VENCIDA ──
-            vencimento_formatado = user.data_expiracao_quota.strftime("%d/%m/%Y") if hasattr(user.data_expiracao_quota, "strftime") else str(user.data_expiracao_quota)
-            await enviar_email_quota_vencida_async(
-                nome_completo=user.nome_completo,
-                email_destinatario=user.email,
-                data_vencimento=vencimento_formatado
-            )
-
-        # ── 2) Novos militantes sem nunca ter quota (Otimizado sem N+1) ─────
-        # limite_novos = hoje - timedelta(days=3)
-        # limite_dt = datetime.combine(limite_novos, datetime.min.time(), tzinfo=timezone.utc)
-
-        # # Subquery para verificar se o utilizador possui QUALQUER quota PENDING ou APPROVED
-        # possui_quota_ativa_ou_pendente = exists().where(
-        #     and_(
-        #         PagamentoQuota.user_id == User.id,
-        #         PagamentoQuota.status.in_([QuotaStatusEnum.PENDING, QuotaStatusEnum.APPROVED])
-        #     )
-        # )
-
-        # query_novos = select(User).where(
-        #     User.ativo.is_(True),
-        #     User.cadastrar_militante == CadastrarComo.MILITANTE,
-        #     User.data_expiracao_quota.is_(None),
-        #     User.criado_em <= limite_dt,
-        #     # Correção do cast nativo do SQLAlchemy
-        #     User.notificado_quota_atraso_em.is_(None),
-        #     # or_(
-        #     #     and_(
-        #     #         extract('month', User.notificado_quota_atraso_em) != hoje.month,
-        #     #         extract('year', User.notificado_quota_atraso_em) == hoje.year
-        #     #     ),
-        #     #     extract('year', User.notificado_quota_atraso_em) < hoje.year
-        #     # ),
-        #     # Evita o loop N+1 trazendo apenas quem realmente não tem quotas no banco
-        #     ~possui_quota_ativa_ou_pendente
-        # )
-
-        # novos = (await session.scalars(query_novos)).all()
-
-        # for user in novos:
-        #     # Salvaguarda de mês civil atual na memória
-        #     if user.notificado_quota_atraso_em and \
-        #        user.notificado_quota_atraso_em.month == hoje.month and \
-        #        user.notificado_quota_atraso_em.year == hoje.year:
-        #         continue
-
-        #     session.add(
-        #         Notification(
-        #             user_id=user.id,
-        #             titulo='Ative as suas Quotas',
-        #             mensagem=(
-        #                 f'Olá {user.nome_completo}! Efetue o pagamento da primeira quota '
-        #                 f'para ativar os benefícios de militante.'
-        #             ),
-        #             categoria=RoleCategoriaNotificacao.QUOTA,
-        #         )
-        #     )
-        #     user.notificado_quota_atraso_em = hoje
-        #     logger.info('Notificação novo sem quota → %s', user.email)
-
-        #     await enviar_email_ativar_quota_async(
-        #         nome_completo=user.nome_completo,
-        #         email_destinatario=user.email
-        #     )
         try:
-            from project_part.db.audit_helper import processar_auditoria_sessao
-            await processar_auditoria_sessao(session)
-            await session.commit()
-            logger.info(
-                'Job quotas concluído com sucesso. Processados: %s vencidos.',
-                len(vencidos),
-            )
+            # 3. Parse com a biblioteca do Google
+            parsed_number = phonenumbers.parse(numero_limpo, "AO")
+            
+            if not phonenumbers.is_valid_number(parsed_number):
+                raise ValueError("Formato inválido")
+                
+            # 4. CAPTURA O CÓDIGO DO PAÍS (Ex: "AO", "PT", "BR", "US")
+            codigo_pais = phonenumbers.region_code_for_number(parsed_number)
+            
+            # 5. [OPCIONAL] FILTRO DE RESTRIÇÃO DE PAÍSES
+            # Se quiser bloquear algum país, basta adicionar a sigla à lista abaixo
+            paises_bloqueados = ["CN", "RU"] # Exemplo: China e Rússia bloqueados
+            if codigo_pais in paises_bloqueados:
+                raise ValueError(f"Envios para o país {codigo_pais} não são permitidos.")
+            
+            # Nota: Se quiser APENAS permitir certos países (ex: Angola e Portugal), use:
+            # paises_permitidos = ["AO", "PT"]
+            # if codigo_pais not in paises_permitidos:
+            #     raise ValueError("País não suportado.")
+
+            # 6. Retorna o número formatado no padrão internacional E.164
+            numero_final = phonenumbers.format_number(parsed_number, phonenumbers.PhoneNumberFormat.E164)
+            
+            # DICA: Se precisar de salvar a sigla do país na Base de Dados, 
+            # pode passá-la temporariamente para um atributo privado ou log do sistema aqui.
+            # print(f"Número válido detetado para o país: {codigo_pais}") 
+            
+            return numero_final
+            
         except Exception as e:
-            await session.rollback()
-            logger.error('Erro fatal no job de quotas: %s', e)
-            raise
-
-
-
-async def verificar_e_notificar_quotas_vencidas(session_factory, redis):
-    async def _run():
-        await _verificar_e_notificar_quotas_impl(session_factory)
-
-    ran = await with_distributed_lock(
-        redis,
-        key=LOCK_KEY_QUOTAS,
-        ttl_seconds=LOCK_TTL_SECONDS,
-        coro_factory=_run,
-    )
-    if not ran:
-        logger.info('Job quotas ignorado (lock Redis).')
-
+            # Mantém a mensagem de erro clara se for um bloqueio explícito feito acima
+            erro_msg = str(e) if "permitidos" in str(e) or "suportado" in str(e) else \
+                'Número de telefone inválido. Insira um número válido com o prefixo internacional (ex: +244... ou +351...).'
+            raise ValueError(erro_msg)

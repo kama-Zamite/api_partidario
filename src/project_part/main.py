@@ -98,36 +98,6 @@ async def lifespan(app: FastAPI):
         scheduler.shutdown(wait=False)
         if taskiq_iniciado:
             await broker.shutdown()
- 
-
-# @asynccontextmanager
-# async def lifespan(app: FastAPI):
-#     scheduler = AsyncIOScheduler()
-
-#     async def job_quotas():
-
-#         await verificar_e_notificar_quotas_vencidas(async_session, redis_client)
-
-#     fuso_horario = ZoneInfo('Africa/Luanda')
-#     scheduler.add_job(
-#         job_quotas,
-#         CronTrigger(
-#             day=1, 
-#             hour=2,
-#             minute=0,
-#             timezone=fuso_horario
-#             ),  # dia 15, 02:00 (fuso do scheduler!)
-#         id='job_verificar_quotas',
-#         replace_existing=True,
-#         max_instances=1,  # por processo; o Redis cobre multi-processo
-#         coalesce=True,    # se atrasar, não empilha execuções
-#     )
-#     scheduler.start()
-#     logger.info('Scheduler iniciado (lock Redis ativo).')
-
-#     yield
-
-#     scheduler.shutdown(wait=False)
 
 app = FastAPI(
     title='Uniao', 

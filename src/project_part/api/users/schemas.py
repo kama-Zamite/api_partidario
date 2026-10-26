@@ -1,6 +1,6 @@
 import re
 import uuid
-
+import phonenumbers
 from enum import Enum
 from datetime import date, datetime
 from typing import Annotated, Any, List, Optional
@@ -114,22 +114,56 @@ class UserBase(BaseModel):
     def validar_numero_telefone(cls, tel_number: str) -> str:
         if tel_number is None or tel_number == "":
             raise ValueError("O número de telefone não pode ser vazio")
+        
+        # 1. Limpa espaços e caracteres especiais
         numero_limpo = re.sub(r'[^\d+]', '', tel_number.strip())
-        if numero_limpo.startswith('+244'):
-            filtrar_numero = numero_limpo[4:]
-        elif numero_limpo.startswith('244'):
-            filtrar_numero = numero_limpo[3:]
-        else:
-            filtrar_numero = numero_limpo
+        
+        # 2. Mantém a conveniência para Angola (9 dígitos diretos)
+        if len(numero_limpo) == 9 and numero_limpo.startswith(('91', '92', '93', '94', '95', '99')):
+            numero_limpo = f"+244{numero_limpo}"
+        
+        if not numero_limpo.startswith('+'):
+            numero_limpo = f"+{numero_limpo}"
+
 
         angola_padrao_valido = r'^(91|92|93|94|95|99)\d{7}$'
 
-        if not re.match(angola_padrao_valido, filtrar_numero):
-            raise ValueError(
-                'Número de telefone inválido. Deve ser um número de Angola válido com 9 dígitos '
-                '(ex: 923000000) ou incluir o prefixo +244.'
-            )
-        return f'+244{filtrar_numero}'
+
+        try:
+            # 3. Parse com a biblioteca do Google
+            parsed_number = phonenumbers.parse(numero_limpo, "AO")
+            if not phonenumbers.is_valid_number(parsed_number):
+                raise ValueError("Formato inválido")
+
+            # 4. CAPTURA O CÓDIGO DO PAÍS (Ex: "AO", "PT", "BR", "US")
+            codigo_pais = phonenumbers.region_code_for_number(parsed_number)
+
+            # 5. [OPCIONAL] FILTRO DE RESTRIÇÃO DE PAÍSES
+            paises_bloqueados = ["CN", "RU"] # Exemplo: China e Rússia bloqueados
+            if codigo_pais in paises_bloqueados:
+                raise ValueError(f"Envios para o país {codigo_pais} não são permitidos.")
+
+            # paises_permitidos = ["AO", "PT"]
+            # if codigo_pais not in paises_permitidos:
+            #     raise ValueError("País não suportado.")
+
+            # 6. Retorna o número formatado no padrão internacional E.164
+            numero_final = phonenumbers.format_number(parsed_number, phonenumbers.PhoneNumberFormat.E164)  
+            return numero_final
+                    
+        except Exception as e:
+            # Mantém a mensagem de erro clara se for um bloqueio explícito feito acima
+            erro_msg = str(e) if "permitidos" in str(e) or "suportado" in str(e) else \
+                    'Número de telefone inválido. Insira um número válido com o prefixo internacional (ex: +244... ou +351...).'
+            raise ValueError(erro_msg)
+
+        
+        # if not re.match(angola_padrao_valido, filtrar_numero):
+        #     raise ValueError(
+        #         'Número de telefone inválido. Deve ser um número de Angola válido com 9 dígitos '
+        #         '(ex: 923000000) ou incluir o prefixo +244.'
+        #     )
+        # return f'+244{filtrar_numero}'
 
     @field_validator('nif')
     @classmethod
