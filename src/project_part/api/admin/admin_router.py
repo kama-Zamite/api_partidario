@@ -4165,7 +4165,7 @@ async def militante_card(
     # tentativas = 0
     # while tentativas < 5:
     #     prefix = ''.join(secrets.choice('0123456789') for _ in range(3))
-    #     first_card_number = ''.join(secrets.choice('0123456789') for _ in range(3))
+        # first_card_number = ''.join(secrets.choice('0123456789') for _ in range(3))
     #     middle_card_number = ''.join(secrets.choice('0123456789') for _ in range(3))
     #     last_card_number = ''.join(secrets.choice('0123456789') for _ in range(2))
     #     numero_cartao = f'{prefix}.{first_card_number}.{middle_card_number}-{last_card_number}'

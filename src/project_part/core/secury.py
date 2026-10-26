@@ -1,19 +1,37 @@
 import logging
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import (
+    datetime,
+    timedelta,
+    timezone
+)
 from http import HTTPStatus
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import Depends, HTTPException, Request, Cookie, status
+from fastapi import (
+    Depends, 
+    HTTPException,
+    Request,
+    Cookie, 
+    status
+)
 from fastapi.security import OAuth2PasswordBearer
-from jwt import DecodeError, ExpiredSignatureError, PyJWTError, decode, encode
+from jwt import (
+    DecodeError,
+    ExpiredSignatureError,
+    PyJWTError,
+    decode,
+    encode
+)
 from pwdlib import PasswordHash
 from slowapi.util import get_remote_address
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
-
+from sqlalchemy.orm import (
+    selectinload,
+    load_only
+)
 from project_part.db.session import get_session
 from project_part.core.revocar_token_apos_alterar_passWord import token_reflete_senha_atual
 from project_part.model.models import (
@@ -287,7 +305,14 @@ async def check_token(request: Request, session: Session) -> UsuarioAutenticado:
         logger.warning("Token não possui 'exp'")
         raise http_responses
     
-    user = await session.scalar(select(User).where(User.id == user_uuid).options(selectinload(User.scope)))
+    user = await session.scalar(
+        select(User)
+        .where(User.id == user_uuid)
+        .options(
+            load_only(User.id, User.email, User.ativo, User.bloqueado_permanente, User.password),
+            selectinload(User.scope))
+            )
+
     if not user:
         logger.warning('Usuário com ID %s não existe mais no banco', user_uuid)
         raise http_responses

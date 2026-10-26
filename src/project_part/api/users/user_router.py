@@ -77,6 +77,7 @@ from project_part.core.secury import (
     decrypt_totp_secret,
     gerar_e_registar_refresh_token
     )
+from project_part.utils.gerador_numero_militante import atribuir_codigo_militante
 from project_part.utils.eliminar_usuario import (
     limpar_cookies_auth,
     ContaSnapshot,
@@ -290,23 +291,24 @@ async def create_user(
         )
 
     if cadastrar_militante == CadastrarComo.MILITANTE:
-        tentativas = 0
-        while tentativas < 5:
-            ano_atual = datetime.now(timezone.utc).year
-            chave_aleatoria = secrets.token_hex(3).upper()
-            num_militante_final = f'UNITA.{ano_atual}-{chave_aleatoria}'
-            numero_exists = await session.scalar(
-                select(User.id).where(User.militante_numero == num_militante_final)
-            )
-            if not numero_exists:
-                break
-            tentativas += 1
-        else:
-            logger.error("Falha crítica: Excedeu o limite de tentativas para gerar um número de cartão único.")
-            raise HTTPException(
-                status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
-                detail="Erro de infraestrutura ao gerar número de cartão."
-            )
+        # tentativas = 0
+        # while tentativas < 5:
+        #     ano_atual = datetime.now(timezone.utc).year
+        #     chave_aleatoria = secrets.token_hex(3).upper()
+        #     num_militante_final = f'UNITA.{ano_atual}-{chave_aleatoria}'
+        #     numero_exists = await session.scalar(
+        #         select(User.id).where(User.militante_numero == num_militante_final)
+        #     )
+        #     if not numero_exists:
+        #         break
+        #     tentativas += 1
+        num_militante_final = await atribuir_codigo_militante(session)
+        # else:
+        #     logger.error("Falha crítica: Excedeu o limite de tentativas para gerar um número de cartão único.")
+        #     raise HTTPException(
+        #         status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+        #         detail="Erro de infraestrutura ao gerar número de cartão."
+        #     )
 
     # --- 3. Validação Pydantic ---
     try:

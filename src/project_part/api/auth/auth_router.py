@@ -145,16 +145,12 @@ async def login(
     logger.info('Tentativa de login para %s', email_log)
 
 
-        # -- 1. Carregar utilizador COM lock de linha --------------------------
-    # with_for_update() serializa pedidos simultâneos para a mesma conta,
-    # impedindo que contornem o contador de tentativas (race condition).
     try:
-        # Isolamento estrito da primeira query
         user = await session.scalar(
             select(User)
             .where(or_(
                 User.email == token.username,
-                User.militante_numero == token.username
+                User.telefone == token.username
             ))
             .with_for_update()
             )
