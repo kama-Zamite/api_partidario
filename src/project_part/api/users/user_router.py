@@ -202,7 +202,7 @@ async def create_user(
     caches: Redis,
     session: Session,
     backgroundTasks: BackgroundTasks,
-    # _captcha: Claudflare_turnfile,
+    _captcha: Claudflare_turnfile,
     aceitou_termos: bool,
     nome_completo: str = Form(...),
     email: str = Form(...),
@@ -455,7 +455,7 @@ async def confirmar_email_cadastro(
     dados: ConfirmarEmailSchema,   # [SEC-001] agora: registration_ref + codigo (sem email)
     caches: Redis,
     session: Session,
-    # _captcha: Claudflare_turnfile,
+    _captcha: Claudflare_turnfile,
     backgroundTasks: BackgroundTasks,
 ):
     agora = datetime.now(timezone.utc)
