@@ -117,6 +117,7 @@ class UserBase(BaseModel):
         
         # 1. Limpa espaços e caracteres especiais
         numero_limpo = re.sub(r'[^\d+]', '', tel_number.strip())
+
         
         # 2. Mantém a conveniência para Angola (9 dígitos diretos)
         if len(numero_limpo) == 9 and numero_limpo.startswith(('91', '92', '93', '94', '95', '99')):
