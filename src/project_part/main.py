@@ -134,9 +134,9 @@ app = FastAPI(
     lifespan=lifespan,
     description='uma api de povo para povo',
     version='1.0.0', 
-    # docs_url=None if is_prod else '/docs',
-    # redoc_url=None if is_prod else '/redoc',
-    # openapi_url=None if is_prod else '/openapi.json',
+    docs_url=None if is_prod else '/docs',
+    redoc_url=None if is_prod else '/redoc',
+    openapi_url=None if is_prod else '/openapi.json',
     )
 
 app.state.limiter = limiter
