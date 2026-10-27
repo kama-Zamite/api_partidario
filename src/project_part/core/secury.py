@@ -43,7 +43,6 @@ from project_part.model.models import (
 )
 
 from .setting import settings
-from .schema_secury import UsuarioAutenticado
 from cryptography.fernet import Fernet
 from project_part.core.setting import settings
 
@@ -292,9 +291,6 @@ async def check_token(request: Request, session: Session):
         logger.warning('Refresh token apresentado como access token (sub: %s)', user_id)
         raise http_responses
     
-
-
-
     try:
         user_uuid = UUID(user_id)
     except (ValueError, TypeError, AttributeError):
@@ -305,13 +301,15 @@ async def check_token(request: Request, session: Session):
     if not expire_token:
         logger.warning("Token não possui 'exp'")
         raise http_responses
+    
     user = await session.scalar(
-    select(User)
-        .where(User.id == user_uuid)
-        .options(
-            selectinload(User.scope),
+        select(User)
+            .where(User.id == user_uuid)
+            .options(
+                selectinload(User.scope),
+            )
     )
-    )
+    
     
     if not user:
         logger.warning('Usuário com ID %s não existe mais no banco', user_uuid)
@@ -326,13 +324,7 @@ async def check_token(request: Request, session: Session):
             raise http_responses
 
 
-    return UsuarioAutenticado(
-        id=user.id,
-        email=user.email,
-        ativo=user.ativo,
-        bloqueado_permanente=user.bloqueado_permanente,
-        scopes=[scope.name for scope in user.scope] if user.scope else [],
-    )
+    return user
 
 
 
@@ -346,7 +338,7 @@ async def check_token(request: Request, session: Session):
 
 
 
-Get_current_user = Annotated[UsuarioAutenticado, Depends(check_token)]
+Get_current_user = Annotated[User, Depends(check_token)]
 
 
 # async def check_refresh_token(request: Request, session: AsyncSession):  # <-- Corrigido para AsyncSession
