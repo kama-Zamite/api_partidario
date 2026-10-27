@@ -250,7 +250,7 @@ async def invalidar_tokens_do_utilizador(session: Session, user_id: uuid.UUID) -
 #     return payload
 
 #  -> UsuarioAutenticado
-async def check_token(request: Request, session: Session):
+async def check_token(request: Request, session: Session) -> UsuarioAutenticado:
     http_responses = HTTPException(
         status_code=HTTPStatus.UNAUTHORIZED,
         detail='Error: token invalido!',
@@ -309,9 +309,39 @@ async def check_token(request: Request, session: Session):
         select(User)
         .where(User.id == user_uuid)
         .options(
-            # load_only(User.id, User.email, User.ativo, User.bloqueado_permanente, User.password_hash),
-            selectinload(User.scope))
+            load_only(load_only(
+                User.id,
+                User.email,
+                User.password_hash,
+                User.image_url,
+                User.foi_militante,
+                User.militante_numero,
+                User.partilha_dados,
+                User.cookies_personalizacao,
+                User.two_factor_enabled,
+                User.notificacoes_gerais,
+                User.comunicados_oficiais,
+                User.eventos_mobilizacoes,
+                User.contribuicoes_quota,
+                User.noticias_partido,
+                User.consentimento_lpd,
+                User.concedido_em,
+                User.versao_politica_apd,
+                User.criado_em,
+                User.password_alterado_em,
+                User.atualizado_em,
+                User.deletado_em,
+                User.ultimo_login,
+                User.data_expiracao_quota,
+                User.notificado_quota_atraso_em,
+                User.estado_civil,
+                User.ativo,
+                User.bloqueado_permanente,
             )
+            ),
+            selectinload(User.scope),
+        )
+    )
 
     if not user:
         logger.warning('Usuário com ID %s não existe mais no banco', user_uuid)
@@ -325,14 +355,44 @@ async def check_token(request: Request, session: Session):
             logger.warning('Access token rejeitado: senha alterada após a emissão (user %s)', user_uuid)
             raise http_responses
 
-    # return UsuarioAutenticado(
-    #     id=user.id,
-    #     email=user.email,
-    #     ativo=user.ativo,
-    #     bloqueado_permanente=user.bloqueado_permanente,
-    #     scopes=[scope.name for scope in user.scope]
-    # )
-    return user
+    return UsuarioAutenticado(
+        id=user.id,
+        email=user.email,
+        image_url=user.image_url,
+        foi_militante=user.foi_militante,
+        militante_numero=user.militante_numero,
+
+        partilha_dados=user.partilha_dados,
+        cookies_personalizacao=user.cookies_personalizacao,
+
+        two_factor_enabled=user.two_factor_enabled,
+
+        notificacoes_gerais=user.notificacoes_gerais,
+        comunicados_oficiais=user.comunicados_oficiais,
+        eventos_mobilizacoes=user.eventos_mobilizacoes,
+        contribuicoes_quota=user.contribuicoes_quota,
+        noticias_partido=user.noticias_partido,
+
+        consentimento_lpd=user.consentimento_lpd,
+        concedido_em=user.concedido_em,
+        versao_politica_apd=user.versao_politica_apd,
+
+        criado_em=user.criado_em,
+        password_alterado_em=user.password_alterado_em,
+        atualizado_em=user.atualizado_em,
+        deletado_em=user.deletado_em,
+        ultimo_login=user.ultimo_login,
+
+        data_expiracao_quota=user.data_expiracao_quota,
+        notificado_quota_atraso_em=user.notificado_quota_atraso_em,
+
+        estado_civil=user.estado_civil,
+        ativo=user.ativo,
+        bloqueado_permanente=user.bloqueado_permanente,
+
+        scopes=[scope.name for scope in user.scope] if user.scope else [],
+    )
+    # return 
 
 # def create_refresh_token(data: dict):
 #     to_encode = data.copy()
