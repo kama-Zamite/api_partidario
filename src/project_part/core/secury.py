@@ -309,7 +309,7 @@ async def check_token(request: Request, session: Session) -> UsuarioAutenticado:
         select(User)
         .where(User.id == user_uuid)
         .options(
-            load_only(User.id, User.email, User.ativo, User.bloqueado_permanente, User.password),
+            load_only(User.id, User.email, User.ativo, User.bloqueado_permanente, User.password_hash),
             selectinload(User.scope))
             )
 

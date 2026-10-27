@@ -7,7 +7,7 @@ class UsuarioAutenticado(BaseModel):
     email: str
     ativo: bool
     bloqueado_permanente: bool
-    # password: str
+    password_hash: str
     scopes: List[str] = []
 
     class Config:
