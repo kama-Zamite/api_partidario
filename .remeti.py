@@ -55,3 +55,13 @@ from pydantic import field_validator
             erro_msg = str(e) if "permitidos" in str(e) or "suportado" in str(e) else \
                 'Número de telefone inválido. Insira um número válido com o prefixo internacional (ex: +244... ou +351...).'
             raise ValueError(erro_msg)
+
+
+
+
+# No FastAPI, para capturar o IP real enviado pela Cloudflare
+@app.get("/meu-endpoint")
+async def meu_endpoint(request: Request):
+    # A Cloudflare envia o IP real do cliente neste cabeçalho:
+    ip_real = request.headers.get("cf-connecting-ip")
+    print(f"O utilizador ligou-se a partir do IP: {ip_real}")

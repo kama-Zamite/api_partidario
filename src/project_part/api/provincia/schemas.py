@@ -60,7 +60,8 @@ class UpgradeMunicipio(BaseModel):
         return v
 
 
-class ResponseMunicipio(MunicipioBase):
+class ResponseMunicipio(BaseModel):
+    nome_municipio: str
     model_config = ConfigDict(from_attributes=True)
 
 
@@ -99,5 +100,5 @@ class FindProvincia(BaseModel):
 
 
 class ResponseProvincia(ProvinciaBase):
-    municipio: List[ResponseMunicipio] = []
+    municipio: List[ResponseMunicipio] = Field(default_factory=list)
     model_config = ConfigDict(from_attributes=True)
