@@ -594,10 +594,10 @@ async def atualizar_noticia_completa(
 
 
 @news_router.delete('/{id_news}', status_code=HTTPStatus.OK)
-@limiter.limit('2/minute')
+@limiter.limit('3/minute')
 async def eliminar_noticia(
     request: Request,
-    id_news: int,
+    id_news: uuid.UUID,
     session: Session,
     caches: Redis,
     current_user: Get_current_user,
@@ -654,13 +654,22 @@ async def eliminar_noticia(
                 logger.error('Imagem da notícia %s não foi removida do Cloudinary (órfã).', noticia_id)
         except Exception:
             logger.exception('Falha ao remover imagem da notícia %s do Cloudinary.', noticia_id)
-    padrao_chaves = f"{CACHE_KEY_NOTICIAS}:*"
-    # O Redis vai procurar por: "v1:noticias:lista:*"
-    chaves_encontradas = await caches.keys(padrao_chaves)
-
+    
+    
+    # Código de limpeza do Cache corrigido e blindado:
     try:
-        await caches.delete(*chaves_encontradas)
+        padrao_chaves = f"{CACHE_KEY_NOTICIAS}:*"
+        chaves_encontradas = await caches.keys(padrao_chaves)
+
+        # CORREÇÃO CRÍTICA: Só executa o delete se a lista não estiver vazia
+        if chaves_encontradas:
+            await caches.delete(*chaves_encontradas)
+            logger.info(f"Foram limpas {len(chaves_encontradas)} chaves de cache de notícias.")
+        else:
+            logger.info("Nenhuma chave de cache encontrada para limpar.")
+
     except Exception as e:
-        logger.critical('Erro ao limpar o cache: %s', str(e))
+        # Mantém a rota viva mesmo se o Redis falhar (Princípio de Resiliência)
+        logger.error('Erro não fatal ao limpar o cache do Redis: %s', str(e))
 
     return {'msg': 'Notícia deletada com sucesso!'}
