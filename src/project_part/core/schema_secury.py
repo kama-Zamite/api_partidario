@@ -25,8 +25,7 @@ class UsuarioAutenticado(BaseModel):
     # Associação geográfica e permissões
     provincia_id: int
     municipio_id: int
-    role_id: int
-
+    
     # Dados de militância
     cadastrar_militante: Optional[CadastrarComo] = None
     foi_militante: Optional[bool] = False
