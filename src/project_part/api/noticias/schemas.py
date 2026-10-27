@@ -88,7 +88,7 @@ class NoticiaResponse(BaseModel):
 class CreateNoticia(BaseModel):
     titulo: str = Field(..., max_length=200, strip_whitespace=True, min_length=5)
     slug: str = Field(..., max_length=500)
-    subtitulo: str | None = Field(None, max_length=255, strip_whitespace=True)
+    subtitulo: str | None = Field(None, strip_whitespace=True)
     lead: str | None = None
     corpo: str = Field(..., min_length=10, max_length=10.000, strip_whitespace=True)
     image_url: UploadFile | None = None 
