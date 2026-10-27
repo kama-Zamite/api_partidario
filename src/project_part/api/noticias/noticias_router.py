@@ -174,14 +174,14 @@ async def criar_noticia(
     current_user: Get_current_user,
     scope: ScopeValid,
     _captcha: Claudflare_turnfile,
-    titulo: str = Form(..., min_length=5, max_length=200),
+    titulo: str = Form(...),
     subtitulo: str | None = Form(None),
     lead: str | None = Form(None),
-    corpo: str = Form(min_length=10, max_length=10000),
+    corpo: str = Form(...),
     image_news: UploadFile | None = File(None, description='Foto de perfil opcional (JPEG/JPG, max 5MB)'),
     # categoria_id: int = Form(gt=0),
-    nome_provincia: str | None = Form(None, min_length=3),
-    nome_municipio: str | None = Form(None, min_length=3),
+    nome_provincia: str | None = Form(None),
+    nome_municipio: str | None = Form(None),
 ):
     """
     Publica uma nova notícia vinculando de forma geográfica e assíncrona a imagem à pasta noticias_portal no Cloudinary.
