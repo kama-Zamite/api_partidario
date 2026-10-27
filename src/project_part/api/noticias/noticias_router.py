@@ -526,6 +526,10 @@ async def atualizar_noticia_completa(
             nome_municipio=nome_municipio,
         )
     except ValidationError as e:
+        logger.warning(
+            "Erro de validação ao criar notícia: %s",
+            e.errors(include_url=False, include_context=False),
+        )
         raise HTTPException(
             status_code=HTTPStatus.UNPROCESSABLE_ENTITY, detail=e.errors(include_url=False, include_context=False)
         )
