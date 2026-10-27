@@ -597,7 +597,7 @@ async def atualizar_noticia_completa(
 @limiter.limit('2/minute')
 async def eliminar_noticia(
     request: Request,
-    id_news: uuid.UUID,
+    id_news: int,
     session: Session,
     caches: Redis,
     current_user: Get_current_user,
