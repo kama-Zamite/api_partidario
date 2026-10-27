@@ -201,7 +201,6 @@ async def criar_noticia(
             subtitulo=subtitulo,
             lead=lead,
             corpo=corpo,
-            image_url=image_news,
             # categoria_id=categoria_id,
             nome_provincia=nome_provincia,
             nome_municipio=nome_municipio,
@@ -272,7 +271,7 @@ async def criar_noticia(
         status=NoticiasStatusEnum.PUBLICADO,
     )
 
-    imagem_tratada = dados_validos.image_url
+    imagem_tratada = image_news
     try:
         # logger.info('')
         session.add(nova_noticia)

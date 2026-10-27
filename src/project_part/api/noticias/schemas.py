@@ -91,7 +91,6 @@ class CreateNoticia(BaseModel):
     subtitulo: str | None = Field(None, strip_whitespace=True)
     lead: str | None = None
     corpo: str = Field(..., min_length=10, max_length=10000, strip_whitespace=True)
-    image_url: UploadFile | None = None 
     nome_provincia: str | None = Field(None, min_length=2, max_length=100, strip_whitespace=True)
     nome_municipio: str | None = Field(None, min_length=2, max_length=100, strip_whitespace=True)
 
@@ -129,6 +128,8 @@ class CreateNoticia(BaseModel):
         if v is None or v == "":
             raise ValueError("O nome do município não pode ser vazio")
         return v
+
+
 
 class UpgradeNoticia(BaseModel):
     titulo: str = Field(..., max_length=200, strip_whitespace=True, min_length=5)
