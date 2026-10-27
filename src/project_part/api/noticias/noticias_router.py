@@ -195,7 +195,7 @@ async def criar_noticia(
     slug_gerado = await gerar_slug_unico(slug_inicial, session)
 
     try:
-        dados_validos = UpgradeNoticia(
+        dados_validos = CreateNoticia(
             titulo=titulo,
             slug=slug_gerado,
             subtitulo=subtitulo,
@@ -481,14 +481,14 @@ async def atualizar_noticia_completa(
     caches: Redis,
     current_user: Get_current_user,
     scope: ScopeValid,
-    titulo: str = Form(..., min_length=5, max_length=200),
-    subtitulo: str | None = Form(None, min_length=5, max_length=255),
+    titulo: str = Form(...),
+    subtitulo: str | None = Form(None),
     lead: str | None = Form(None),
-    corpo: str = Form(min_length=5),
+    corpo: str = Form(...),
     image_news: UploadFile | None = File(None, description='Foto de perfil opcional (JPEG/JPG, max 5MB)'),
     # categoria_id: int = Form(gt=0),
-    nome_provincia: str | None = Form(None, min_length=3),
-    nome_municipio: str | None = Form(None, min_length=3),
+    nome_provincia: str | None = Form(None),
+    nome_municipio: str | None = Form(None),
 ):
     """Endpoint para atualizar completamente os detalhes de uma notícia específica.
     Verifica se a notícia existe, se o administrador tem permissão para atualizar a notícia com base no território e se as novas amarrações de província/município são válidas.
@@ -514,7 +514,7 @@ async def atualizar_noticia_completa(
     slug_gerado = await gerar_slug_unico(slug_inicial, session)
 
     try:
-        dados_validos = CreateNoticia(
+        dados_validos = UpgradeNoticia(
             titulo=titulo,
             slug=slug_gerado,
             subtitulo=subtitulo,
