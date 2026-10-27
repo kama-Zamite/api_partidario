@@ -304,79 +304,78 @@ async def check_token(request: Request, session: Session) -> UsuarioAutenticado:
     if not expire_token:
         logger.warning("Token não possui 'exp'")
         raise http_responses
-    
     user = await session.scalar(
-        select(User)
-            .where(User.id == user_uuid)
-            .options(
-                load_only(
+    select(User)
+        .where(User.id == user_uuid)
+        .options(
+            load_only(
                 User.id,
                 User.nome_completo,
                 User.image_url,
-
+    
                 # Contactos
                 User.email,
                 User.email_recuperacao,
                 User.telefone,
-
+    
                 # Dados pessoais
                 User.data_nascimento,
                 User.nif,
                 User.genero,
                 User.estado_civil,
-
+    
                 # Associação geográfica e permissões
                 User.provincia_id,
                 User.municipio_id,
                 User.role_id,
-
+    
                 # Militância
                 User.cadastrar_militante,
                 User.foi_militante,
                 User.militante_numero,
-
+    
                 # Privacidade
                 User.partilha_dados,
                 User.cookies_personalizacao,
                 User.consentimento_lpd,
                 User.concedido_em,
                 User.versao_politica_apd,
-
+    
                 # Autenticação de dois fatores
                 User.two_factor_enabled,
-
+    
                 # Notificações
                 User.notificacoes_gerais,
                 User.comunicados_oficiais,
                 User.eventos_mobilizacoes,
                 User.contribuicoes_quota,
                 User.noticias_partido,
-
+    
                 # Quotas
                 User.data_expiracao_quota,
                 User.notificado_quota_atraso_em,
-
+    
                 # Estado da conta e bloqueios
                 User.ativo,
                 User.bloqueado_permanente,
                 User.bloqueado_ate,
                 User.tentativa_acertos,
                 User.tentativas_apos_bloqueio,
-
+    
                 # Auditoria e datas
                 User.criado_em,
                 User.password_alterado_em,
                 User.atualizado_em,
                 User.deletado_em,
                 User.ultimo_login,
-
-                # Validação interna da autenticação
+    
+                # Validação interna
                 User.password_hash,
-            )
+            ),
             selectinload(User.scope),
-        )
     )
-
+    )
+    
     if not user:
         logger.warning('Usuário com ID %s não existe mais no banco', user_uuid)
         raise http_responses
