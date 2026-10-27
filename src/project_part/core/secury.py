@@ -372,8 +372,7 @@ async def check_token(request: Request, session: Session) -> UsuarioAutenticado:
 
                 # Validação interna da autenticação
                 User.password_hash,
-            ),
-            ),
+            )
             selectinload(User.scope),
         )
     )
