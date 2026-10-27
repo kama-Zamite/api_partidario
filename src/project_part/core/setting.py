@@ -39,9 +39,9 @@ class Settings(BaseSettings):
     TASKIQ_ENABLED: bool = False
 
     # Regras de bloqueio de conta no processo de login
-    MAX_TENTATIVAS : int = 1440          # erros de senha antes de cada bloqueio
-    BLOQUEIO_BASE_MIN : int     # 1.º bloqueio: 5 min, depois 10, 15, 20, 25 30, 35, 40...
-    BLOQUEIO_MAX_MIN : int  # teto: 24 horas
+    MAX_TENTATIVAS : int
+    BLOQUEIO_BASE_MIN : int
+    BLOQUEIO_MAX_MIN : int
     MSG_CREDENCIAIS: str
     DETAIL_CHALLENGE_INVALIDA: str
 

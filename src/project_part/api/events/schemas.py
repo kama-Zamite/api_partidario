@@ -56,7 +56,7 @@ class EventBase(BaseModel):
     titulo: str = Field(min_length=10, max_length=200, strip_whitespace=True)
     descricao: str = Field(min_length=10, max_length=1000, strip_whitespace=True)
     categoria: EventoCategoriaEnum
-    localizacao: str = Field(min_length=2, max_length=255, strip_whitespace=True)
+    localizacao: str = Field(min_length=4, max_length=255, strip_whitespace=True)
 
     data_inicio: datetime
     image_url: str | None = Field(default=None)

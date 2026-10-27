@@ -39,7 +39,7 @@ services:
       retries: 3
 
   database_project:
-    image: postgres:${POSTGRES_VERSION}
+    image: ${POSTGRES_VERSION}
     container_name: database_db
     environment:
       - POSTGRES_USER=${DATABASE_USER}
@@ -58,7 +58,7 @@ services:
       retries: 5
 
   redis_database:
-    image: redis:${REDIS_VERSION}
+    image: ${REDIS_VERSION}
     container_name: cache_db
     command: ["redis-server", "--requirepass", "${REDIS_CACHE_PASSWORD}", "--save", "", "--appendonly", "no"]
     environment:
@@ -112,9 +112,10 @@ services:
     mem_limit: 128m
     pids_limit: 128
     restart: unless-stopped
-  
+
+
   redis_queue:
-    image: redis:7-alpine
+    image: ${REDIS_QUEUE}
     container_name: redis_queue_broker
     ports: []
     security_opt:

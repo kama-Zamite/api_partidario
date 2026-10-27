@@ -1457,7 +1457,6 @@ async def solicitar_militancia(
        #             status_code=HTTPStatus.FORBIDDEN, detail='Operação negada. Região geográfica diferente.'
        #         )
    
-    tentativas = 0
     num_militante_final = None
 
     if not current_user.militante_numero:
@@ -1472,8 +1471,8 @@ async def solicitar_militancia(
    
     nova_notificacao = Notification(
         user_id=current_user.id,
-        titulo='Solicitacao de Militancia aprovado!',
-        mensagem=f'Olá {current_user.nome_completo}, a sua solicitacao de militancia foi aprovada com sucesso!',
+        titulo='Solicitação de Militancia aprovado!',
+        mensagem=f'Olá {current_user.nome_completo}, a sua solicitação de militancia foi aprovada com sucesso!',
         destinatario="MILITANTE",
     )
    
@@ -1492,8 +1491,8 @@ async def solicitar_militancia(
         #     observacoes=observacao
         # )
    
-        logger.info('Solicitacao de militancia  do usuario %s finalizado com sucesso.', current_user.email)
-        return {'msg': f'Solicitacao de militancia  do usuario {current_user.email} finalizado com sucesso.'}
+        logger.info('Solicitação de militancia  do usuario %s finalizado com sucesso.', current_user.email)
+        return {'msg': f'Solicitação de militancia  do usuario {current_user.email} finalizado com sucesso.'}
    
     except IntegrityError as e:
         await session.rollback()
