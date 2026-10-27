@@ -307,37 +307,72 @@ async def check_token(request: Request, session: Session) -> UsuarioAutenticado:
     
     user = await session.scalar(
         select(User)
-        .where(User.id == user_uuid)
-        .options(
-            load_only(load_only(
+            .where(User.id == user_uuid)
+            .options(
+                load_only(
                 User.id,
-                User.email,
-                User.password_hash,
+                User.nome_completo,
                 User.image_url,
+
+                # Contactos
+                User.email,
+                User.email_recuperacao,
+                User.telefone,
+
+                # Dados pessoais
+                User.data_nascimento,
+                User.nif,
+                User.genero,
+                User.estado_civil,
+
+                # Associação geográfica e permissões
+                User.provincia_id,
+                User.municipio_id,
+                User.role_id,
+
+                # Militância
+                User.cadastrar_militante,
                 User.foi_militante,
                 User.militante_numero,
+
+                # Privacidade
                 User.partilha_dados,
                 User.cookies_personalizacao,
+                User.consentimento_lpd,
+                User.concedido_em,
+                User.versao_politica_apd,
+
+                # Autenticação de dois fatores
                 User.two_factor_enabled,
+
+                # Notificações
                 User.notificacoes_gerais,
                 User.comunicados_oficiais,
                 User.eventos_mobilizacoes,
                 User.contribuicoes_quota,
                 User.noticias_partido,
-                User.consentimento_lpd,
-                User.concedido_em,
-                User.versao_politica_apd,
+
+                # Quotas
+                User.data_expiracao_quota,
+                User.notificado_quota_atraso_em,
+
+                # Estado da conta e bloqueios
+                User.ativo,
+                User.bloqueado_permanente,
+                User.bloqueado_ate,
+                User.tentativa_acertos,
+                User.tentativas_apos_bloqueio,
+
+                # Auditoria e datas
                 User.criado_em,
                 User.password_alterado_em,
                 User.atualizado_em,
                 User.deletado_em,
                 User.ultimo_login,
-                User.data_expiracao_quota,
-                User.notificado_quota_atraso_em,
-                User.estado_civil,
-                User.ativo,
-                User.bloqueado_permanente,
-            )
+
+                # Validação interna da autenticação
+                User.password_hash,
+            ),
             ),
             selectinload(User.scope),
         )
@@ -356,44 +391,70 @@ async def check_token(request: Request, session: Session) -> UsuarioAutenticado:
             raise http_responses
 
     return UsuarioAutenticado(
+        # Identificação
         id=user.id,
-        email=user.email,
+        nome_completo=user.nome_completo,
         image_url=user.image_url,
+
+        # Contactos
+        email=user.email,
+        email_recuperacao=user.email_recuperacao,
+        telefone=user.telefone,
+
+        # Dados pessoais
+        data_nascimento=user.data_nascimento,
+        nif=user.nif,
+        genero=user.genero,
+        estado_civil=user.estado_civil,
+
+        # Associação geográfica e permissões
+        provincia_id=user.provincia_id,
+        municipio_id=user.municipio_id,
+        role_id=user.role_id,
+
+        # Dados de militância
+        cadastrar_militante=user.cadastrar_militante,
         foi_militante=user.foi_militante,
         militante_numero=user.militante_numero,
 
+        # Privacidade
         partilha_dados=user.partilha_dados,
         cookies_personalizacao=user.cookies_personalizacao,
+        consentimento_lpd=user.consentimento_lpd,
+        concedido_em=user.concedido_em,
+        versao_politica_apd=user.versao_politica_apd,
 
+        # Autenticação de dois fatores
         two_factor_enabled=user.two_factor_enabled,
 
+        # Notificações
         notificacoes_gerais=user.notificacoes_gerais,
         comunicados_oficiais=user.comunicados_oficiais,
         eventos_mobilizacoes=user.eventos_mobilizacoes,
         contribuicoes_quota=user.contribuicoes_quota,
         noticias_partido=user.noticias_partido,
 
-        consentimento_lpd=user.consentimento_lpd,
-        concedido_em=user.concedido_em,
-        versao_politica_apd=user.versao_politica_apd,
-
-        criado_em=user.criado_em,
-        password_alterado_em=user.password_alterado_em,
-        atualizado_em=user.atualizado_em,
-        deletado_em=user.deletado_em,
-        ultimo_login=user.ultimo_login,
-
+        # Quotas
         data_expiracao_quota=user.data_expiracao_quota,
         notificado_quota_atraso_em=user.notificado_quota_atraso_em,
 
-        estado_civil=user.estado_civil,
+        # Estado da conta e bloqueios
         ativo=user.ativo,
         bloqueado_permanente=user.bloqueado_permanente,
+        bloqueado_ate=user.bloqueado_ate,
+        tentativa_acertos=user.tentativa_acertos,
+        tentativas_apos_bloqueio=user.tentativas_apos_bloqueio,
 
+        # Auditoria e datas
+        criado_em=user.criado_em,
+        atualizado_em=user.atualizado_em,
+        deletado_em=user.deletado_em,
+        ultimo_login=user.ultimo_login,
+        password_alterado_em=user.password_alterado_em,
+
+        # Permissões adicionais
         scopes=[scope.name for scope in user.scope] if user.scope else [],
     )
-    # return 
-
 # def create_refresh_token(data: dict):
 #     to_encode = data.copy()
 #     expire = datetime.now(timezone.utc) + timedelta(minutes=int(settings.REFRESH_TOKEN))
