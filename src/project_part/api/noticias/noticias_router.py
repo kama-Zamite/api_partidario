@@ -177,7 +177,7 @@ async def criar_noticia(
     titulo: str = Form(..., min_length=5, max_length=200),
     subtitulo: str | None = Form(None),
     lead: str | None = Form(None),
-    corpo: str = Form(min_length=10, max_length=10.000),
+    corpo: str = Form(min_length=10, max_length=10000),
     image_news: UploadFile | None = File(None, description='Foto de perfil opcional (JPEG/JPG, max 5MB)'),
     # categoria_id: int = Form(gt=0),
     nome_provincia: str | None = Form(None, min_length=3),
