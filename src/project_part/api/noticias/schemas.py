@@ -104,7 +104,7 @@ class CreateNoticia(BaseModel):
     @field_validator('subtitulo')
     @classmethod
     def validar_subtitulo(cls, v: str | None) -> str | None:
-        if v is None or v == "":
+        if v == "":
             raise ValueError("O subtítulo não pode ser vazio")
         return v
 
@@ -118,14 +118,14 @@ class CreateNoticia(BaseModel):
     @field_validator('nome_provincia')
     @classmethod 
     def validar_nome_provincia(cls, v: str | None) -> str | None:
-        if v is None or v == "":
+        if v == "":
             raise ValueError("O nome da província não pode ser vazio")
         return v
 
     @field_validator('nome_municipio')
     @classmethod
     def validar_nome_municipio(cls, v: str | None) -> str | None:
-        if v is None or v == "":
+        if v == "":
             raise ValueError("O nome do município não pode ser vazio")
         return v
 
@@ -152,7 +152,7 @@ class UpgradeNoticia(BaseModel):
     @field_validator('subtitulo')
     @classmethod
     def validar_subtitulo(cls, v: str | None) -> str | None:
-        if v is None or v == "":
+        if v == "":
             raise ValueError("O subtítulo não pode ser vazio")
         return v
 
@@ -166,14 +166,14 @@ class UpgradeNoticia(BaseModel):
     @field_validator('nome_provincia')
     @classmethod
     def validar_nome_provincia(cls, v: str | None) -> str | None:
-        if v is None or v == "":
+        if v == "":
             raise ValueError("O nome da província não pode ser vazio")
         return v
 
     @field_validator('nome_municipio')
     @classmethod
     def validar_nome_municipio(cls, v: str | None) -> str | None:
-        if v is None or v == "":
+        if v == "":
             raise ValueError("O nome do município não pode ser vazio")
         return v
 
