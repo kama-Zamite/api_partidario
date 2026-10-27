@@ -28,3 +28,6 @@ async def atribuir_codigo_militante(session):
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Erro de infraestrutura ao gerar número de cartão."
         )
+
+async def gerar_codigo_verificacao_email(session):
+    return secrets.randbelow(900000) + 100000

@@ -77,7 +77,10 @@ from project_part.core.secury import (
     decrypt_totp_secret,
     gerar_e_registar_refresh_token
     )
-from project_part.utils.gerador_numero_militante import atribuir_codigo_militante
+from project_part.utils.gerador_numero_militante import (
+    atribuir_codigo_militante,
+    gerar_codigo_verificacao_email,
+)
 from project_part.utils.eliminar_usuario import (
     limpar_cookies_auth,
     ContaSnapshot,
@@ -311,6 +314,10 @@ async def create_user(
         #         detail="Erro de infraestrutura ao gerar número de cartão."
         #     )
 
+    logger.info(
+        "Número atribuído ao novo militante: %s",
+        num_militante_final
+    )
     # --- 3. Validação Pydantic ---
     try:
         dados_validados = UserBase(
@@ -385,7 +392,7 @@ async def create_user(
         )
 
     # --- 5. Geração do código, hash da senha e persistência cifrada ---
-    secret_number = secrets.randbelow(900000) + 100000  # 6 dígitos
+    secret_number = await gerar_codigo_verificacao_email(session)
     async with HASH_SEM:
         password_hash = await run_in_threadpool(hash_password, dados_validados.password)
 
@@ -1454,19 +1461,8 @@ async def solicitar_militancia(
     num_militante_final = None
 
     if not current_user.militante_numero:
-        while tentativas < 5:
-            ano_atual = datetime.now(timezone.utc).year
-            chave_aleatoria = secrets.token_hex(3)[:6].upper()
-            num_militante_final = f'UNITA.{ano_atual}-{chave_aleatoria}'
-            numero_exists = await session.scalar(select(User).where(User.militante_numero == num_militante_final))
-            if not numero_exists:
-               break
-            tentativas += 1
-        else:
-            logger.error('Falha crítica: Excedeu o limite de tentativas para gerar um número de cartão único.')
-            raise HTTPException(
-               status_code=HTTPStatus.INTERNAL_SERVER_ERROR, detail='Erro de infraestrutura ao gerar número de cartão.'
-            )
+            num_militante_final = await atribuir_codigo_militante(session)
+  
    
     solicitacao.status = StatusSolicitacao.APROVADO
     current_user.cadastrar_militante = CadastrarComo.MILITANTE
