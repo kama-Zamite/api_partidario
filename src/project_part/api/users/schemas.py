@@ -125,10 +125,8 @@ class UserBase(BaseModel):
         
         if not numero_limpo.startswith('+'):
             numero_limpo = f"+{numero_limpo}"
-
-
-        angola_padrao_valido = r'^(91|92|93|94|95|99)\d{7}$'
-
+            
+        # angola_padrao_valido = r'^(91|92|93|94|95|99)\d{7}$'
 
         try:
             # 3. Parse com a biblioteca do Google

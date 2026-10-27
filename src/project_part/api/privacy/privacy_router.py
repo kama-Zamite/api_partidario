@@ -149,7 +149,7 @@ privacy = APIRouter(prefix="/privacy", tags=["Privacidade"])
 
 
 @privacy.post('/solicitar-dados', summary='Descarregar todos os dados do utilizador')
-@limiter.limit("3/minute, 7/hour, 10/day")  # Limite de taxa para evitar abuso
+@limiter.limit("3/minute, 7/hour, 10/day")
 async def descarregar_dados_utilizador(
     request: Request,
     session: Session,
@@ -253,6 +253,7 @@ async def descarregar_dados_utilizador(
     try:
         dados_pessoais = {
             "nome_completo": result.nome_completo,
+            "image_url": result.image_url,
             "email": result.email,
             "nif": result.nif,
             "militante_numero": result.militante_numero,
@@ -339,7 +340,6 @@ async def partilhar_dados(
             
         await session.commit()
         
-        # ADICIONE ESTA LINHA: Garante que estamos a ler o que foi gravado de facto
         await session.refresh(current_user)
         logger.info("Partilha de dados do usuario %s atualizado para: %s", current_user.email, current_user.partilha_dados)
         return {
