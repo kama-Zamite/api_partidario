@@ -249,8 +249,8 @@ async def invalidar_tokens_do_utilizador(session: Session, user_id: uuid.UUID) -
 
 #     return payload
 
-
-async def check_token(request: Request, session: Session) -> UsuarioAutenticado:
+#  -> UsuarioAutenticado
+async def check_token(request: Request, session: Session):
     http_responses = HTTPException(
         status_code=HTTPStatus.UNAUTHORIZED,
         detail='Error: token invalido!',
@@ -309,7 +309,7 @@ async def check_token(request: Request, session: Session) -> UsuarioAutenticado:
         select(User)
         .where(User.id == user_uuid)
         .options(
-            load_only(User.id, User.email, User.ativo, User.bloqueado_permanente, User.password_hash),
+            # load_only(User.id, User.email, User.ativo, User.bloqueado_permanente, User.password_hash),
             selectinload(User.scope))
             )
 
@@ -325,14 +325,14 @@ async def check_token(request: Request, session: Session) -> UsuarioAutenticado:
             logger.warning('Access token rejeitado: senha alterada após a emissão (user %s)', user_uuid)
             raise http_responses
 
-    return UsuarioAutenticado(
-        id=user.id,
-        email=user.email,
-        ativo=user.ativo,
-        bloqueado_permanente=user.bloqueado_permanente,
-        scopes=[scope.name for scope in user.scope]
-    )
-
+    # return UsuarioAutenticado(
+    #     id=user.id,
+    #     email=user.email,
+    #     ativo=user.ativo,
+    #     bloqueado_permanente=user.bloqueado_permanente,
+    #     scopes=[scope.name for scope in user.scope]
+    # )
+    return user
 
 # def create_refresh_token(data: dict):
 #     to_encode = data.copy()
