@@ -10,6 +10,7 @@ from datetime import (
     timedelta,
     date
 )
+from slowapi.util import get_remote_address
 from project_part.utils.security_helpers import (
     mascarar_email
 )
@@ -149,7 +150,7 @@ admin = APIRouter(prefix='/admin', tags=['Admin Management'])
 
 
 @admin.post('/set-scope', status_code=HTTPStatus.CREATED)
-@limiter.limit('30/minute')
+@limiter.limit('30/minute', key_func=get_remote_address)
 async def criar_scope(
     request: Request,
     schema: CreateAdminScope,
@@ -276,7 +277,7 @@ async def criar_scope(
     status_code=HTTPStatus.OK,
     response_model=list[ResponseAdminScope],
 )
-@limiter.limit('30/minute')
+@limiter.limit('30/minute', key_func=get_remote_address)
 async def listar_admin_scope(
     request: Request,
     response: Response,
@@ -443,7 +444,7 @@ async def listar_admin_scope(
 
 
 @admin.get('/militantes-registrados', status_code=HTTPStatus.OK)
-@limiter.limit('30/minute')
+@limiter.limit('30/minute', key_func=get_remote_address)
 async def militantes_registrados(
     request: Request,
     scope: ScopeValid,
@@ -490,7 +491,7 @@ async def militantes_registrados(
 
 
 @admin.get('/simpatizantes-registrados', status_code=HTTPStatus.OK)
-@limiter.limit('30/minute')
+@limiter.limit('30/minute', key_func=get_remote_address)
 async def simpatizantes_registrados(
     request: Request,
     scope: ScopeValid,
@@ -538,7 +539,7 @@ async def simpatizantes_registrados(
 
 
 @admin.get('/militantes-registrados/nos-ultimos-dias', status_code=HTTPStatus.OK)
-@limiter.limit('30/minute')
+@limiter.limit('30/minute', key_func=get_remote_address)
 async def ultimos_militantes_resgistrados(
     request: Request,
     session: Session,
@@ -592,7 +593,7 @@ async def ultimos_militantes_resgistrados(
     status_code=HTTPStatus.OK,
     response_model=RegistrosFinanceirosResponse,
 )
-@limiter.limit('30/minute')
+@limiter.limit('30/minute', key_func=get_remote_address)
 async def registros_financeiros(
     request: Request,
     session: Session,
@@ -652,7 +653,7 @@ async def registros_financeiros(
 
 
 @admin.get("/militantes-provincia", status_code=HTTPStatus.OK)
-@limiter.limit('30/minute')
+@limiter.limit('30/minute', key_func=get_remote_address)
 async def militantes_por_provincia_dashboard(
     request: Request,
     session: Session,
@@ -749,7 +750,7 @@ async def militantes_por_provincia_dashboard(
 
 
 @admin.get("/evolucao-militantes", status_code=HTTPStatus.OK)
-@limiter.limit('30/minute')
+@limiter.limit('30/minute', key_func=get_remote_address)
 async def evolucao_militantes(
     request: Request,
     session: Session,
@@ -827,7 +828,7 @@ async def evolucao_militantes(
 
 
 @admin.get("/evolucao-simpatizante", status_code=HTTPStatus.OK)
-@limiter.limit('30/minute')
+@limiter.limit('30/minute', key_func=get_remote_address)
 async def evolucao_simpatizante(
     request: Request,
     session: Session,
@@ -1071,7 +1072,7 @@ async def evolucao_simpatizante(
     status_code=HTTPStatus.OK,
     response_model=RegistrosRecentes,
 )
-@limiter.limit('30/minute')
+@limiter.limit('30/minute', key_func=get_remote_address)
 async def registros_militantes_recentes(
     request: Request,
     session: Session,
@@ -1214,7 +1215,7 @@ async def registros_militantes_recentes(
     status_code=HTTPStatus.OK,
     response_model=RegistrosRecentes,
 )
-@limiter.limit('30/minute')
+@limiter.limit('30/minute', key_func=get_remote_address)
 async def militantes_deletados_recentes(
     request: Request,
     session: Session,
@@ -1344,7 +1345,7 @@ async def militantes_deletados_recentes(
     status_code=HTTPStatus.OK,
     response_model=RegistrosRecentes,
 )
-@limiter.limit('30/minute')
+@limiter.limit('30/minute', key_func=get_remote_address)
 async def registros_simpatizantes_recentes(
     request: Request,
     session: Session,
@@ -1474,7 +1475,7 @@ async def registros_simpatizantes_recentes(
     status_code=HTTPStatus.OK,
     response_model=RegistrosRecentes,
 )
-@limiter.limit('30/minute')
+@limiter.limit('30/minute', key_func=get_remote_address)
 async def simpatizante_deletados_recentes(
     request: Request,
     session: Session,
@@ -2072,7 +2073,7 @@ async def simpatizante_deletados_recentes(
     status_code=HTTPStatus.OK,
     response_model=DistribuicaoGenero,
 )
-@limiter.limit('30/minute')
+@limiter.limit('30/minute', key_func=get_remote_address)
 async def distribuicao_genero(
     request: Request,
     response: Response,
@@ -2257,7 +2258,7 @@ async def distribuicao_genero(
     status_code=HTTPStatus.OK,
     response_model=MilitantesTerritorioResponse,
 )
-@limiter.limit('30/minute')
+@limiter.limit('30/minute', key_func=get_remote_address)
 async def militantes_por_provincia(
     request: Request,
     response: Response,
@@ -2381,7 +2382,7 @@ async def militantes_por_provincia(
     status_code=HTTPStatus.OK,
     response_model=MilitantesTerritorioResponse,
 )
-@limiter.limit('30/minute')
+@limiter.limit('30/minute', key_func=get_remote_address)
 async def militantes_por_municipio(
     request: Request,
     response: Response,
@@ -2519,7 +2520,7 @@ async def militantes_por_municipio(
     status_code=HTTPStatus.OK,
     response_model=MilitantesTerritorioResponse,
 )
-@limiter.limit('30/minute')
+@limiter.limit('30/minute', key_func=get_remote_address)
 async def simpatizante_por_provincia(
     request: Request,
     response: Response,
@@ -2647,7 +2648,7 @@ async def simpatizante_por_provincia(
     status_code=HTTPStatus.OK,
     response_model=MilitantesTerritorioResponse,
 )
-@limiter.limit('30/minute')
+@limiter.limit('30/minute', key_func=get_remote_address)
 async def simpatizante_por_municipio(
     request: Request,
     response: Response,
@@ -2788,7 +2789,7 @@ async def simpatizante_por_municipio(
 
 
 @admin.get('/audoitLog', response_model=PaginatedAuditLogs)
-@limiter.limit('30/minute')
+@limiter.limit('30/minute', key_func=get_remote_address)
 async def listar_logs_auditoria(
     request: Request,
     session: Session,
@@ -2830,7 +2831,7 @@ async def listar_logs_auditoria(
 
 
 @admin.get('/financeiro/movimentos', status_code=HTTPStatus.OK)
-@limiter.limit('30/minute')
+@limiter.limit('30/minute', key_func=get_remote_address)
 async def listar_movimentos(
     request: Request,
     session: Session,
@@ -2876,7 +2877,7 @@ async def listar_movimentos(
 
 
 @admin.get('/doacoes', status_code=HTTPStatus.OK, response_model=DoacaoList)
-@limiter.limit('30/minute')
+@limiter.limit('30/minute', key_func=get_remote_address)
 async def listar_doacoes(
     request: Request,
     session: Session,

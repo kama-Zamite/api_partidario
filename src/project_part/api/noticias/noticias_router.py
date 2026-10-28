@@ -601,7 +601,6 @@ async def eliminar_noticia(
     session: Session,
     caches: Redis,
     current_user: Get_current_user,
-    # _captcha: Claudflare_turnfile,
     scope: ScopeValid,
 ):
     """Endpoint para deletar uma notícia específica.

@@ -19,23 +19,18 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from project_part.model.models import TwoFactorChallenge
 from project_part.db.session import get_session
 
-# [FIX-2FA] Logger do módulo (aparece no mesmo formato dos teus outros logs)
 logger = logging.getLogger(__name__)
 
-# [FIX-2FA] Parâmetros da challenge
-# Tens 20 min. Funciona, mas é uma janela grande para um segundo factor:
-# 5 a 10 minutos é o habitual.
 CHALLENGE_TTL = timedelta(minutes=5)
 CHALLENGE_MAX_ATTEMPTS = 5             # tentativas de código por challenge
 
+CHALLENGE_EXIGIR_IP = False
 # [FIX-2FA] Ligação ESTRITA ao IP. Atrás de Cloudflare + Render e com utilizadores em
 #           redes móveis o IP pode mudar entre /login e /2fa-verify. Com False o IP
 #           continua a ser guardado e comparado, mas a diferença só gera um WARNING.
 #           Continuam a proteger: token de 256 bits, expiração, uso único, limite de
 #           tentativas e ligação ao User-Agent.
-CHALLENGE_EXIGIR_IP = False
-
-IP_MAX = 45  # [FIX-2FA] limite da coluna UserRefreshToken.ip_address
+IP_MAX = 45
 
 Session = Annotated[AsyncSession, Depends(get_session)]
 

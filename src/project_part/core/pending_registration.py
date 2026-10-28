@@ -4,12 +4,13 @@ import json
 import os
 import secrets
 from functools import lru_cache
+from project_part.core.setting import settings
 
 from cryptography.fernet import Fernet, InvalidToken, MultiFernet
 
 TTL_S = 5 * 60
-MAX_TENTATIVAS = 5
-MAX_FOTO_BYTES = 5 * 1024 * 1024  # alinhado com settings.FILE_SIZE_LIMIT
+MAX_TENTATIVAS = settings.MAX_TENTATIVAS
+MAX_FOTO_BYTES = settings.FILE_SIZE_LIMIT
 
 
 @lru_cache

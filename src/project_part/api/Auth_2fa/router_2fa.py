@@ -12,6 +12,7 @@ from fastapi import (
     Response,
     Request,
 )
+from slowapi.util import get_remote_address
 from project_part.core.rate_limit import limiter
 from typing import Annotated
 from project_part.db.session import get_session  # Substitua pelo seu método de sessão
@@ -38,7 +39,7 @@ Session = Annotated[AsyncSession, Depends(get_session)]
 
 
 @router_2FA.post("/setup")
-@limiter.limit('3/minute')
+@limiter.limit('3/minute', key_func=get_remote_address)
 async def setup_2fa(
     request: Request,
     response: Response,
@@ -169,7 +170,7 @@ async def setup_2fa(
 
 
 @router_2FA.post("/verify-and-enable")
-@limiter.limit('3/minute')
+@limiter.limit('3/minute', key_func=get_remote_address)
 async def verify_and_enable_2fa(
     request: Request,
     response: Response,
@@ -268,7 +269,7 @@ async def verify_and_enable_2fa(
 
 
 @router_2FA.post("/disable")
-@limiter.limit('3/minute')
+@limiter.limit('3/minute', key_func=get_remote_address)
 async def disable_2fa(
     request: Request,
     response: Response,

@@ -9,6 +9,7 @@ import uuid
 import math
 import asyncio
 import os
+from slowapi.util import get_remote_address
 from fastapi.concurrency import run_in_threadpool
 from aiosmtplib import response
 from fastapi import (
@@ -130,7 +131,7 @@ router_auth = APIRouter(prefix="/auth", tags=["Autenticação"])
            status_code=status.HTTP_200_OK,
            summary='Autenticação de Usuário'
            )
-@limiter.limit('3/minute')
+@limiter.limit('3/minute', key_func=get_remote_address)
 async def login(
     request: Request, 
     response: Response,
@@ -344,8 +345,7 @@ async def login(
     )
     response.headers["Cache-Control"] = "no-store"
 
-    logger.warning("UA recebido: %r", request.headers.get("user-agent"))
-    logger.warning("Todos os headers: %s", dict(request.headers))
+    logger.info('Login concluído com sucesso para %s.', email_log)
     return {
         "require_2fa": False,
         "status": "success",
@@ -354,7 +354,7 @@ async def login(
 
 
 @auth.post('/login/2fa-verify', status_code=HTTPStatus.OK, summary='Verificação de 2FA')
-@limiter.limit('7/minute')
+@limiter.limit('7/minute', key_func=get_remote_address)
 async def verify_2fa(
     response: Response,
     request: Request,
@@ -611,7 +611,7 @@ async def get_token_recuperar_senha_from_cookie(
 
 
 @auth.post('/recuperar-senha', status_code=HTTPStatus.OK)
-@limiter.limit('5/minute')
+@limiter.limit('5/minute', key_func=get_remote_address)
 async def solicitar_recuperacao(
     request: Request,
     payload: PedidoRecuperacao,
@@ -669,7 +669,7 @@ async def solicitar_recuperacao(
 
 
 @auth.post('/redefinir-senha', status_code=status.HTTP_200_OK, summary='Redefinir Senha')
-@limiter.limit('5/minute')
+@limiter.limit('5/minute', key_func=get_remote_address)
 async def redefinir_senha(
     request: Request,
     payload: RedefinirSenhaSchema,
@@ -784,6 +784,7 @@ async def redefinir_senha(
     "/refresh",
     status_code=status.HTTP_200_OK,
 )
+@limiter.limit("5/minute", key_func=get_remote_address)
 async def refresh_token(
     request: Request,
     response: Response,
@@ -1082,7 +1083,7 @@ async def refresh_token(
     "/logout",
     status_code=status.HTTP_204_NO_CONTENT,
 )
-@limiter.limit('10/minute')
+@limiter.limit('10/minute', key_func=get_remote_address)
 async def logout(
     request: Request,
     response: Response,
@@ -1198,7 +1199,7 @@ async def logout(
 
 
 @auth.post('/permissoes/create', status_code=HTTPStatus.CREATED)
-@limiter.limit('5/minute')
+@limiter.limit('5/minute', key_func=get_remote_address)
 async def criar_permissao(
     request: Request,
     schema: CreatePermissao,
@@ -1237,7 +1238,7 @@ async def criar_permissao(
     status_code=HTTPStatus.OK,
     response_model=List[ResponsePermissao],
 )
-@limiter.limit('5/minute')
+@limiter.limit('5/minute', key_func=get_remote_address)
 async def listar_permissoes(
     request: Request,
     response: Response,
@@ -1293,7 +1294,7 @@ async def listar_permissoes(
 
 
 @auth.post('/role/create', status_code=HTTPStatus.CREATED)
-@limiter.limit('5/minute')
+@limiter.limit('5/minute', key_func=get_remote_address)
 async def criar_role(
     request: Request,
     schemas: CreateRole,
@@ -1353,7 +1354,7 @@ async def criar_role(
 
 
 @auth.get('/role/list', status_code=HTTPStatus.OK, response_model=List[ResponseRole])
-@limiter.limit('5/minute')
+@limiter.limit('5/minute', key_func=get_remote_address)
 async def listar_role(
     request: Request,
     response: Response, session: Session, redis: Redis, current_user: Get_current_user, scope: ScopeValid
@@ -1402,7 +1403,7 @@ async def listar_role(
 
 
 @auth.put('/permissoes/upgrade/{id_permissao}', status_code=HTTPStatus.OK)
-@limiter.limit('5/minute')
+@limiter.limit('5/minute', key_func=get_remote_address)
 async def atualizar_permissao(
     request: Request,
     id_permissao: int,
@@ -1461,7 +1462,7 @@ async def atualizar_permissao(
 
 
 @auth.delete('/permissoes/delete/{id_permissao}', status_code=HTTPStatus.OK)
-@limiter.limit('5/minute')
+@limiter.limit('5/minute', key_func=get_remote_address)
 async def eliminar_permissao(
     request: Request,
     id_permissao: int,
@@ -1529,7 +1530,7 @@ async def eliminar_permissao(
 
 
 @auth.put('/role/upgrade/{id_role}', status_code=HTTPStatus.OK)
-@limiter.limit('5/minute')
+@limiter.limit('5/minute', key_func=get_remote_address)
 async def atualizar_role(
     request: Request,
     _captcha: Claudflare_turnfile,
@@ -1599,7 +1600,7 @@ async def atualizar_role(
 
 
 @auth.delete('/role/delete/{id_role}', status_code=HTTPStatus.OK)
-@limiter.limit('5/minute')
+@limiter.limit('5/minute', key_func=get_remote_address)
 async def eliminar_role(
     request: Request,
     id_role: int, session: Session, redis: Redis, current_user: Get_current_user, scope: ScopeValid

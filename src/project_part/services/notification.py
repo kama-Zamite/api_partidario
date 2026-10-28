@@ -60,7 +60,6 @@ async def disparar_notificacao_usuario(
         categoria=categoria,
         criado_as=criado_as,
         destinatario=destinatario_tipo, 
-        # O 'criado_as' será preenchido automaticamente pelo 'server_default=func.now()' do Postgres
     )
     try:
         session.add(nova_notificacao)

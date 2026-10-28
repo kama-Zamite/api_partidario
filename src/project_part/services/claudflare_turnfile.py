@@ -8,11 +8,11 @@ logger = logging.getLogger(__name__)
 
 
 
-TEST_SECRETS = {
-    "1x00000000000000000000AA": "1x0000000000000000000000000000000AA",  # sempre passa
-    "2x00000000000000000000AB": "2x0000000000000000000000000000000AA",  # sempre falha
-    "3x00000000000000000000FF": "3x0000000000000000000000000000000AA",  # token já usado
-}
+# TEST_SECRETS = {
+#     "1x00000000000000000000AA": "1x0000000000000000000000000000000AA",  # sempre passa
+#     "2x00000000000000000000AB": "2x0000000000000000000000000000000AA",  # sempre falha
+#     "3x00000000000000000000FF": "3x0000000000000000000000000000000AA",  # token já usado
+# }
 
 async def verificar_turnstile(
     # Recomendo usar o alias para garantir que o FastAPI leia o header no padrão web (com hífens)

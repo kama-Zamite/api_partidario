@@ -35,7 +35,7 @@ async def email_Bloqueado_temp_async(
         minutos: int = 15,
         ):
     LOGO_URL = settings.URL_LOGO_UNCLOCK
-    link_completo = f"https://app-gestao-plataforma-2026.vercel.app/redefinir-senha?token={token}"
+    link_completo = f"https://militantes.dev/redefinir-senha#token={token}"
     
     try:
         # Corrige o nome do ficheiro para o que realmente existe na pasta templates/
