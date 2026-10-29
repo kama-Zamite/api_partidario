@@ -107,6 +107,7 @@ app = FastAPI(
     # docs_url=None if is_prod else '/docs',
     # redoc_url=None if is_prod else '/redoc',
     # openapi_url=None if is_prod else '/openapi.json',
+    
     )
 
 app.state.limiter = limiter
