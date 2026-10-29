@@ -2961,7 +2961,7 @@ async def listar_doacoes(
 
 
 @admin.get('/quotas', status_code=HTTPStatus.OK, response_model=QuotaList)
-@limiter.limit('30/minute')
+@limiter.limit('30/minute', key_func=get_remote_address)
 async def listar_quotas(
     request: Request,
     session: Session,
@@ -3050,7 +3050,7 @@ async def listar_quotas(
     '/fundos/solicitacoes',
     status_code=HTTPStatus.CREATED,
 )
-@limiter.limit('15/minute')
+@limiter.limit('15/minute', key_func=get_remote_address)
 async def criar_solicitacao_fundo(
     request: Request,
     body: SolicitacaoFundoCreate,
@@ -3210,7 +3210,7 @@ async def criar_solicitacao_fundo(
     status_code=HTTPStatus.OK,
     response_model=SolicitacaoFundoList,
 )
-@limiter.limit('30/minute')
+@limiter.limit('30/minute', key_func=get_remote_address)
 async def listar_solicitacoes_fundo(
     request: Request,
     session: Session,
@@ -3266,7 +3266,7 @@ async def listar_solicitacoes_fundo(
 
 
 @admin.get('/financeiro/resumo', response_model=ResumoFinanceiroResponse)
-@limiter.limit('30/minute')
+@limiter.limit('30/minute', key_func=get_remote_address)
 async def resumo_financeiro(
     request: Request,
     session: Session,
@@ -3328,7 +3328,7 @@ async def resumo_financeiro(
     status_code=HTTPStatus.OK,
     response_model=SolicitacoesFundoContadores,
 )
-@limiter.limit('30/minute')
+@limiter.limit('30/minute', key_func=get_remote_address)
 async def contadores_solicitacoes_fundo(
     request: Request,
     session: Session,
@@ -3380,7 +3380,7 @@ async def contadores_solicitacoes_fundo(
     status_code=HTTPStatus.OK,
     response_model=MovimentacoesList,
 )
-@limiter.limit('30/minute')
+@limiter.limit('30/minute', key_func=get_remote_address)
 async def ultimas_movimentacoes(
     request: Request,
     session: Session,
@@ -3504,7 +3504,7 @@ async def ultimas_movimentacoes(
 
 
 @admin.get('/notificacoes/suporte', status_code=HTTPStatus.OK, response_model=MensagensSuportePaginadasResponse)
-@limiter.limit('30/minute')
+@limiter.limit('30/minute', key_func=get_remote_address)
 async def listar_notificacoes_suporte(
     request: Request,
     session: Session,
@@ -3545,7 +3545,7 @@ async def listar_notificacoes_suporte(
 
 # CORREÇÃO: Removido o List[] do response_model, agora espera diretamente o CardSolicitante
 @admin.get('/notificacoes/solicitacoes-cartao', status_code=HTTPStatus.OK, response_model=NotificationListResponse)
-@limiter.limit('30/minute')
+@limiter.limit('30/minute', key_func=get_remote_address)
 async def listar_notificacoes_cartao(
     request: Request,
     session: Session,
@@ -3598,7 +3598,7 @@ async def listar_notificacoes_cartao(
     status_code=HTTPStatus.OK,
     response_model=CardSolicitante
 )
-@limiter.limit('30/minute')
+@limiter.limit('30/minute', key_func=get_remote_address)
 async def listar_solicitante_cartao(
     request: Request,
     session: Session,
@@ -3675,7 +3675,7 @@ async def listar_solicitante_cartao(
 
 
 @admin.get('/notificacoes/dashboard', status_code=HTTPStatus.OK, response_model=NotificationListResponse)
-@limiter.limit('30/minute')
+@limiter.limit('30/minute', key_func=get_remote_address)
 async def listar_notificacoes_dashboard(
     request: Request,
     session: Session,
@@ -3734,7 +3734,7 @@ async def listar_notificacoes_dashboard(
     
 
 @admin.get('/notificacoes', status_code=HTTPStatus.OK, response_model=NotificationListResponse)
-@limiter.limit('30/minute')
+@limiter.limit('30/minute', key_func=get_remote_address)
 async def listar_notificacoes(
     request: Request,
     session: Session,
@@ -3774,7 +3774,7 @@ async def listar_notificacoes(
 
 
 @admin.get('/notificacoes/lidas', status_code=HTTPStatus.OK, response_model=NotificationListResponse)
-@limiter.limit('30/minute')
+@limiter.limit('30/minute', key_func=get_remote_address)
 async def listar_notificacoes_lidas(
     request: Request,
     session: Session,
@@ -3832,7 +3832,7 @@ async def listar_notificacoes_lidas(
     status_code=HTTPStatus.OK,
     response_model=NotificationResponse
 )
-@limiter.limit('30/minute')
+@limiter.limit('30/minute', key_func=get_remote_address)
 async def marcar_como_lida(
     request: Request,
     response: Response,
@@ -3905,7 +3905,7 @@ async def marcar_como_lida(
 
 
 @admin.get('/scope/{scope_id}', status_code=HTTPStatus.OK, response_model=ResponseAdminScope)
-@limiter.limit('30/minute')
+@limiter.limit('30/minute', key_func=get_remote_address)
 async def obter_escopo_por_id(
     request: Request,
     scope_id: uuid.UUID,
@@ -3936,7 +3936,7 @@ async def obter_escopo_por_id(
 
 
 @admin.delete('/scope/{scope_id}', status_code=HTTPStatus.OK)
-@limiter.limit('3/minute')
+@limiter.limit('3/minute', key_func=get_remote_address)
 async def remover_escopo_administrativo(
     request: Request,
     _captcha: Claudflare_turnfile,
@@ -4024,7 +4024,7 @@ async def remover_escopo_administrativo(
 
 
 @admin.put('/role/militante-upgrade/{id_militante}', status_code=HTTPStatus.OK)
-@limiter.limit('4/minute')
+@limiter.limit('4/minute', key_func=get_remote_address)
 async def upgrade_role_user(
     id_militante: uuid.UUID,
     request: Request,
@@ -4096,7 +4096,7 @@ async def upgrade_role_user(
 
 
 @admin.post('/card/militante/{id_militante}/aprovado', status_code=HTTPStatus.OK)
-@limiter.limit('4/minute')
+@limiter.limit('4/minute', key_func=get_remote_address)
 async def militante_card(
     request: Request,
     _captcha: Claudflare_turnfile,
@@ -4283,7 +4283,7 @@ async def militante_card(
 
 
 @admin.post('/card/militante/{id_militante}/rejeitar', status_code=HTTPStatus.OK)
-@limiter.limit('4/minute')
+@limiter.limit('4/minute', key_func=get_remote_address)
 async def rejeitar_militante_card(
     request: Request,
     _captcha: Claudflare_turnfile,
@@ -4377,7 +4377,7 @@ async def rejeitar_militante_card(
 
 
 @admin.post('/doacoes/{doacao_id}/aprovar', status_code=HTTPStatus.OK)
-@limiter.limit('5/minute')
+@limiter.limit('5/minute', key_func=get_remote_address)
 async def aprovar_doacao(
     request: Request,
     doacao_id: uuid.UUID,
@@ -4524,7 +4524,7 @@ async def aprovar_doacao(
 
 
 @admin.post('/doacoes/{doacao_id}/rejeitar', status_code=HTTPStatus.OK)
-@limiter.limit('4/minute')
+@limiter.limit('4/minute', key_func=get_remote_address)
 async def rejeitar_doacao(
     request: Request,
     doacao_id: uuid.UUID,
@@ -4692,7 +4692,7 @@ async def rejeitar_doacao(
 
 
 @admin.post('/quotas/{quota_id}/aprovar', status_code=HTTPStatus.OK)
-@limiter.limit('10/minute')
+@limiter.limit('10/minute', key_func=get_remote_address)
 async def aprovar_quota(
     request: Request,
     _captcha: Claudflare_turnfile,
@@ -4855,7 +4855,7 @@ async def aprovar_quota(
 
 
 @admin.post('/quotas/{quota_id}/rejeitar', status_code=HTTPStatus.OK)
-@limiter.limit('10/minute')
+@limiter.limit('10/minute', key_func=get_remote_address)
 async def rejeitar_quota(
     request: Request,
     quota_id: uuid.UUID,
@@ -4955,7 +4955,7 @@ async def rejeitar_quota(
     status_code=HTTPStatus.OK,
     response_model=SolicitacaoFundoResponse,
 )
-@limiter.limit('10/minute')
+@limiter.limit('10/minute', key_func=get_remote_address)
 async def aprovar_solicitacao_fundo(
     request: Request,
     solicitacao_id: uuid.UUID,
@@ -5085,7 +5085,7 @@ async def aprovar_solicitacao_fundo(
     status_code=HTTPStatus.OK,
     response_model=SolicitacaoFundoResponse,
 )
-@limiter.limit('10/minute')
+@limiter.limit('10/minute', key_func=get_remote_address)
 async def rejeitar_solicitacao_fundo(
     request: Request,
     solicitacao_id: uuid.UUID,
@@ -5194,7 +5194,7 @@ async def rejeitar_solicitacao_fundo(
     status_code=HTTPStatus.OK,
     response_model=ReativarUserResponse,
 )
-@limiter.limit('10/minute')
+@limiter.limit('10/minute', key_func=get_remote_address)
 async def reativar_user(
     request: Request,
     user_id: uuid.UUID,
@@ -5298,7 +5298,7 @@ def _estado_ui(status: str) -> str:
     status_code=status.HTTP_200_OK,
     response_model=ContribuicoesIndividuoResponse,
 )
-# @limiter.limit('20/minute')
+@limiter.limit('20/minute', key_func=get_remote_address)
 async def listar_contribuicoes_por_individuo(
     user_id: uuid.UUID,
     request: Request,
