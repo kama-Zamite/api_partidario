@@ -18,7 +18,7 @@ class MunicipioBase(BaseModel):
 
     
 class CreateMunicipio(MunicipioBase):
-    nome_provincia: str = Field(min_length=4, max_length=20, strip_whitespace=True)
+    nome_provincia: str = Field(min_length=3, max_length=20, strip_whitespace=True)
 
     @field_validator('nome_provincia')
     @classmethod
