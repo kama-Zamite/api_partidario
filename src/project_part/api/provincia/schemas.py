@@ -14,7 +14,7 @@ class MunicipioBase(BaseModel):
     def formatar_iniciais(cls, v: str) -> str:
         if v is None or v == "":
             raise ValueError("O campo não pode ser vazio")
-        return v
+        return v.strip().title()
 
     
 class CreateMunicipio(MunicipioBase):
@@ -25,7 +25,7 @@ class CreateMunicipio(MunicipioBase):
     def formatar_iniciais(cls, v: str) -> str:
         if v is None or v == "":
             raise ValueError("O nome da província não pode ser vazio")
-        return v
+        return v.strip().title()
 
 
 class DeleteMunicipio(BaseModel):
@@ -57,7 +57,7 @@ class UpgradeMunicipio(BaseModel):
     def formatar_iniciais(cls, v: str) -> str:
         if v is None or v == "":
             raise ValueError("O campo não pode ser vazio")
-        return v
+        return v.strip().title()    
 
 
 class ResponseMunicipio(BaseModel):
