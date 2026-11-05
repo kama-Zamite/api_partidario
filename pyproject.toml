@@ -38,7 +38,8 @@ dependencies = [
     "cryptography (>=42.0.0)",
     "taskiq (>=0.13.0,<0.14.0)",
     "taskiq-redis (>=1.2.4,<2.0.0)",
-    "phonenumbers (>=9.0.41,<10.0.0)"
+    "phonenumbers (>=9.0.41,<10.0.0)",
+    "httpx (>=0.28.1,<0.29.0)"
 ]
 
 [tool.poetry]

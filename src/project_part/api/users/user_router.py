@@ -109,6 +109,7 @@ from project_part.core.cloudinary_config import (
 # from project_part.utils.preparar_quota import preparar_aviso_primeira_quota
 from project_part.api.auth.util import set_auth_cookies
 from project_part.services.claudflare_turnfile import verificar_turnstile
+from project_part.services.sms_service.confirmar_sms_cadastro_user import send_sms_cadastro_user
 from project_part.tasks.email_tasks import (
     enviar_email_confirmacao_cadastro,
     enviar_email_cadastro_realizado_sucesso,
@@ -208,6 +209,7 @@ async def create_user(
     backgroundTasks: BackgroundTasks,
     _captcha: Claudflare_turnfile,
     aceitou_termos: bool,
+    enviar_codigo_por_sms: bool,
     nome_completo: str = Form(...),
     email: str = Form(...),
     password: str = Form(...),
@@ -314,10 +316,10 @@ async def create_user(
         #         detail="Erro de infraestrutura ao gerar número de cartão."
         #     )
 
-    logger.info(
-        "Número atribuído ao novo militante: %s",
-        num_militante_final
-    )
+    # logger.info(
+    #     "Número atribuído ao novo militante: %s",
+    #     num_militante_final
+    # )
     # --- 3. Validação Pydantic ---
     try:
         dados_validados = UserBase(
@@ -336,6 +338,7 @@ async def create_user(
             cadastrar_militante=cadastrar_militante,
             nome_municipio=nome_municipio,
             militante_numero=num_militante_final,
+            enviar_codigo_por_sms=enviar_codigo_por_sms,
             codigo_verificacao_email=None  # ainda não precisamos
         )
     except ValidationError as e:
@@ -433,26 +436,45 @@ async def create_user(
         )
 
     try:
-        
-        await enviar_email_confirmacao_cadastro(
-            backgroundTasks,
-            email_destino=dados_validados.email,   # [SEC-001] o validado, igual ao guardado
-            secret_number=secret_number,
-            nome_completo=dados_validados.nome_completo,
-        )
+        if dados_validados.enviar_codigo_por_sms:
+            # SMS (só números angolanos — já validado no schema)
+            logger.info(
+                "Enviando código de ativação por SMS para o telefone: %s",
+                dados_validados.telefone,
+            )
+            backgroundTasks.add_task(
+                send_sms_cadastro_user,
+                dados_validados.telefone,
+                secret_number,
+            )
+        else:
+            # E-mail (qualquer país)
+            logger.info(
+                "Enviando código de ativação para o e-mail: %s",
+                mascarar_email(dados_validados.email),
+            )
+            await enviar_email_confirmacao_cadastro(
+                backgroundTasks,
+                email_destino=dados_validados.email,
+                secret_number=secret_number,
+                nome_completo=dados_validados.nome_completo,
+            )
     except Exception as e:
-        # [SEC-001] Se o e-mail não saiu, não deixar um registo pendente órfão
         await pending_registration.descartar(caches, ref)
-        logger.error("Falha ao injetar tarefa de e-mail para %s: %s",
-                     mascarar_email(dados_validados.email), str(e))
+        logger.error(
+            "Falha ao injetar tarefa de confirmação para %s: %s",
+            mascarar_email(dados_validados.email),
+            str(e),
+        )
         raise HTTPException(
             status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
-            detail="Falha ao processar e-mail de confirmação."
-        )
+            detail="Falha ao processar o envio do código de confirmação.",
+            )
 
+    canal = "SMS" if dados_validados.enviar_codigo_por_sms else "e-mail"
     return {
         "status": "success",
-        "message": "Código de ativação enviado para o e-mail. Confirme em até 5 minutos.",
+        "message": f"Código de ativação enviado para o {canal}. Confirme em até 5 minutos.",
         "registration_ref": ref,
     }
 

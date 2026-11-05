@@ -67,6 +67,10 @@ class Settings(BaseSettings):
     CLAUDINARY_URL_CONFIRMACAO: str
     URL_LOGIN: str
 
+    # Configurações de envio de SMS
+    URL_TELCOSMS: str
+    CHAVE_TELCOSMS: str
+
     # SMTP_HOST: str
     # SMTP_PORT: int
     # SMTP_USER: str

@@ -49,6 +49,8 @@ class UserBase(BaseModel):
     nome_provincia: str = Field(min_length=4, max_length=20, strip_whitespace=True)
     nome_municipio: str = Field(min_length=4, max_length=20, strip_whitespace=True)
 
+    enviar_codigo_por_sms: bool = Field(default=False, description="Indica se o código de verificação deve ser enviado por SMS. Se False, será enviado por e-mail.")
+
     foi_militante: bool = Field(default=False)
     cadastrar_militante: CadastrarComo = Field(default=CadastrarComo.MILITANTE)
 
@@ -120,7 +122,7 @@ class UserBase(BaseModel):
 
         
         # 2. Mantém a conveniência para Angola (9 dígitos diretos)
-        if len(numero_limpo) == 9 and numero_limpo.startswith(('91', '92', '93', '94', '95', '99')):
+        if len(numero_limpo) == 9 and numero_limpo.startswith(('91', '92', '93', '94', '95', '96', '99')):
             numero_limpo = f"+244{numero_limpo}"
         
         if not numero_limpo.startswith('+'):
@@ -164,6 +166,18 @@ class UserBase(BaseModel):
         #     )
         # return f'+244{filtrar_numero}'
 
+    @model_validator(mode="after")
+    def validar_canal_por_pais(self):
+        is_angola = self.telefone.startswith("+244")
+
+        if self.enviar_codigo_por_sms and not is_angola:
+            raise ValueError(
+                "SMS só disponível para números angolanos. "
+                "Números de outros países devem receber o código por email."
+            )
+
+        return self
+    
     @field_validator('nif')
     @classmethod
     def validar_nif(cls, val_nif: str) -> str:

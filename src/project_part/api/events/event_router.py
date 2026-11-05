@@ -83,14 +83,14 @@ async def criar_evento(
     current_user: Get_current_user,
     _captcha: Claudflare_turnfile,
     scope: ScopeValid,                                       
-    titulo: str = Form(..., max_length=200),
+    titulo: str = Form(...),
     descricao: str = Form(...),
-    localizacao: str = Form(..., max_length=255),
+    localizacao: str = Form(...),
     data_inicio: datetime = Form(...),
     nome_categoria: EventoCategoriaEnum = Form(...),
     nome_provincia: str = Form(...),
     nome_municipio: str = Form(...),
-    max_participantes: int | None = Form(None, gt=0),
+    max_participantes: int | None = Form(None),
     image_event: UploadFile = File(..., description='Imagem do evento (jpg, jpeg)'),
 ):
     try:

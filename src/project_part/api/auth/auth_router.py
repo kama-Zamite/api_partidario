@@ -138,7 +138,7 @@ async def login(
     session: Session,
     token: Access_token,
     backgroundTasks: BackgroundTasks,
-    _captcha: Claudflare_turnfile
+    # _captcha: Claudflare_turnfile
     ):
     """Endpoint para autenticação de usuário."""
 
@@ -617,7 +617,7 @@ async def solicitar_recuperacao(
     payload: PedidoRecuperacao,
     session: Session,
     background_tasks: BackgroundTasks,
-    _captcha: Claudflare_turnfile,
+    # _captcha: Claudflare_turnfile,
     ):
     """Endpoint para solicitar a recuperação de senha. Recebe o e-mail do usuário, verifica se ele existe no banco de dados e, se existir, gera um token de recuperação e envia um e-mail com instruções para redefinir a senha.
     Args:
@@ -633,6 +633,7 @@ async def solicitar_recuperacao(
 
     mensagem_padrao = {
         "status": "success",
+        # "docker": token,
         "message": "Se o e-mail estiver cadastrado, você receberá um link para redefinir a senha.",
     }
 
@@ -673,7 +674,7 @@ async def solicitar_recuperacao(
 async def redefinir_senha(
     request: Request,
     payload: RedefinirSenhaSchema,
-    _captcha: Claudflare_turnfile,
+    # _captcha: Claudflare_turnfile,
     session: Session
     ):
     """
